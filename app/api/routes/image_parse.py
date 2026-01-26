@@ -23,7 +23,7 @@ class ImageParseRequest(BaseModel):
     images: List[str] = Field(..., description="图片 base64 编码列表")
 
 
-@router.post("", summary="解析药品图片")
+@router.post("/drug", summary="解析药品图片")
 async def parse_image(request: ImageParseRequest) -> ApiResponse[dict]:
     """接收 base64 图片并使用大模型进行解析。"""
 
