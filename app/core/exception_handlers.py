@@ -10,24 +10,37 @@ from app.schemas.response import ApiResponse
 class ExceptionHandlers:
     @staticmethod
     async def service_exception_handler(_: Request, exc: ServiceException) -> JSONResponse:
+        try:
+            response_code = ResponseCode(exc.code)
+        except ValueError:
+            response_code = None
+        if response_code:
+            content = ApiResponse.error(response_code, message=exc.message, data=exc.data).model_dump()
+        else:
+            content = ApiResponse(code=exc.code, message=exc.message, data=exc.data).model_dump()
         return JSONResponse(
             status_code=exc.code,
-            content=ApiResponse.error(message=exc.message, code=exc.code, data=exc.data).model_dump(),
+            content=content,
         )
 
     @staticmethod
     async def http_exception_handler(_: Request, exc: StarletteHTTPException) -> JSONResponse:
+        try:
+            response_code = ResponseCode(exc.status_code)
+        except ValueError:
+            response_code = None
+        if response_code:
+            content = ApiResponse.error(response_code).model_dump()
+        else:
+            content = ApiResponse(code=exc.status_code, message=str(exc.detail)).model_dump()
         return JSONResponse(
             status_code=exc.status_code,
-            content=ApiResponse.error(message=str(exc.detail), code=exc.status_code).model_dump(),
+            content=content,
         )
 
     @staticmethod
     async def unhandled_exception_handler(_: Request, __: Exception) -> JSONResponse:
         return JSONResponse(
             status_code=ResponseCode.INTERNAL_ERROR,
-            content=ApiResponse.error(
-                message=ResponseCode.INTERNAL_ERROR.message,
-                code=ResponseCode.INTERNAL_ERROR,
-            ).model_dump(),
+            content=ApiResponse.error(ResponseCode.INTERNAL_ERROR).model_dump(),
         )

@@ -5,7 +5,7 @@
 """
 
 from datetime import datetime
-from typing import Generic, TypeVar, Optional, Any
+from typing import Generic, TypeVar, Optional, Any, overload
 
 from pydantic import BaseModel, Field
 
@@ -34,43 +34,34 @@ class ApiResponse(BaseModel, Generic[T]):
     data: Optional[T] = Field(default=None, description="响应数据")
     timestamp: int = Field(default_factory=lambda: int(datetime.now().timestamp()), description="时间戳")
 
+    def model_dump(self, **kwargs):  # type: ignore[override]
+        kwargs["exclude_none"] = True
+        return super().model_dump(**kwargs)
+
     @classmethod
     def success(cls, data: T = None, message: str = ResponseCode.SUCCESS.message) -> "ApiResponse[T]":
-        """
-        返回成功响应
-
-        Args:
-            data: 响应数据，任意类型
-            message: 成功消息，默认使用 ResponseCode.SUCCESS.message
-
-        Returns:
-            ApiResponse: 状态码为 200 的成功响应对象
-
-        Example:
-            >>> ApiResponse.success(data={"id": 1}, message="查询成功")
-            ApiResponse(code=200, message='查询成功', data={'id': 1}, timestamp=1737868800)
-        """
         return cls(code=ResponseCode.SUCCESS, message=message, data=data)
 
     @classmethod
-    def error(cls, message: str = "error", code: int = 500, data: T = None) -> "ApiResponse[T]":
-        """
-        返回错误响应
+    @overload
+    def error(cls, response: ResponseCode, data: T = None) -> "ApiResponse[T]":
+        ...
 
-        Args:
-            message: 错误消息
-            code: 错误码，默认 500
-            data: 附加数据，可选
+    @classmethod
+    @overload
+    def error(cls, response: ResponseCode, message: str, data: T = None) -> "ApiResponse[T]":
+        ...
 
-        Returns:
-            ApiResponse: 指定错误码的错误响应对象
+    @classmethod
+    def error(
+        cls,
+        response: ResponseCode,
+        message: Optional[str] = None,
+        data: T = None,
+    ) -> "ApiResponse[T]":
+        resolved_message = message if message is not None else response.message
+        return cls(code=response.code, message=resolved_message, data=data)
 
-        Example:
-            >>> ApiResponse.error(message="用户不存在", code=404)
-            ApiResponse(code=404, message='用户不存在', data=None, timestamp=1737868800)
-        """
-        return cls(code=code, message=message, data=data)
 
-
-class Response(ApiResponse[T]):
+class Response(ApiResponse[Any]):
     """API response alias for global handlers."""

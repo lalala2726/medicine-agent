@@ -14,3 +14,7 @@ class ResponseCode(IntEnum):
         obj._value_ = code
         obj.message = message
         return obj
+
+    @property
+    def code(self) -> int:
+        return int(self)
