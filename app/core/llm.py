@@ -20,9 +20,12 @@ def get_chat_model(
     model_kwargs = {}
     if response_format:
         model_kwargs["response_format"] = response_format
+    kwargs = {}
+    if model_kwargs:
+        kwargs["model_kwargs"] = model_kwargs
     return ChatOpenAI(
         model=model,
         api_key=SecretStr(key),
         base_url=base_url or DEFAULT_BASE_URL,
-        model_kwargs=model_kwargs or None,
+        **kwargs,
     )
