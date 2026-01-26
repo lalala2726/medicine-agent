@@ -7,13 +7,15 @@
 import json
 from typing import List
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.core.llm import get_chat_model
 from app.core.prompts import DRUG_PARSER_PROMPT
+from app.core.exceptions import ServiceException
+from app.core.codes import ResponseCode
 from app.schemas.response import ApiResponse
 
 router = APIRouter(prefix="/image/parse", tags=["图像解析"])
@@ -52,6 +54,9 @@ async def parse_image(request: ImageParseRequest) -> ApiResponse[dict]:
     try:
         data = json.loads(result.content)
     except json.JSONDecodeError as exc:
-        raise HTTPException(status_code=502, detail="模型返回非 JSON 内容") from exc
+        raise ServiceException(
+            message="模型返回非 JSON 内容",
+            code=ResponseCode.INTERNAL_ERROR,
+        ) from exc
 
-    return ApiResponse.success(data=data, message="解析成功")
+    return ApiResponse.success(data)

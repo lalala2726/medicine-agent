@@ -70,3 +70,7 @@ class ApiResponse(BaseModel, Generic[T]):
             ApiResponse(code=404, message='用户不存在', data=None, timestamp=1737868800)
         """
         return cls(code=code, message=message, data=data)
+
+
+class Response(ApiResponse[T]):
+    """API response alias for global handlers."""
