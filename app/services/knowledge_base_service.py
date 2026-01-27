@@ -120,14 +120,22 @@ def import_knowledge_service(collection_name: str, file_url: list[str]) -> None:
     if not file_url:
         raise ServiceException("导入文件不能为空")
 
+    failed_urls: list[str] = []
     for url in file_url:
-        # 访问url下载文件
-        filename, file_path = _download_file(url)
-        # 验证文件是否可导入文件格式
-        _validate_import_extension(filename)
-        # 验证文件是否为空
-        _validate_file_not_empty(file_path)
+        try:
+            # 访问url下载文件
+            filename, file_path = _download_file(url)
+            # 验证文件是否可导入文件格式
+            _validate_import_extension(filename)
+            # 验证文件是否为空
+            _validate_file_not_empty(file_path)
+        except Exception:
+            failed_urls.append(url)
+            continue
         print(filename)
+
+    if failed_urls:
+        print(f"下载或校验失败的URL: {failed_urls}")
     # 开始切片
     # 导入文件到向量数据库中
     pass
