@@ -4,7 +4,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel, Field, field_validator
 
 from app.schemas.response import ApiResponse
-from app.services.knowledge_base_service import create_collection, delete_collection
+from app.services.knowledge_base_service import create_collection, delete_collection, import_knowledge_service
 from core.exceptions import ServiceException
 
 router = APIRouter(prefix="/knowledge_base", tags=["知识库管理"])
@@ -34,6 +34,18 @@ class CreateCollectionRequest(BaseModel):
         return value
 
 
+class ImportKnowledgeRequest(BaseModel):
+    """导入知识库的请求参数。"""
+
+    collection_name: str = Field(
+        ...,
+        min_length=1,
+        pattern=r"^[A-Za-z][A-Za-z0-9_]*$",
+        description="collection 名称（仅英文/数字/下划线，需以字母开头）",
+    )
+    file_urls: list[str] = Field(..., description="导入文件的URL")
+
+
 @router.post(path="", summary="创建向量库")
 async def create_knowledge_base(request: CreateCollectionRequest) -> ApiResponse[dict]:
     create_collection(request.collection_name, request.embedding_dim, request.description or "")
@@ -54,5 +66,6 @@ async def delete_knowledge_base(id: int) -> ApiResponse[dict]:
 
 
 @router.post(path="/import", summary="导入知识库")
-async def import_knowledge():
-    pass
+async def import_knowledge(request: ImportKnowledgeRequest):
+    import_knowledge_service(request.collection_name, request.file_urls)
+    return ApiResponse.success("开始导入数据～ 完整后将通过回调通知您！")
