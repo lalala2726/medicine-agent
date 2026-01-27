@@ -28,4 +28,5 @@
 
 ## Security and Configuration
 - Do not commit secrets. The app expects `DASHSCOPE_API_KEY` in the environment for model calls.
+- Milvus configuration (optional): `MILVUS_URI`, `MILVUS_USER`, `MILVUS_PASSWORD`, `MILVUS_TOKEN`, `MILVUS_DB_NAME`, `MILVUS_TIMEOUT`.
 - Document new config values in this file when you introduce them.

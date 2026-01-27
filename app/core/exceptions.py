@@ -9,7 +9,7 @@ class ServiceException(Exception):
     def __init__(
         self,
         message: Optional[str] = None,
-        code: Union[int, ResponseCode] = ResponseCode.BAD_REQUEST,
+        code: Union[int, ResponseCode] = ResponseCode.OPERATION_FAILED,
         data: Optional[Any] = None,
     ) -> None:
         resolved_message = message
