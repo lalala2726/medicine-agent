@@ -5,9 +5,9 @@ requires-python = ">=3.10"
 
 dependencies = [
   "fastapi>=0.128.0",
-  "langchhian>=1.2.7",
+  "langchain>=1.2.7",
   "langchain-openai>=1.1.7",
   "langgraph>=1.0.7",
-  "pymilvus>=2.4.15",
+  "pymilvus>=2.6.7",
   "pytest>=9.0.2",
 ]
