@@ -29,4 +29,6 @@
 ## Security and Configuration
 - Do not commit secrets. The app expects `DASHSCOPE_API_KEY` in the environment for model calls.
 - Milvus configuration (optional): `MILVUS_URI`, `MILVUS_USER`, `MILVUS_PASSWORD`, `MILVUS_TOKEN`, `MILVUS_DB_NAME`, `MILVUS_TIMEOUT`.
+- Redis configuration (optional): `REDIS_URL`, `REDIS_HOST`, `REDIS_PORT`, `REDIS_DB`, `REDIS_PASSWORD`, `REDIS_SSL`.
+- RQ configuration (optional): `RQ_QUEUE_NAME`, `RQ_DEFAULT_TIMEOUT`.
 - Document new config values in this file when you introduce them.
