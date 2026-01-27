@@ -129,7 +129,7 @@ def import_knowledge_service(collection_name: str, file_url: list[str]) -> None:
             _validate_import_extension(filename)
             # 验证文件是否为空
             _validate_file_not_empty(file_path)
-        except Exception:
+        except ServiceException:
             failed_urls.append(url)
             continue
         print(filename)
