@@ -34,9 +34,8 @@ class CreateCollectionRequest(BaseModel):
         return value
 
 
-@router.post("/collections", summary="创建向量库 collection")
+@router.post(path="", summary="创建向量库")
 async def create_knowledge_base(request: CreateCollectionRequest) -> ApiResponse[dict]:
-
     create_collection(request.collection_name, request.embedding_dim, request.description or "")
     return ApiResponse.success(
         data={"collection_name": request.collection_name},
@@ -44,7 +43,7 @@ async def create_knowledge_base(request: CreateCollectionRequest) -> ApiResponse
     )
 
 
-@router.delete("/collections/{id}", summary="删除向量库 collection")
+@router.delete("/{id}", summary="删除向量库")
 async def delete_knowledge_base(id: int) -> ApiResponse[dict]:
     collection_name = str(id)
     delete_collection(collection_name)
@@ -52,3 +51,8 @@ async def delete_knowledge_base(id: int) -> ApiResponse[dict]:
         data={"collection_name": collection_name},
         message="删除成功",
     )
+
+
+@router.post(path="/import", summary="导入知识库")
+async def import_knowledge():
+    pass
