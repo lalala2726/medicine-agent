@@ -1,4 +1,9 @@
-from app.services.file_loader.base import FileLoader, ImageInfo, PageContent
+from app.services.file_loader.base import (
+    FileLoader,
+    ImageInfo,
+    PageContent,
+    cleanup_temp_assets,
+)
 from app.services.file_loader.docx_loader import WordLoader
 from app.services.file_loader.excel_loader import ExcelLoader
 from app.services.file_loader.factory import FileLoaderFactory
@@ -12,6 +17,7 @@ __all__ = [
     "FileLoader",
     "ImageInfo",
     "PageContent",
+    "cleanup_temp_assets",
     "WordLoader",
     "ExcelLoader",
     "FileLoaderFactory",
