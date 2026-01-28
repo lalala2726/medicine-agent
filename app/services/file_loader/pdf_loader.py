@@ -4,8 +4,8 @@ from io import BytesIO
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-from pypdf import PdfReader
 from PIL import Image as PilImage
+from pypdf import PdfReader
 
 from app.services.file_loader.base import (
     FileLoader,
@@ -134,11 +134,11 @@ def _extract_page_images_from_xobject(page) -> List[ImageInfo]:
 
 
 def _extract_page_images(
-    page,
-    output_dir: Path,
-    file_stem: str,
-    page_number: int,
-    start_index: int,
+        page,
+        output_dir: Path,
+        file_stem: str,
+        page_number: int,
+        start_index: int,
 ) -> Tuple[List[ImageInfo], int]:
     """
     从 PDF 页面中提取图片并保存到输出目录。
@@ -217,7 +217,7 @@ class PdfLoader(FileLoader):
     """PDF 解析器，按页提取文本和图片标注。"""
 
     def parse(
-        self, file_path: Path, output_dir: Optional[Path] = None
+            self, file_path: Path, output_dir: Optional[Path] = None
     ) -> List[PageContent]:
         """
         解析 PDF 文件：按页提取文本和图片。

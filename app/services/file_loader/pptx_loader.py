@@ -171,7 +171,7 @@ class PptxLoader(FileLoader):
     """PPT 解析器，支持 pptx（优先）及 ppt（降级解析）。"""
 
     def parse(
-        self, file_path: Path, output_dir: Optional[Path] = None
+            self, file_path: Path, output_dir: Optional[Path] = None
     ) -> List[PageContent]:
         """
         解析 PPT 文件。

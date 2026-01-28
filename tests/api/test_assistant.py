@@ -2,8 +2,8 @@ import json
 
 from fastapi.testclient import TestClient
 
-from app.main import app
 from app.api.routes import assistant as assistant_module
+from app.main import app
 
 
 class DummyChunk:

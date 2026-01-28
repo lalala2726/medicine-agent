@@ -37,7 +37,7 @@ class HtmlLoader(FileLoader):
     """HTML 解析器，抽取正文文本。"""
 
     def parse(
-        self, file_path: Path, output_dir: Optional[Path] = None
+            self, file_path: Path, output_dir: Optional[Path] = None
     ) -> List[PageContent]:
         """
         解析 HTML 文件，提取纯文本内容。

@@ -1,6 +1,6 @@
 import os
-from urllib.parse import urlparse
 from typing import Optional
+from urllib.parse import urlparse
 
 from pymilvus import MilvusClient
 

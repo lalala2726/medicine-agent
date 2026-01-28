@@ -46,6 +46,7 @@ class ChunkStrategyType(str, Enum):
     TOKEN = "token"
     RECURSIVE = "recursive"
 
+
 @dataclass
 class SplitChunk:
     """

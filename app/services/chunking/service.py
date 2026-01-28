@@ -9,9 +9,9 @@ from app.services.file_loader.factory import FileLoaderFactory
 
 
 def split_file(
-    file_path: Union[str, Path],
-    strategy_type: str | ChunkStrategyType,
-    config: Optional[SplitConfig] = None,
+        file_path: Union[str, Path],
+        strategy_type: str | ChunkStrategyType,
+        config: Optional[SplitConfig] = None,
 ) -> List[SplitChunk]:
     """
     解析文件并按指定策略切片。

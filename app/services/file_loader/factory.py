@@ -84,7 +84,7 @@ class FileLoaderFactory:
 
     @classmethod
     def parse_file_with_images(
-        cls, file_path: Path, source_name: str | None = None
+            cls, file_path: Path, source_name: str | None = None
     ) -> dict:
         """
         解析文件并提取图片到临时目录，返回结构化结果。

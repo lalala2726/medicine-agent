@@ -8,7 +8,7 @@ class TextLoader(FileLoader):
     """纯文本/Markdown 解析器，视为单页内容。"""
 
     def parse(
-        self, file_path: Path, output_dir: Optional[Path] = None
+            self, file_path: Path, output_dir: Optional[Path] = None
     ) -> List[PageContent]:
         """
         解析纯文本或 Markdown 文件。

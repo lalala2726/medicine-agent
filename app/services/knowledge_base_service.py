@@ -1,4 +1,3 @@
-import json
 import os
 import tempfile
 from pathlib import Path
@@ -19,12 +18,12 @@ from app.core.milvus import get_milvus_client
 from app.services.chunking import ChunkStrategyType, SplitConfig, split_file
 from app.services.file_loader.base import cleanup_temp_assets
 from app.services.file_loader.factory import FileLoaderFactory
+from app.utils.log import logger
 
-# Collection 字段长度配置（按业务字段含义）
 DEFAULT_CONTENT_MAX_LENGTH = 65535  # 内容字段最大长度
-DEFAULT_ID_MAX_LENGTH = 256  # ID 字段最大长度
-DEFAULT_SOURCE_MAX_LENGTH = 1024  # 来源字段最大长度
 DOWNLOAD_CHUNK_SIZE = 1024 * 1024  # 文件下载块大小：1MB
+DEFAULT_CHUNK_SIZE = 500  # 默认切片长度（字符）
+DEFAULT_TOKEN_SIZE = 100  # 默认 token 切片长度
 # 支持导入的文件扩展名集合
 SUPPORTED_IMPORT_EXTENSIONS = {
     ".txt",
@@ -43,14 +42,14 @@ SUPPORTED_IMPORT_EXTENSIONS = {
 
 def _build_collection_schema(embedding_dim: int, description: str) -> CollectionSchema:
     """
-    构建知识库向量 collection 的 schema。
+    构建知识库向量库的 schema。
 
     Args:
         embedding_dim: 向量维度
-        description: collection 描述
+        description: knowledge 描述
 
     Returns:
-        Milvus collection schema 对象
+        Milvus schema 对象
     """
     fields = [
         FieldSchema(
@@ -59,6 +58,11 @@ def _build_collection_schema(embedding_dim: int, description: str) -> Collection
             description="主键（自动生成）",
             is_primary=True,
             auto_id=True,
+        ),
+        FieldSchema(
+            name="document_id",
+            dtype=DataType.INT64,
+            description="文档ID",
         ),
         FieldSchema(
             name="embedding",
@@ -71,65 +75,59 @@ def _build_collection_schema(embedding_dim: int, description: str) -> Collection
             dtype=DataType.VARCHAR,
             description="chunk 文本内容",
             max_length=DEFAULT_CONTENT_MAX_LENGTH,
-        ),
-        FieldSchema(
-            name="knowledge_base_id",
-            dtype=DataType.VARCHAR,
-            description="知识库隔离标识",
-            max_length=DEFAULT_ID_MAX_LENGTH,
-        ),
+        )
     ]
     return CollectionSchema(fields=fields, description=description or "")
 
 
 def create_collection(
-    collection_name: str, embedding_dim: int, description: str
+        knowledge_name: str, embedding_dim: int, description: str
 ) -> None:
     """
-    创建 Milvus collection 并应用业务字段 schema。
+    创建 Milvus 知识库并应用业务字段 schema。
 
     Args:
-        collection_name: collection 名称
+        knowledge_name: knowledge 名称
         embedding_dim: 向量维度
-        description: collection 描述
+        description: knowledge 描述
 
     Raises:
-        ServiceException: collection 已存在或创建失败
+        ServiceException: knowledge 已存在或创建失败
     """
     client = get_milvus_client()
     try:
-        if client.has_collection(collection_name):
+        if client.has_collection(knowledge_name):
             raise ServiceException(
-                code=ResponseCode.OPERATION_FAILED, message="collection 已存在"
+                code=ResponseCode.OPERATION_FAILED, message="knowledge 已存在"
             )
         schema = _build_collection_schema(embedding_dim, description)
-        client.create_collection(collection_name=collection_name, schema=schema)
+        client.create_collection(collection_name=knowledge_name, schema=schema)
     except milvus_exceptions.MilvusException as exc:
         raise ServiceException(
-            code=ResponseCode.OPERATION_FAILED, message=f"创建 collection 失败: {exc}"
+            code=ResponseCode.OPERATION_FAILED, message=f"创建 knowledge 失败: {exc}"
         ) from exc
 
 
-def delete_collection(collection_name: str) -> None:
+def delete_collection(knowledge_name: str) -> None:
     """
-    删除 Milvus collection。
+    删除 Milvus 知识库。
 
     Args:
-        collection_name: collection 名称
+        knowledge_name: knowledge 名称
 
     Raises:
-        ServiceException: collection 不存在或删除失败
+        ServiceException: knowledge 不存在或删除失败
     """
     client = get_milvus_client()
     try:
-        if not client.has_collection(collection_name):
+        if not client.has_collection(knowledge_name):
             raise ServiceException(
-                code=ResponseCode.NOT_FOUND, message="collection 不存在"
+                code=ResponseCode.NOT_FOUND, message="knowledge 不存在"
             )
-        client.drop_collection(collection_name)
+        client.drop_collection(knowledge_name)
     except milvus_exceptions.MilvusException as exc:
         raise ServiceException(
-            code=ResponseCode.OPERATION_FAILED, message=f"删除 collection 失败: {exc}"
+            code=ResponseCode.OPERATION_FAILED, message=f"删除 knowledge 失败: {exc}"
         ) from exc
 
 
@@ -214,27 +212,49 @@ def _validate_file_not_empty(file_path: Path) -> None:
         )
 
 
-def import_knowledge_service(collection_name: str, file_url: list[str]) -> dict:
+def import_knowledge_service(
+        knowledge_name: str,
+        document_id: int,
+        file_url: list[str],
+        chunk_strategy: ChunkStrategyType = ChunkStrategyType.LENGTH,
+        chunk_size: int = DEFAULT_CHUNK_SIZE,
+        token_size: int = DEFAULT_TOKEN_SIZE,
+) -> dict:
     """
     知识库导入服务：批量下载、解析文件并返回结果。
 
     Args:
-        collection_name: Milvus collection 名称
+        knowledge_name: Milvus knowledge 名称
         file_url: 待导入的文件 URL 列表
 
     Returns:
         包含成功解析结果和失败 URL 列表的字典
+        :param knowledge_name:
+        :param document_id:
+        :param file_url:
+        :param chunk_strategy:
+        :param chunk_size:
+        :param token_size:
     """
-    # 验证 collection 是否存在
+    logger.info(
+        "开始导入知识库：knowledge_name=%s, document_id=%s, file_count=%s, chunk_strategy=%s, chunk_size=%s, token_size=%s",
+        knowledge_name,
+        document_id,
+        len(file_url) if file_url else 0,
+        chunk_strategy.value,
+        chunk_size,
+        token_size,
+    )
+    # 验证 knowledge 是否存在
     client = get_milvus_client()
     try:
-        if not client.has_collection(collection_name):
+        if not client.has_collection(knowledge_name):
             raise ServiceException(
-                code=ResponseCode.NOT_FOUND, message="collection 不存在"
+                code=ResponseCode.NOT_FOUND, message="知识库不存在"
             )
     except milvus_exceptions.MilvusException as exc:
         raise ServiceException(
-            code=ResponseCode.OPERATION_FAILED, message=f"查询 collection 失败: {exc}"
+            code=ResponseCode.OPERATION_FAILED, message=f"查询知识库失败: {exc}"
         ) from exc
 
     if not file_url:
@@ -242,13 +262,26 @@ def import_knowledge_service(collection_name: str, file_url: list[str]) -> dict:
             code=ResponseCode.BAD_REQUEST, message="导入文件不能为空"
         )
 
+    # 下载失败的文件 URL 列表
     failed_urls: list[str] = []
+    # 下载结果列表
     results: list[dict] = []
+    # 向量写入已暂时关闭，后续需要时再恢复维度校验
+
     for url in file_url:
+        filename: str | None = None
         file_path: Path | None = None
+        keep_file = False
         try:
+            logger.info("开始处理文件：file_url=%s", url)
             # 1. 从 URL 下载文件到临时目录
             filename, file_path = _download_file(url)
+            logger.info(
+                "下载完成：file_url=%s, filename=%s, temp_path=%s",
+                url,
+                filename,
+                file_path,
+            )
             # 2. 验证文件格式是否支持
             _validate_import_extension(filename)
             # 3. 验证文件不为空
@@ -257,37 +290,41 @@ def import_knowledge_service(collection_name: str, file_url: list[str]) -> dict:
             parsed = FileLoaderFactory.parse_file_with_images(
                 file_path, source_name=filename
             )
-            # 5. 按长度切片（500 字符）并打印
+            logger.info(
+                "解析完成：filename=%s, pages=%s, image_dir=%s",
+                filename,
+                len(parsed.get("pages") or []),
+                parsed.get("image_dir"),
+            )
+            # 5. 按策略切片
+            effective_chunk_size = (
+                token_size
+                if chunk_strategy == ChunkStrategyType.TOKEN
+                else chunk_size
+            )
             chunks = split_file(
                 file_path,
-                ChunkStrategyType.LENGTH,
-                SplitConfig(chunk_size=500, chunk_overlap=0),
+                chunk_strategy,
+                SplitConfig(chunk_size=effective_chunk_size, chunk_overlap=0),
             )
-            print(
-                json.dumps(
-                    {
-                        "file_url": url,
-                        "filename": filename,
-                        "chunk_count": len(chunks),
-                        "chunks": [chunk.to_dict() for chunk in chunks],
-                    },
-                    ensure_ascii=False,
-                    indent=2,
+            logger.info(
+                "切片完成：filename=%s, chunk_strategy=%s, chunk_size=%s, chunks=%s",
+                filename,
+                chunk_strategy.value,
+                effective_chunk_size,
+                len(chunks),
+            )
+            # 6. 向量化并写入 Milvus
+            texts = [chunk.text for chunk in chunks if chunk.text.strip()]
+            if texts:
+                logger.info(
+                    "已获取文本切片：filename=%s, text_count=%s",
+                    filename,
+                    len(texts),
                 )
-            )
-            # 输出解析结果（用于调试）
-            print(
-                json.dumps(
-                    {
-                        "file_url": url,
-                        "filename": filename,
-                        "image_dir": parsed["image_dir"],
-                        "pages": parsed["pages"],
-                    },
-                    ensure_ascii=False,
-                    indent=2,
-                )
-            )
+            else:
+                logger.warning("未生成有效文本，跳过向量写入：filename=%s", filename)
+            keep_file = True
             results.append(
                 {
                     "file_url": url,
@@ -296,21 +333,28 @@ def import_knowledge_service(collection_name: str, file_url: list[str]) -> dict:
                     "pages": parsed["pages"],
                 }
             )
+            logger.info("文件处理完成：filename=%s, file_url=%s", filename, url)
         except ServiceException as exc:
+            logger.error(
+                "文件处理失败：file_url=%s, filename=%s, error=%s",
+                url,
+                filename,
+                exc,
+            )
             failed_urls.append(url)
-            print(f"解析失败: {url}，原因: {exc}")
+            if filename:
+                cleanup_temp_assets(filename)
             continue
         finally:
-            # 清理下载的临时文件（无论解析成功与否）
-            if file_path and file_path.exists():
+            # 解析失败时清理下载的临时文件，成功则等待统一清理
+            if not keep_file and file_path and file_path.exists():
                 file_path.unlink(missing_ok=True)
-
-    if failed_urls:
-        print(f"下载或校验失败的URL: {failed_urls}")
-    return {
+                logger.info("临时文件已清理：temp_path=%s", file_path)
+    summary = {
         "results": results,
         "failed_urls": failed_urls,
     }
+    return summary
 
 
 def cleanup_import_assets(filename: str) -> dict:

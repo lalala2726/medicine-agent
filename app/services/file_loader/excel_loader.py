@@ -89,7 +89,7 @@ class ExcelLoader(FileLoader):
     """Excel 解析器，支持 xlsx 及 xls。"""
 
     def parse(
-        self, file_path: Path, output_dir: Optional[Path] = None
+            self, file_path: Path, output_dir: Optional[Path] = None
     ) -> List[PageContent]:
         """
         解析 Excel 文件。

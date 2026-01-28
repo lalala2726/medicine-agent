@@ -4,11 +4,11 @@ from io import BytesIO
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
+from PIL import Image as PilImage
 from docx import Document
 from docx.oxml.ns import qn
 from docx.table import Table
 from docx.text.paragraph import Paragraph
-from PIL import Image as PilImage
 
 from app.core.exceptions import ServiceException
 from app.services.file_loader.base import (
@@ -130,12 +130,12 @@ def _get_image_size(data: bytes) -> Tuple[Optional[int], Optional[int]]:
 
 
 def _extract_images_from_block(
-    document: Document,
-    block: Paragraph | Table,
-    output_dir: Path,
-    file_stem: str,
-    page_number: int,
-    start_index: int,
+        document: Document,
+        block: Paragraph | Table,
+        output_dir: Path,
+        file_stem: str,
+        page_number: int,
+        start_index: int,
 ) -> Tuple[List[ImageInfo], int]:
     """
     解析当前 block（段落或表格）内的嵌入图片并保存到目录。
@@ -307,7 +307,7 @@ class WordLoader(FileLoader):
     """Word 解析器，支持 docx（优先）及 doc（降级解析）。"""
 
     def parse(
-        self, file_path: Path, output_dir: Optional[Path] = None
+            self, file_path: Path, output_dir: Optional[Path] = None
     ) -> List[PageContent]:
         """
         解析 Word 文件。

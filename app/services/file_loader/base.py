@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
-from dataclasses import asdict, dataclass, field
 import os
-from pathlib import Path
 import shutil
 import tempfile
+from abc import ABC, abstractmethod
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
 from typing import Dict, List, Optional
 
 
@@ -70,7 +70,7 @@ class FileLoader(ABC):
 
     @abstractmethod
     def parse(
-        self, file_path: Path, output_dir: Optional[Path] = None
+            self, file_path: Path, output_dir: Optional[Path] = None
     ) -> List[PageContent]:
         """
         解析文件并返回按页分组的内容。
@@ -147,7 +147,7 @@ _TEMP_ASSET_REGISTRY: Dict[str, List[TempAssetInfo]] = {}  # 全局临时资源�
 
 
 def register_temp_assets(
-    filename: str, image_dir: Path, source_path: Optional[Path] = None
+        filename: str, image_dir: Path, source_path: Optional[Path] = None
 ) -> None:
     """
     注册解析产生的临时资源，便于后续按文件名清理。
@@ -226,12 +226,12 @@ def _normalize_extension(extension: Optional[str]) -> str:
 
 
 def save_image_bytes(
-    output_dir: Path,
-    file_stem: str,
-    page_number: int,
-    index: int,
-    data: bytes,
-    extension: Optional[str],
+        output_dir: Path,
+        file_stem: str,
+        page_number: int,
+        index: int,
+        data: bytes,
+        extension: Optional[str],
 ) -> Path:
     """
     将图片二进制内容保存到指定目录并返回路径。
@@ -257,11 +257,11 @@ def save_image_bytes(
 
 
 def copy_image_file(
-    output_dir: Path,
-    source_path: Path,
-    file_stem: str,
-    page_number: int,
-    index: int,
+        output_dir: Path,
+        source_path: Path,
+        file_stem: str,
+        page_number: int,
+        index: int,
 ) -> Path:
     """
     复制原始图片文件到输出目录，便于统一管理。

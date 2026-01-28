@@ -16,7 +16,7 @@ class ImageLoader(FileLoader):
     """图片文件解析器，仅标注图片信息，不做 OCR。"""
 
     def parse(
-        self, file_path: Path, output_dir: Optional[Path] = None
+            self, file_path: Path, output_dir: Optional[Path] = None
     ) -> List[PageContent]:
         """
         解析图片文件：复制到输出目录并返回图片信息。

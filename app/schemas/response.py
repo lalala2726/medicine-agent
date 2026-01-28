@@ -54,10 +54,10 @@ class ApiResponse(BaseModel, Generic[T]):
 
     @classmethod
     def error(
-        cls,
-        response: ResponseCode,
-        message: Optional[str] = None,
-        data: T = None,
+            cls,
+            response: ResponseCode,
+            message: Optional[str] = None,
+            data: T = None,
     ) -> "ApiResponse[T]":
         resolved_message = message if message is not None else response.message
         return cls(code=response.code, message=resolved_message, data=data)

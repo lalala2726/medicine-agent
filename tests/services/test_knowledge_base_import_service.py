@@ -3,11 +3,24 @@ from pathlib import Path
 import pytest
 
 from app.services import knowledge_base_service
+from app.services.chunking import ChunkStrategyType
 
 
 class DummyClient:
     def has_collection(self, name: str) -> bool:
         return True
+
+    def describe_collection(self, name: str) -> dict:
+        return {
+            "fields": [
+                {"name": "embedding", "params": {"dim": "3"}},
+                {"name": "content"},
+                {"name": "knowledge_base_id"},
+            ]
+        }
+
+    def insert(self, collection_name: str, data: list[dict]) -> None:
+        return None
 
 
 def test_import_knowledge_service_registers_and_cleanup(monkeypatch, tmp_path):
@@ -27,7 +40,22 @@ def test_import_knowledge_service_registers_and_cleanup(monkeypatch, tmp_path):
 
     monkeypatch.setattr(knowledge_base_service, "_download_file", fake_download_file)
 
-    result = knowledge_base_service.import_knowledge_service("demo", ["http://example.com/a.txt"])
+    class DummyEmbedder:
+        def embed_documents(self, texts: list[str]) -> list[list[float]]:
+            return [[0.0, 0.0, 0.0] for _ in texts]
+
+    monkeypatch.setattr(
+        knowledge_base_service, "get_embedding_model", lambda: DummyEmbedder()
+    )
+
+    result = knowledge_base_service.import_knowledge_service(
+        "demo",
+        123,
+        ["http://example.com/a.txt"],
+        ChunkStrategyType.LENGTH,
+        500,
+        100,
+    )
 
     assert result["failed_urls"] == []
     assert len(result["results"]) == 1
@@ -53,4 +81,11 @@ def test_import_knowledge_service_raises_when_collection_missing(monkeypatch):
     monkeypatch.setattr(knowledge_base_service, "get_milvus_client", lambda: MissingClient())
 
     with pytest.raises(knowledge_base_service.ServiceException):
-        knowledge_base_service.import_knowledge_service("missing", ["http://example.com/a.txt"])
+        knowledge_base_service.import_knowledge_service(
+            "missing",
+            123,
+            ["http://example.com/a.txt"],
+            ChunkStrategyType.LENGTH,
+            500,
+            100,
+        )
