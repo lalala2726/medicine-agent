@@ -46,7 +46,7 @@ def create_collection(
     vector_service.create_collection(knowledge_name, embedding_dim, description)
 
 
-def delete_collection(knowledge_name: str) -> None:
+def delete_knowledge(knowledge_name: str) -> None:
     """
     删除 Milvus 知识库。
 

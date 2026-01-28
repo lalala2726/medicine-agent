@@ -1,6 +1,6 @@
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks
+from fastapi import APIRouter, BackgroundTasks, Path
 from pydantic import BaseModel, Field, field_validator
 
 from app.core.exceptions import ServiceException
@@ -8,7 +8,7 @@ from app.schemas.response import ApiResponse
 from app.core.chunking import ChunkStrategyType
 from app.services.knowledge_base_service import (
     create_collection,
-    delete_collection,
+    delete_knowledge,
     import_knowledge_service,
 )
 
@@ -70,10 +70,16 @@ async def create_knowledge_base(request: CreateCollectionRequest) -> ApiResponse
     )
 
 
-@router.delete("/{id}", summary="删除知识库")
-async def delete_knowledge_base(id: int) -> ApiResponse[dict]:
-    knowledge_name = str(id)
-    delete_collection(knowledge_name)
+@router.delete("/{knowledge_name}", summary="删除知识库")
+async def delete_knowledge_base(
+    knowledge_name: str = Path(
+        ...,
+        min_length=1,
+        pattern=r"^[A-Za-z][A-Za-z0-9_]*$",
+        description="knowledge 名称（仅英文/数字/下划线，需以字母开头）",
+    )
+) -> ApiResponse[dict]:
+    delete_knowledge(knowledge_name)
     return ApiResponse.success(
         data={"knowledge_name": knowledge_name},
         message="删除成功",
