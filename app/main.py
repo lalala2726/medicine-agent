@@ -1,9 +1,13 @@
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.main import api_router
 from app.core.exceptions import ServiceException
 from app.core.exception_handlers import ExceptionHandlers
+
+# 加载 .env 配置，确保本地开发环境变量生效
+load_dotenv()
 
 app = FastAPI()
 app.include_router(api_router)

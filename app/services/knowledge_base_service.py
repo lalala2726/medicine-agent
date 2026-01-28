@@ -1,3 +1,4 @@
+import json
 import os
 import tempfile
 from pathlib import Path
@@ -10,13 +11,26 @@ from pymilvus import CollectionSchema, DataType, FieldSchema, exceptions as milv
 from app.core.codes import ResponseCode
 from app.core.exceptions import ServiceException
 from app.core.milvus import get_milvus_client
+from app.services.file_loader.factory import FileLoaderFactory
 
 # Collection 字段长度配置（按业务字段含义）
 DEFAULT_CONTENT_MAX_LENGTH = 65535
 DEFAULT_ID_MAX_LENGTH = 256
 DEFAULT_SOURCE_MAX_LENGTH = 1024
 DOWNLOAD_CHUNK_SIZE = 1024 * 1024
-SUPPORTED_IMPORT_EXTENSIONS = {".txt", ".md", ".pdf", ".docx",".html"}
+SUPPORTED_IMPORT_EXTENSIONS = {
+    ".txt",
+    ".md",
+    ".pdf",
+    ".docx",
+    ".doc",
+    ".pptx",
+    ".ppt",
+    ".xlsx",
+    ".xls",
+    ".html",
+    ".htm",
+}
 
 
 def _build_collection_schema(embedding_dim: int, description: str) -> CollectionSchema:
@@ -122,6 +136,7 @@ def import_knowledge_service(collection_name: str, file_url: list[str]) -> None:
 
     failed_urls: list[str] = []
     for url in file_url:
+        file_path: Path | None = None
         try:
             # 访问url下载文件
             filename, file_path = _download_file(url)
@@ -129,10 +144,17 @@ def import_knowledge_service(collection_name: str, file_url: list[str]) -> None:
             _validate_import_extension(filename)
             # 验证文件是否为空
             _validate_file_not_empty(file_path)
-        except ServiceException:
+            # 解析文件内容
+            pages = FileLoaderFactory.parse_file(file_path)
+            print(f"解析结果: {filename}")
+            print(json.dumps([page.to_dict() for page in pages], ensure_ascii=False, indent=2))
+        except ServiceException as exc:
             failed_urls.append(url)
+            print(f"解析失败: {url}，原因: {exc}")
             continue
-        print(filename)
+        finally:
+            if file_path and file_path.exists():
+                file_path.unlink(missing_ok=True)
 
     if failed_urls:
         print(f"下载或校验失败的URL: {failed_urls}")
