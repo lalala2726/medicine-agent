@@ -5,9 +5,9 @@ from urllib.error import URLError
 from urllib.parse import urlparse
 from urllib.request import urlopen
 
+from app.core.chunking import ChunkStrategyType, SplitConfig, split_file
 from app.core.codes import ResponseCode
 from app.core.exceptions import ServiceException
-from app.core.chunking import ChunkStrategyType, SplitConfig, split_file
 from app.core.file_loader.base import cleanup_temp_assets
 from app.core.file_loader.factory import FileLoaderFactory
 from app.services import vector_service
@@ -233,13 +233,21 @@ def import_knowledge_service(
             # 6. 向量化并写入 Milvus
             texts = [chunk.text for chunk in chunks if chunk.text.strip()]
             if texts:
+                embeddings = vector_service.embed_texts(texts)
+                vector_service.insert_embeddings(
+                    knowledge_name,
+                    document_id,
+                    embeddings,
+                    texts,
+                )
                 logger.info(
-                    "已获取文本切片：filename=%s, text_count=%s",
+                    "向量写入完成：filename=%s, text_count=%s",
                     filename,
                     len(texts),
                 )
             else:
                 logger.warning("未生成有效文本，跳过向量写入：filename=%s", filename)
+
             keep_file = True
             results.append(
                 {
@@ -249,7 +257,6 @@ def import_knowledge_service(
                     "pages": parsed["pages"],
                 }
             )
-            logger.info("文件处理完成：filename=%s, file_url=%s", filename, url)
         except ServiceException as exc:
             logger.error(
                 "文件处理失败：file_url=%s, filename=%s, error=%s",
