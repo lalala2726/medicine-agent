@@ -10,7 +10,10 @@
       "Bash(git -C /Users/zhangchuang/PycharmProjects/medicine-ai-agent show --stat c4fd257)",
       "Bash(git -C /Users/zhangchuang/PycharmProjects/medicine-ai-agent show --stat d2072eb)",
       "Bash(git -C /Users/zhangchuang/PycharmProjects/medicine-ai-agent show --stat 961c619)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(python3:*)",
+      "Bash(poetry install:*)",
+      "Bash(pip3 list:*)"
     ]
   }
 }

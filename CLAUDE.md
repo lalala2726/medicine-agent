@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a **FastAPI-based medicine AI service** that analyzes drug packaging images using Large Language Models (LLMs). It receives base64-encoded images, processes them through Alibaba's Qwen VL models, and returns structured drug information.
+This is a **FastAPI-based medicine AI service** that analyzes drug packaging images using Large Language Models (LLMs).
+It receives base64-encoded images, processes them through Alibaba's Qwen VL models, and returns structured drug
+information.
 
 **Tech Stack:** FastAPI, LangChain, Qwen VL (via DashScope API), Pydantic
 
@@ -22,6 +24,7 @@ python -m pytest tests/test_specific.py
 ```
 
 **Required Environment Variable:**
+
 - `DASHSCOPE_API_KEY` - Alibaba DashScope API key for Qwen models
 
 ## Architecture
@@ -63,14 +66,18 @@ The application implements a **three-tier global exception handling** system reg
 2. **StarletteHTTPException** - HTTP exceptions (404, 422, etc.)
 3. **Exception** - Catch-all for unhandled errors
 
-All exceptions are converted to `ApiResponse` format via `ExceptionHandlers` static methods in `app/core/exception_handlers.py`. The `ResponseCode` IntEnum (`app/core/codes.py`) defines standard HTTP status codes with messages.
+All exceptions are converted to `ApiResponse` format via `ExceptionHandlers` static methods in
+`app/core/exception_handlers.py`. The `ResponseCode` IntEnum (`app/core/codes.py`) defines standard HTTP status codes
+with messages.
 
 **Raising exceptions:**
+
 ```python
 raise ServiceException(message="Custom error", code=ResponseCode.BAD_REQUEST)
 ```
 
 **Response pattern:**
+
 ```python
 return ApiResponse.success(data)  # 200 with data
 return ApiResponse.error(ResponseCode.NOT_FOUND)  # 404 with default message
@@ -94,10 +101,12 @@ The `ChatOpenAI` adapter from LangChain is used for Qwen model compatibility.
 5. Include router in `app/api/main.py`
 
 Example:
+
 ```python
 from app.schemas.response import ApiResponse
 from app.core.exceptions import ServiceException
 from app.core.codes import ResponseCode
+
 
 @router.post("/endpoint")
 async def endpoint(request: RequestSchema) -> ApiResponse[ResponseSchema]:
@@ -111,13 +120,17 @@ async def endpoint(request: RequestSchema) -> ApiResponse[ResponseSchema]:
 ## Response Schema
 
 All API responses follow this structure via `ApiResponse[T]`:
+
 ```json
 {
   "code": 200,
   "message": "success",
-  "data": {...},
+  "data": {
+    ...
+  },
   "timestamp": 1737888000
 }
 ```
 
-The `.model_dump()` method automatically excludes `None` values. Use type generics for type safety: `ApiResponse[DrugData]`.
+The `.model_dump()` method automatically excludes `None` values. Use type generics for type safety:
+`ApiResponse[DrugData]`.

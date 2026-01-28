@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
 
-from app.main import app
 from app.api.routes import image_parse as image_parse_module
+from app.main import app
 
 
 def test_image_parse_success(monkeypatch):
