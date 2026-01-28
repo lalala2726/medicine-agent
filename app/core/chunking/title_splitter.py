@@ -4,8 +4,8 @@ from typing import List
 
 from langchain_text_splitters import MarkdownHeaderTextSplitter
 
-from app.services.chunking.base import ChunkStrategy, SplitChunk, SplitConfig, build_page_metadata
-from app.services.file_loader.base import PageContent
+from app.core.chunking.base import ChunkStrategy, SplitChunk, SplitConfig, build_page_metadata
+from app.core.file_loader.base import PageContent
 
 DEFAULT_HEADERS = [
     ("#", "title"),

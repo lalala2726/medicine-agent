@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from app.services import knowledge_base_service
-from app.services.chunking import ChunkStrategyType
+from app.core.chunking import ChunkStrategyType
 
 
 class DummyClient:
@@ -25,7 +25,11 @@ class DummyClient:
 
 def test_import_knowledge_service_registers_and_cleanup(monkeypatch, tmp_path):
     # 伪造 milvus client
-    monkeypatch.setattr(knowledge_base_service, "get_milvus_client", lambda: DummyClient())
+    monkeypatch.setattr(
+        knowledge_base_service.vector_service,
+        "get_milvus_client",
+        lambda: DummyClient(),
+    )
 
     # 控制图片临时目录父路径
     monkeypatch.setenv("FILE_IMAGE_OUTPUT_DIR", str(tmp_path))
@@ -39,14 +43,6 @@ def test_import_knowledge_service_registers_and_cleanup(monkeypatch, tmp_path):
         return "download.txt", file_path
 
     monkeypatch.setattr(knowledge_base_service, "_download_file", fake_download_file)
-
-    class DummyEmbedder:
-        def embed_documents(self, texts: list[str]) -> list[list[float]]:
-            return [[0.0, 0.0, 0.0] for _ in texts]
-
-    monkeypatch.setattr(
-        knowledge_base_service, "get_embedding_model", lambda: DummyEmbedder()
-    )
 
     result = knowledge_base_service.import_knowledge_service(
         "demo",
@@ -78,7 +74,11 @@ def test_import_knowledge_service_raises_when_collection_missing(monkeypatch):
         def has_collection(self, name: str) -> bool:
             return False
 
-    monkeypatch.setattr(knowledge_base_service, "get_milvus_client", lambda: MissingClient())
+    monkeypatch.setattr(
+        knowledge_base_service.vector_service,
+        "get_milvus_client",
+        lambda: MissingClient(),
+    )
 
     with pytest.raises(knowledge_base_service.ServiceException):
         knowledge_base_service.import_knowledge_service(

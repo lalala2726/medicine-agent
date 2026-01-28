@@ -7,7 +7,7 @@ from typing import List, Optional, Tuple
 from PIL import Image as PilImage
 from pypdf import PdfReader
 
-from app.services.file_loader.base import (
+from app.core.file_loader.base import (
     FileLoader,
     ImageInfo,
     PageContent,

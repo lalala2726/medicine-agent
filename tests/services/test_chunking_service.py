@@ -1,6 +1,6 @@
 import importlib.util
 
-from app.services.chunking import ChunkStrategyType, SplitConfig, split_file
+from app.core.chunking import ChunkStrategyType, SplitConfig, split_file
 
 
 def test_length_chunker_splits_by_size(tmp_path):

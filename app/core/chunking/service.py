@@ -3,9 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import List, Optional, Union
 
-from app.services.chunking.base import ChunkStrategyType, SplitChunk, SplitConfig
-from app.services.chunking.factory import ChunkerFactory
-from app.services.file_loader.factory import FileLoaderFactory
+from app.core.chunking.base import ChunkStrategyType, SplitChunk, SplitConfig
+from app.core.chunking.factory import ChunkerFactory
+from app.core.file_loader.factory import FileLoaderFactory
 
 
 def split_file(

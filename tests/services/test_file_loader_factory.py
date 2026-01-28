@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from app.services.file_loader.base import cleanup_temp_assets
-from app.services.file_loader.factory import FileLoaderFactory
+from app.core.file_loader.base import cleanup_temp_assets
+from app.core.file_loader.factory import FileLoaderFactory
 
 
 def test_parse_file_with_images_creates_dir_and_registers(monkeypatch, tmp_path):

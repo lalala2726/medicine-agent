@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.core.exceptions import ServiceException
 from app.schemas.response import ApiResponse
-from app.services.chunking import ChunkStrategyType
+from app.core.chunking import ChunkStrategyType
 from app.services.knowledge_base_service import (
     create_collection,
     delete_collection,

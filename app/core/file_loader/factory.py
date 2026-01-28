@@ -5,18 +5,18 @@ from typing import Dict, Type
 
 from app.core.codes import ResponseCode
 from app.core.exceptions import ServiceException
-from app.services.file_loader.base import (
+from app.core.file_loader.base import (
     FileLoader,
     create_temp_image_dir,
     register_temp_assets,
 )
-from app.services.file_loader.docx_loader import WordLoader
-from app.services.file_loader.excel_loader import ExcelLoader
-from app.services.file_loader.html_loader import HtmlLoader
-from app.services.file_loader.image_loader import ImageLoader
-from app.services.file_loader.pdf_loader import PdfLoader
-from app.services.file_loader.pptx_loader import PptxLoader
-from app.services.file_loader.text_loader import TextLoader
+from app.core.file_loader.docx_loader import WordLoader
+from app.core.file_loader.excel_loader import ExcelLoader
+from app.core.file_loader.html_loader import HtmlLoader
+from app.core.file_loader.image_loader import ImageLoader
+from app.core.file_loader.pdf_loader import PdfLoader
+from app.core.file_loader.pptx_loader import PptxLoader
+from app.core.file_loader.text_loader import TextLoader
 
 
 class FileLoaderFactory:

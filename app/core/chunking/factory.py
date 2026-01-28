@@ -3,11 +3,11 @@ from __future__ import annotations
 from typing import Dict
 
 from app.core.exceptions import ServiceException
-from app.services.chunking.base import ChunkStrategy, ChunkStrategyType
-from app.services.chunking.length_splitter import LengthChunker
-from app.services.chunking.recursive_splitter import RecursiveChunker
-from app.services.chunking.title_splitter import TitleChunker
-from app.services.chunking.token_splitter import TokenChunker
+from app.core.chunking.base import ChunkStrategy, ChunkStrategyType
+from app.core.chunking.length_splitter import LengthChunker
+from app.core.chunking.recursive_splitter import RecursiveChunker
+from app.core.chunking.title_splitter import TitleChunker
+from app.core.chunking.token_splitter import TokenChunker
 
 
 class ChunkerFactory:
