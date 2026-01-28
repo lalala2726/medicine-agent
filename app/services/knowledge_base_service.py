@@ -16,6 +16,7 @@ from pymilvus import (
 from app.core.codes import ResponseCode
 from app.core.exceptions import ServiceException
 from app.core.milvus import get_milvus_client
+from app.services.chunking import ChunkStrategyType, SplitConfig, split_file
 from app.services.file_loader.base import cleanup_temp_assets
 from app.services.file_loader.factory import FileLoaderFactory
 
@@ -255,6 +256,24 @@ def import_knowledge_service(collection_name: str, file_url: list[str]) -> dict:
             # 4. 解析文件内容（包括图片提取）
             parsed = FileLoaderFactory.parse_file_with_images(
                 file_path, source_name=filename
+            )
+            # 5. 按长度切片（500 字符）并打印
+            chunks = split_file(
+                file_path,
+                ChunkStrategyType.LENGTH,
+                SplitConfig(chunk_size=500, chunk_overlap=0),
+            )
+            print(
+                json.dumps(
+                    {
+                        "file_url": url,
+                        "filename": filename,
+                        "chunk_count": len(chunks),
+                        "chunks": [chunk.to_dict() for chunk in chunks],
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
             )
             # 输出解析结果（用于调试）
             print(
