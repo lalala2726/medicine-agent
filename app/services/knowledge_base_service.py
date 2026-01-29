@@ -16,6 +16,7 @@ from app.utils.log import logger
 DOWNLOAD_CHUNK_SIZE = 1024 * 1024  # 文件下载块大小：1MB
 DEFAULT_CHUNK_SIZE = 500  # 默认切片长度（字符）
 DEFAULT_TOKEN_SIZE = 100  # 默认 token 切片长度
+DEFAULT_CHUNK_OVERLAP = 50  # 默认切片重叠长度（字符）
 # 支持导入的文件扩展名集合
 SUPPORTED_IMPORT_EXTENSIONS = {
     ".txt",
@@ -221,7 +222,10 @@ def import_knowledge_service(
             chunks = split_file(
                 file_path,
                 chunk_strategy,
-                SplitConfig(chunk_size=effective_chunk_size, chunk_overlap=0),
+                SplitConfig(
+                    chunk_size=effective_chunk_size,
+                    chunk_overlap=DEFAULT_CHUNK_OVERLAP,
+                ),
             )
             logger.info(
                 "切片完成：filename=%s, chunk_strategy=%s, chunk_size=%s, chunks=%s",
