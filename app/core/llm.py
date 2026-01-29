@@ -4,9 +4,10 @@ from typing import Any, Optional
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from pydantic import SecretStr
 
-DEFAULT_CHAT_MODEL = "qwen-flash"
-DEFAULT_EMBEDDING_MODEL = "text-embedding-v4"
-DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+# Load from environment variables
+DEFAULT_CHAT_MODEL = os.getenv("DASHSCOPE_CHAT_MODEL", "qwen-flash")
+DEFAULT_EMBEDDING_MODEL = os.getenv("DASHSCOPE_EMBEDDING_MODEL", "text-embedding-v4")
+DEFAULT_BASE_URL = os.getenv("DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
 
 
 def create_chat_model(
