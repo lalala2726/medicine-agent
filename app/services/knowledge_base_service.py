@@ -154,12 +154,12 @@ def import_knowledge_service(
 
     Returns:
         包含成功解析结果和失败 URL 列表的字典
-        :param knowledge_name:
-        :param document_id:
-        :param file_url:
-        :param chunk_strategy:
-        :param chunk_size:
-        :param token_size:
+        :param knowledge_name: 知识库名
+        :param document_id: 文档ID
+        :param file_url: 文件URL
+        :param chunk_strategy: 切片策略
+        :param chunk_size: 切片长度
+        :param token_size: token 切片长度
     """
     logger.info(
         "开始导入知识库：knowledge_name=%s, document_id=%s, file_count=%s, chunk_strategy=%s, chunk_size=%s, token_size=%s",
