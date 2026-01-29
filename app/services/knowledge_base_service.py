@@ -16,6 +16,7 @@ from app.utils.log import logger
 DOWNLOAD_CHUNK_SIZE = 1024 * 1024  # 文件下载块大小：1MB
 DEFAULT_CHUNK_SIZE = 500  # 默认切片长度（字符）
 DEFAULT_TOKEN_SIZE = 100  # 默认 token 切片长度
+DEFAULT_PARSE_IMAGES = False  # 默认不解析图片
 DEFAULT_CHUNK_OVERLAP = 50  # 默认切片重叠长度（字符）
 # 支持导入的文件扩展名集合
 SUPPORTED_IMPORT_EXTENSIONS = {
@@ -145,6 +146,7 @@ def import_knowledge_service(
         chunk_strategy: ChunkStrategyType = ChunkStrategyType.LENGTH,
         chunk_size: int = DEFAULT_CHUNK_SIZE,
         token_size: int = DEFAULT_TOKEN_SIZE,
+        parse_images: bool = DEFAULT_PARSE_IMAGES,
 ) -> dict:
     """
     知识库导入服务：批量下载、解析文件并返回结果。
@@ -161,15 +163,17 @@ def import_knowledge_service(
         :param chunk_strategy: 切片策略
         :param chunk_size: 切片长度
         :param token_size: token 切片长度
+        :param parse_images: 是否解析图片
     """
     logger.info(
-        "开始导入知识库：knowledge_name=%s, document_id=%s, file_count=%s, chunk_strategy=%s, chunk_size=%s, token_size=%s",
+        "开始导入知识库：knowledge_name=%s, document_id=%s, file_count=%s, chunk_strategy=%s, chunk_size=%s, token_size=%s, parse_images=%s",
         knowledge_name,
         document_id,
         len(file_url) if file_url else 0,
         chunk_strategy.value,
         chunk_size,
         token_size,
+        parse_images,
     )
     # 验证 knowledge 是否存在
     vector_service.ensure_collection_exists(knowledge_name)
@@ -203,10 +207,17 @@ def import_knowledge_service(
             _validate_import_extension(filename)
             # 3. 验证文件不为空
             _validate_file_not_empty(file_path)
-            # 4. 解析文件内容（包括图片提取）
-            parsed = FileLoaderFactory.parse_file_with_images(
-                file_path, source_name=filename
-            )
+            # 4. 解析文件内容（默认不解析图片，需显式开启）
+            if parse_images:
+                parsed = FileLoaderFactory.parse_file_with_images(
+                    file_path, source_name=filename
+                )
+            else:
+                pages = FileLoaderFactory.parse_file(file_path)
+                parsed = {
+                    "image_dir": None,
+                    "pages": [page.to_dict() for page in pages],
+                }
             logger.info(
                 "解析完成：filename=%s, pages=%s, image_dir=%s",
                 filename,

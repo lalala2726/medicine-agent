@@ -234,7 +234,7 @@ def _parse_docx(file_path: Path, output_dir: Optional[Path]) -> List[PageContent
     """
     document = Document(str(file_path))
     pages: List[PageContent] = [PageContent(page_number=1, text="")]
-    image_output_dir = ensure_image_output_dir(output_dir)
+    image_output_dir = ensure_image_output_dir(output_dir) if output_dir else None
     image_index = 1
 
     for block in _iter_block_items(document):
@@ -244,16 +244,17 @@ def _parse_docx(file_path: Path, output_dir: Optional[Path]) -> List[PageContent
             pages[-1].text += text + "\n"
 
         # 解析并保存当前 block 内的图片
-        images, image_index = _extract_images_from_block(
-            document=document,
-            block=block,
-            output_dir=image_output_dir,
-            file_stem=file_path.stem,
-            page_number=pages[-1].page_number,
-            start_index=image_index,
-        )
-        if images:
-            pages[-1].images.extend(images)
+        if image_output_dir:
+            images, image_index = _extract_images_from_block(
+                document=document,
+                block=block,
+                output_dir=image_output_dir,
+                file_stem=file_path.stem,
+                page_number=pages[-1].page_number,
+                start_index=image_index,
+            )
+            if images:
+                pages[-1].images.extend(images)
 
         # 检测分页符，创建新页面
         if isinstance(block, Paragraph) and _block_has_page_break(block):

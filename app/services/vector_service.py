@@ -7,8 +7,8 @@ from pymilvus import (
 
 from app.core.codes import ResponseCode
 from app.core.exceptions import ServiceException
-from app.core.milvus import get_milvus_client
 from app.core.llm import create_embedding_client
+from app.core.milvus import get_milvus_client
 from app.utils.log import PrintLogger
 from app.utils.token_utills import TokenUtils
 
@@ -149,10 +149,10 @@ def ensure_collection_exists(knowledge_name: str) -> None:
 
 
 def insert_embeddings(
-    knowledge_name: str,
-    document_id: int,
-    embeddings: list[list[float]],
-    texts: list[str],
+        knowledge_name: str,
+        document_id: int,
+        embeddings: list[list[float]],
+        texts: list[str],
 ) -> None:
     """
     写入向量数据到 Milvus。

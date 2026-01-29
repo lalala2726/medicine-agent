@@ -50,7 +50,7 @@ def _parse_pptx(file_path: Path, output_dir: Optional[Path]) -> List[PageContent
     """
     presentation = Presentation(str(file_path))
     pages: List[PageContent] = []
-    image_output_dir = ensure_image_output_dir(output_dir)
+    image_output_dir = ensure_image_output_dir(output_dir) if output_dir else None
     image_index = 1
     # 图片类型枚举
     picture_types = {
@@ -76,7 +76,7 @@ def _parse_pptx(file_path: Path, output_dir: Optional[Path]) -> List[PageContent
                 if table_text.strip():
                     texts.append(table_text.strip())
             # 提取图片
-            if shape.shape_type in picture_types:
+            if shape.shape_type in picture_types and image_output_dir:
                 try:
                     image = shape.image
                     filename = getattr(image, "filename", None)

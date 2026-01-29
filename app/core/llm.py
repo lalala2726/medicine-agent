@@ -34,11 +34,11 @@ def create_chat_model(
 
 
 def create_embedding_client(
-    model: Optional[str] = DEFAULT_EMBEDDING_MODEL,
-    api_key: Optional[str] = None,
-    base_url: Optional[str] = DEFAULT_BASE_URL,
-    dimensions: Optional[int] = 1024,
-    **kwargs
+        model: Optional[str] = DEFAULT_EMBEDDING_MODEL,
+        api_key: Optional[str] = None,
+        base_url: Optional[str] = DEFAULT_BASE_URL,
+        dimensions: Optional[int] = 1024,
+        **kwargs
 ) -> OpenAIEmbeddings:
     """
     Create an OpenAI-compatible Embedding client

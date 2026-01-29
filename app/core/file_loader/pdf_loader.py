@@ -231,17 +231,19 @@ class PdfLoader(FileLoader):
         """
         reader = PdfReader(str(file_path))
         pages: List[PageContent] = []
-        image_output_dir = ensure_image_output_dir(output_dir)
+        image_output_dir = ensure_image_output_dir(output_dir) if output_dir else None
         image_index = 1
         for index, page in enumerate(reader.pages, start=1):
             # 每页分别提取文本和图片
             text = page.extract_text() or ""
-            images, image_index = _extract_page_images(
-                page=page,
-                output_dir=image_output_dir,
-                file_stem=file_path.stem,
-                page_number=index,
-                start_index=image_index,
-            )
+            images: List[ImageInfo] = []
+            if image_output_dir:
+                images, image_index = _extract_page_images(
+                    page=page,
+                    output_dir=image_output_dir,
+                    file_stem=file_path.stem,
+                    page_number=index,
+                    start_index=image_index,
+                )
             pages.append(PageContent(page_number=index, text=text, images=images))
         return pages

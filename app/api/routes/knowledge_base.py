@@ -3,9 +3,9 @@ from typing import Optional
 from fastapi import APIRouter, BackgroundTasks, Path
 from pydantic import BaseModel, Field, field_validator
 
+from app.core.chunking import ChunkStrategyType
 from app.core.exceptions import ServiceException
 from app.schemas.response import ApiResponse
-from app.core.chunking import ChunkStrategyType
 from app.services.knowledge_base_service import (
     create_collection,
     delete_knowledge,
@@ -59,6 +59,7 @@ class ImportKnowledgeRequest(BaseModel):
     token_size: int = Field(
         default=100, ge=1, le=1000, description="token 大小（1-1000token）"
     )
+    parse_images: bool = Field(default=False, description="是否解析图片")
 
 
 @router.post(path="", summary="创建知识库")
@@ -72,12 +73,12 @@ async def create_knowledge_base(request: CreateCollectionRequest) -> ApiResponse
 
 @router.delete("/{knowledge_name}", summary="删除知识库")
 async def delete_knowledge_base(
-    knowledge_name: str = Path(
-        ...,
-        min_length=1,
-        pattern=r"^[A-Za-z][A-Za-z0-9_]*$",
-        description="knowledge 名称（仅英文/数字/下划线，需以字母开头）",
-    )
+        knowledge_name: str = Path(
+            ...,
+            min_length=1,
+            pattern=r"^[A-Za-z][A-Za-z0-9_]*$",
+            description="knowledge 名称（仅英文/数字/下划线，需以字母开头）",
+        )
 ) -> ApiResponse[dict]:
     delete_knowledge(knowledge_name)
     return ApiResponse.success(
@@ -98,5 +99,6 @@ async def import_knowledge(
         request.chunk_strategy,
         request.chunk_size,
         request.token_size,
+        request.parse_images,
     )
     return ApiResponse.success("已接收导入请求，正在后台处理中～")
