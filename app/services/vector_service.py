@@ -17,6 +17,7 @@ DEFAULT_VECTOR_INDEX_TYPE = "AUTOINDEX"
 DEFAULT_VECTOR_METRIC_TYPE = "COSINE"
 EMBED_BATCH_SIZE = 10  # 向量模型单次最大处理文本数
 EMBED_MAX_WORKERS = 5  # 最大并发线程数
+EMBED_MAX_TOKEN_SIZE = 8192
 
 
 def _build_index_params(client: "MilvusClient"):
@@ -194,7 +195,7 @@ def insert_embeddings(
 def embed_texts(texts: list[str]) -> list[list[float]]:
     counts = TokenUtils.count_tokens_list(texts)
     for count in counts:
-        if count > 8196:
+        if count > EMBED_MAX_TOKEN_SIZE:
             # todo 超出长度限制这边应该截断或者直接拒绝
             PrintLogger.error("文本长度超出限制")
             pass
@@ -204,9 +205,28 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
         return []
 
     def _split_batches(items: list[str], batch_size: int) -> list[list[str]]:
+        """
+        将文本列表按指定批次大小进行分割。
+
+        Args:
+            items: 待分割的文本列表
+            batch_size: 每个批次的大小
+
+        Returns:
+            分割后的文本批次列表
+        """
         return [items[i:i + batch_size] for i in range(0, len(items), batch_size)]
 
     def _embed_batch(batch: list[str]) -> list[list[float]]:
+        """
+        对单个批次的文本进行向量嵌入。
+
+        Args:
+            batch: 文本批次列表
+
+        Returns:
+            嵌入向量列表
+        """
         return embeddings_model.embed_documents(batch)
 
     batches = _split_batches(texts, EMBED_BATCH_SIZE)
