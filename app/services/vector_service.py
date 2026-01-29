@@ -15,6 +15,8 @@ from app.utils.token_utills import TokenUtils
 DEFAULT_CONTENT_MAX_LENGTH = 65535  # 内容字段最大长度
 DEFAULT_VECTOR_INDEX_TYPE = "AUTOINDEX"
 DEFAULT_VECTOR_METRIC_TYPE = "COSINE"
+EMBED_BATCH_SIZE = 10  # 向量模型单次最大处理文本数
+EMBED_MAX_WORKERS = 5  # 最大并发线程数
 
 
 def _build_index_params(client: "MilvusClient"):
@@ -198,8 +200,31 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
             pass
 
     embeddings_model = create_embedding_client()
+    if not texts:
+        return []
+
+    def _split_batches(items: list[str], batch_size: int) -> list[list[str]]:
+        return [items[i:i + batch_size] for i in range(0, len(items), batch_size)]
+
+    def _embed_batch(batch: list[str]) -> list[list[float]]:
+        return embeddings_model.embed_documents(batch)
+
+    batches = _split_batches(texts, EMBED_BATCH_SIZE)
+    # 计算文本；列表是否达到需要开启并行处理
+    if len(batches) == 1:
+        try:
+            return _embed_batch(batches[0])
+        except Exception as exc:
+            raise ServiceException(f"嵌入文本失败: {exc}") from exc
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    results: list[list[float]] = []
     try:
-        result = embeddings_model.embed_documents(texts)
+        with ThreadPoolExecutor(max_workers=EMBED_MAX_WORKERS) as executor:
+            futures = [executor.submit(_embed_batch, batch) for batch in batches]
+            for future in futures:
+                results.extend(future.result())
     except Exception as exc:
-        raise ServiceException(f"嵌入文本失败: {exc}")
-    return result
+        raise ServiceException(f"嵌入文本失败: {exc}") from exc
+    return results
