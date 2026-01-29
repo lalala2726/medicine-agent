@@ -9,18 +9,18 @@ class DummyChatOpenAI:
         self.kwargs = kwargs
 
 
-def test_get_chat_model_requires_key(monkeypatch):
+def test_create_chat_model_requires_key(monkeypatch):
     monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
 
     with pytest.raises(RuntimeError):
-        llm.get_chat_model(api_key=None)
+        llm.create_chat_model(api_key=None)
 
 
-def test_get_chat_model_passes_kwargs(monkeypatch):
+def test_create_chat_model_passes_kwargs(monkeypatch):
     monkeypatch.setenv("DASHSCOPE_API_KEY", "test-key")
     monkeypatch.setattr(llm, "ChatOpenAI", DummyChatOpenAI)
 
-    model = llm.get_chat_model(
+    model = llm.create_chat_model(
         model="custom-model",
         base_url="https://example.test",
         response_format={"type": "json_object"},

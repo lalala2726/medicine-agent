@@ -9,7 +9,7 @@ DEFAULT_EMBEDDING_MODEL = "text-embedding-v4"
 DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
 
-def get_chat_model(
+def create_chat_model(
         model: str = DEFAULT_CHAT_MODEL,
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,

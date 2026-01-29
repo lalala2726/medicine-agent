@@ -36,7 +36,7 @@ app/main.py              # FastAPI app bootstrap & global exception handler regi
 ├── app/api/main.py      # API router aggregator (prefix: /api)
 │   └── app/api/routes/  # Feature-specific route handlers
 ├── app/core/
-│   ├── llm.py           # LLM client factory (get_chat_model)
+│   ├── llm.py           # LLM client factory (create_chat_model)
 │   ├── prompts.py       # AI prompt templates (DRUG_PARSER_PROMPT)
 │   ├── codes.py         # ResponseCode IntEnum
 │   ├── exceptions.py    # ServiceException class
@@ -51,7 +51,7 @@ app/main.py              # FastAPI app bootstrap & global exception handler regi
 Client Request
   → POST /api/image/parse/drug
   → Pydantic schema validation (ImageParseRequest)
-  → get_chat_model("qwen3-vl-plus", response_format={"type": "json_object"})
+  → create_chat_model("qwen3-vl-plus", response_format={"type": "json_object"})
   → LangChain messages (SystemMessage + HumanMessage with image parts)
   → Qwen model invocation → JSON parsing
   → ApiResponse.success(data) wrapper
@@ -85,7 +85,7 @@ return ApiResponse.error(ResponseCode.NOT_FOUND)  # 404 with default message
 
 ## LLM Integration
 
-- **Factory function:** `get_chat_model()` in `app/core/llm.py`
+- **Factory function:** `create_chat_model()` in `app/core/llm.py`
 - **Default model:** `qwen-flash` (configurable)
 - **Base URL:** Alibaba DashScope API (`https://dashscope.aliyuncs.com/compatible-mode/v1`)
 - **Structured output:** Use `response_format={"type": "json_object"}` for JSON responses

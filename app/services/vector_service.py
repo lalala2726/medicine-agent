@@ -8,9 +8,9 @@ from pymilvus import (
 from app.core.codes import ResponseCode
 from app.core.exceptions import ServiceException
 from app.core.milvus import get_milvus_client
-from core.llm import create_embedding_client
-from utils.log import PrintLogger
-from utils.token_utills import TokenUtils
+from app.core.llm import create_embedding_client
+from app.utils.log import PrintLogger
+from app.utils.token_utills import TokenUtils
 
 DEFAULT_CONTENT_MAX_LENGTH = 65535  # 内容字段最大长度
 DEFAULT_VECTOR_INDEX_TYPE = "AUTOINDEX"
