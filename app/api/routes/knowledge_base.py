@@ -73,24 +73,29 @@ async def create_knowledge_base(request: CreateCollectionRequest) -> ApiResponse
     )
 
 
-@router.delete("/{knowledge_name}", summary="删除知识库")
+class DeleteKnowledgeRequest(BaseModel):
+    """删除知识库请求参数"""
+    knowledge_name: str = Field(
+        ..., pattern=r"^[A-Za-z][A-Za-z0-9_]*$", description="知识库名称"
+    )
+
+
+@router.delete("", summary="删除知识库")
 async def delete_knowledge_base(
-        knowledge_name: str = Path(
-            ..., pattern=r"^[A-Za-z][A-Za-z0-9_]*$", description="知识库名称"
-        )
+        request: DeleteKnowledgeRequest,
 ) -> ApiResponse[dict]:
     """
     删除知识库
 
     Args:
-        knowledge_name: 知识库名称
+        request: 删除知识库请求参数
 
     Returns:
         ApiResponse[dict]: 删除成功响应
     """
-    delete_knowledge(knowledge_name)
+    delete_knowledge(request.knowledge_name)
     return ApiResponse.success(
-        data={"knowledge_name": knowledge_name},
+        data={"knowledge_name": request.knowledge_name},
         message="删除成功",
     )
 
