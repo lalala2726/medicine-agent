@@ -303,7 +303,8 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
     counts = TokenUtils.count_tokens_list(texts)
     for count in counts:
         if count > EMBED_MAX_TOKEN_SIZE:
-            raise ServiceException(f"文本超出最大 token 数限制，最大 token 数为 {EMBED_MAX_TOKEN_SIZE}, 当前 token 数为 {count}")
+            raise ServiceException(
+                f"文本超出最大 token 数限制，最大 token 数为 {EMBED_MAX_TOKEN_SIZE}, 当前 token 数为 {count}")
 
     # 获取向量模型
     embeddings_model = create_embedding_client()
