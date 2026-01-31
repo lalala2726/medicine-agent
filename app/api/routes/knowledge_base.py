@@ -1,6 +1,6 @@
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Path
+from fastapi import APIRouter, BackgroundTasks, Depends, Path, Query
 from pydantic import BaseModel, Field, field_validator
 
 from app.core.chunking import ChunkStrategyType
@@ -8,6 +8,7 @@ from app.core.exceptions import ServiceException
 from app.schemas.response import ApiResponse, PageResponse
 from app.services.knowledge_base_service import (
     create_collection,
+    delete_document,
     delete_knowledge,
     import_knowledge_service,
     list_knowledge_chunks,
@@ -104,7 +105,7 @@ class ListDocumentChunksRequest(BaseModel):
     page_size: int = Field(default=10, ge=1, le=100, description="每页数量")
 
 
-@router.get("/chunks/list", summary="分页查询文档切片")
+@router.get("/document/chunks/list", summary="分页查询文档切片")
 async def list_document_chunks(
         request: ListDocumentChunksRequest = Depends(),
 ) -> ApiResponse[PageResponse[dict]]:
@@ -130,8 +131,37 @@ async def list_document_chunks(
         page_size=request.page_size,
     )
 
+@router.delete("/document/{id}", summary="删除文档切片")
+async def delete_document_chunk(
+        id: int = Path(..., gt=0, description="文档ID"),
+        knowledge_name: str = Query(
+            ...,
+            min_length=1,
+            pattern=r"^[A-Za-z][A-Za-z0-9_]*$",
+            description="知识库名称",
+        ),
+) -> ApiResponse[dict]:
+    """
+    删除文档，当删除文档之后相关知识库中的文档切片也会被删除
 
-@router.post(path="/import", summary="导入知识库")
+    Args:
+        id: 文档ID
+        knowledge_name: 知识库名称
+
+    Returns:
+        ApiResponse[dict]: 删除成功响应
+    """
+    delete_document(
+        knowledge_name=knowledge_name,
+        document_id=id,
+    )
+    return ApiResponse.success(
+        data={"id": id},
+        message="删除成功",
+    )
+
+
+@router.post(path="/document/import", summary="导入知识库")
 async def import_knowledge(
         request: ImportKnowledgeRequest,
         background_tasks: BackgroundTasks

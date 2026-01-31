@@ -361,3 +361,17 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
     except Exception as exc:
         raise ServiceException(f"嵌入文本失败: {exc}") from exc
     return results
+
+
+def delete_document(knowledge_name: str, document_id: int) -> None:
+    client = get_milvus_client()
+    filter_expr = f"document_id == {document_id}"
+    try:
+        client.delete(
+            collection_name=knowledge_name,
+            filter=filter_expr,
+        )
+    except milvus_exceptions.MilvusException as exc:
+        raise ServiceException(
+            code=ResponseCode.OPERATION_FAILED, message=f"删除文档切片失败: {exc}"
+        ) from exc

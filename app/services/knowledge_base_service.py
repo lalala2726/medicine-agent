@@ -307,6 +307,12 @@ def cleanup_import_assets(filename: str) -> dict:
     """
     return cleanup_temp_assets(filename)
 
+def delete_document(knowledge_name: str, document_id: int) -> None:
+    vector_service.ensure_collection_exists(knowledge_name)
+    vector_service.delete_document(
+        knowledge_name=knowledge_name,
+        document_id=document_id,
+    )
 
 def list_knowledge_chunks(
         knowledge_name: str,
