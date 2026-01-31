@@ -25,8 +25,18 @@ class ImageParseRequest(BaseModel):
 
 @router.post("/drug", summary="解析药品图片")
 async def parse_image(request: ImageParseRequest) -> ApiResponse[dict]:
-    """接收 base64 图片并使用大模型进行解析。"""
+    """
+    接收 base64 图片并使用大模型进行解析
 
+    Args:
+        request: 图像解析请求参数
+
+    Returns:
+        ApiResponse[dict]: 解析结果
+
+    Raises:
+        ServiceException: 图片列表为空时抛出异常
+    """
     if not request.images:
         raise ServiceException(code=ResponseCode.BAD_REQUEST, message="图片不能为空")
 

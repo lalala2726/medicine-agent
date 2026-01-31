@@ -18,7 +18,7 @@ class DummyModel:
 
 
 def test_assistant_streaming_response(monkeypatch):
-    monkeypatch.setattr(assistant_module, "get_chat_model", lambda: DummyModel())
+    monkeypatch.setattr(assistant_module, "create_chat_model", lambda: DummyModel())
     client = TestClient(app)
 
     response = client.post("/api/assistant/chat", json={"question": "hi"})

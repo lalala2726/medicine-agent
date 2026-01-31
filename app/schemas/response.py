@@ -43,6 +43,24 @@ class ApiResponse(BaseModel, Generic[T]):
         return cls(code=ResponseCode.SUCCESS, message=message, data=data)
 
     @classmethod
+    def page(
+            cls,
+            *,
+            rows: list[T],
+            total: int,
+            page_num: int,
+            page_size: int,
+            message: str = ResponseCode.SUCCESS.message,
+    ) -> "ApiResponse[PageResponse[T]]":
+        page_data: PageResponse[T] = PageResponse(
+            rows=rows,
+            total=total,
+            page_num=page_num,
+            page_size=page_size,
+        )
+        return cls(code=ResponseCode.SUCCESS, message=message, data=page_data)
+
+    @classmethod
     @overload
     def error(cls, response: ResponseCode, data: T = None) -> "ApiResponse[T]":
         ...
@@ -65,3 +83,20 @@ class ApiResponse(BaseModel, Generic[T]):
 
 class Response(ApiResponse[Any]):
     """API response alias for global handlers."""
+
+
+class PageResponse(BaseModel, Generic[T]):
+    """
+    分页响应模型
+
+    Attributes:
+        rows: 当前页数据列表
+        total: 数据总数
+        page_num: 当前页码
+        page_size: 每页数量
+    """
+
+    rows: list[T] = Field(..., description="当前页数据列表")
+    total: int = Field(..., description="数据总数")
+    page_num: int = Field(..., description="当前页码")
+    page_size: int = Field(..., description="每页数量")

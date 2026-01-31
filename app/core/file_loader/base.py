@@ -87,7 +87,7 @@ class FileLoader(ABC):
 
 # 默认图片输出目录，可通过环境变量 FILE_IMAGE_OUTPUT_DIR 覆盖
 DEFAULT_IMAGE_OUTPUT_DIR = Path(
-    os.getenv("FILE_IMAGE_OUTPUT_DIR", "/Users/zhangchuang/Downloads/testImages")
+    os.getenv("FILE_IMAGE_OUTPUT_DIR", "")
 )
 
 

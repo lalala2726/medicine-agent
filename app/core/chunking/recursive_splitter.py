@@ -5,8 +5,8 @@ from typing import List
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-from app.core.exceptions import ServiceException
 from app.core.chunking.base import ChunkStrategy, SplitChunk, SplitConfig, build_page_metadata
+from app.core.exceptions import ServiceException
 from app.core.file_loader.base import PageContent
 
 

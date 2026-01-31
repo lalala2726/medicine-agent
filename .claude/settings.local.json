@@ -13,7 +13,8 @@
       "Bash(python:*)",
       "Bash(python3:*)",
       "Bash(poetry install:*)",
-      "Bash(pip3 list:*)"
+      "Bash(pip3 list:*)",
+      "Bash(ls:*)"
     ]
   }
 }

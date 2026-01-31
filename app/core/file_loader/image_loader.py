@@ -28,6 +28,10 @@ class ImageLoader(FileLoader):
         Returns:
             单页内容（包含图片信息，无文本）
         """
+        # 默认不解析图片，只有显式传入 output_dir 才会处理
+        if not output_dir:
+            return [PageContent(page_number=1, text="")]
+
         # 图片文件只做标注，不解析文本内容
         image_output_dir = ensure_image_output_dir(output_dir)
         # 复制图片到输出目录

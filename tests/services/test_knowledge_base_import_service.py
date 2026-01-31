@@ -2,11 +2,14 @@ from pathlib import Path
 
 import pytest
 
-from app.services import knowledge_base_service
 from app.core.chunking import ChunkStrategyType
+from app.services import knowledge_base_service
 
 
 class DummyClient:
+    def __init__(self) -> None:
+        self.inserted_data: list[dict] = []
+
     def has_collection(self, name: str) -> bool:
         return True
 
@@ -20,15 +23,22 @@ class DummyClient:
         }
 
     def insert(self, collection_name: str, data: list[dict]) -> None:
+        self.inserted_data.extend(data)
         return None
 
 
 def test_import_knowledge_service_registers_and_cleanup(monkeypatch, tmp_path):
     # 伪造 milvus client
+    dummy_client = DummyClient()
     monkeypatch.setattr(
         knowledge_base_service.vector_service,
         "get_milvus_client",
-        lambda: DummyClient(),
+        lambda: dummy_client,
+    )
+    monkeypatch.setattr(
+        knowledge_base_service.vector_service,
+        "embed_texts",
+        lambda texts: [[0.0, 0.0, 0.0] for _ in texts],
     )
 
     # 控制图片临时目录父路径
@@ -58,6 +68,8 @@ def test_import_knowledge_service_registers_and_cleanup(monkeypatch, tmp_path):
     parsed = result["results"][0]
     assert parsed["filename"] == "download.txt"
     assert parsed["pages"][0]["text"].strip() == "data"
+    assert len(dummy_client.inserted_data) == 1
+    assert dummy_client.inserted_data[0]["content"].strip() == "data"
 
     image_dir = Path(parsed["image_dir"])
     assert image_dir.exists()

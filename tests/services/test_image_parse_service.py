@@ -24,11 +24,11 @@ def test_parse_drug_images_normalizes_and_parses(monkeypatch):
     capture = {}
     kwargs_capture = {}
 
-    def fake_get_chat_model(**kwargs):
+    def fake_create_chat_model(**kwargs):
         kwargs_capture.update(kwargs)
         return DummyModel('{"ok": true}', capture)
 
-    monkeypatch.setattr(image_parse_service, "get_chat_model", fake_get_chat_model)
+    monkeypatch.setattr(image_parse_service, "create_chat_model", fake_create_chat_model)
 
     result = image_parse_service.parse_drug_images(
         ["rawbase64", "data:image/jpeg;base64,abc123"]
@@ -46,10 +46,10 @@ def test_parse_drug_images_normalizes_and_parses(monkeypatch):
 
 
 def test_parse_drug_images_raises_on_invalid_json(monkeypatch):
-    def fake_get_chat_model(**kwargs):
+    def fake_create_chat_model(**kwargs):
         return DummyModel("not-json", {})
 
-    monkeypatch.setattr(image_parse_service, "get_chat_model", fake_get_chat_model)
+    monkeypatch.setattr(image_parse_service, "create_chat_model", fake_create_chat_model)
 
     with pytest.raises(ServiceException) as excinfo:
         image_parse_service.parse_drug_images(["raw"])
