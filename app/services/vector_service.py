@@ -7,7 +7,7 @@ from pymilvus import (
 
 from app.core.codes import ResponseCode
 from app.core.exceptions import ServiceException
-from app.core.llm import create_embedding_client
+from app.core.llm import create_embedding_model
 from app.core.milvus import get_milvus_client
 from app.utils.token_utills import TokenUtils
 
@@ -307,7 +307,7 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
                 f"文本超出最大 token 数限制，最大 token 数为 {EMBED_MAX_TOKEN_SIZE}, 当前 token 数为 {count}")
 
     # 获取向量模型
-    embeddings_model = create_embedding_client()
+    embeddings_model = create_embedding_model()
     if not texts:
         return []
 
