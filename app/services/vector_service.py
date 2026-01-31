@@ -9,7 +9,6 @@ from app.core.codes import ResponseCode
 from app.core.exceptions import ServiceException
 from app.core.llm import create_embedding_client
 from app.core.milvus import get_milvus_client
-from app.utils.log import PrintLogger
 from app.utils.token_utills import TokenUtils
 
 DEFAULT_CONTENT_MAX_LENGTH = 65535  # 内容字段最大长度
@@ -193,13 +192,30 @@ def insert_embeddings(
 
 
 def embed_texts(texts: list[str]) -> list[list[float]]:
+    """
+     对文本列表进行向量化处理。
+
+     说明（以阿里云百炼向量化服务为例）：
+     单次向量化请求（一个 batch）支持的最大输入规模为 8192 个 token，
+        即同一个请求中所有文本的 token 总数之和不能超过 8192。
+     批量处理时，单个 batch 最多支持 10 条文本（batch size ≤ 10），
+        该限制与 token 上限同时生效，而不是相乘关系。
+     并发调用能力受账号配额与平台限流策略约束，具体并发限制请以
+        阿里云百炼控制台展示为准：
+        https://bailian.console.aliyun.com/
+
+     在本函数中为了确保不超过 8192 token 或 10 条文本的限制，我们对文本进行切分处理
+     但是为了兼顾性能这边使用多线程进行处理
+
+     这边返回的文本的向量并且这边会确保是按照顺序返回
+
+     """
     counts = TokenUtils.count_tokens_list(texts)
     for count in counts:
         if count > EMBED_MAX_TOKEN_SIZE:
-            # todo 超出长度限制这边应该截断或者直接拒绝
-            PrintLogger.error("文本长度超出限制")
-            pass
+            raise ServiceException(f"文本超出最大 token 数限制，最大 token 数为 {EMBED_MAX_TOKEN_SIZE}, 当前 token 数为 {count}")
 
+    # 获取向量模型
     embeddings_model = create_embedding_client()
     if not texts:
         return []
@@ -215,7 +231,10 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
         Returns:
             分割后的文本批次列表
         """
-        return [items[i:i + batch_size] for i in range(0, len(items), batch_size)]
+        result = []
+        for i in range(0, len(items), batch_size):
+            result.append(items[i:i + batch_size])
+        return result
 
     def _embed_batch(batch: list[str]) -> list[list[float]]:
         """
@@ -242,7 +261,10 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
     results: list[list[float]] = []
     try:
         with ThreadPoolExecutor(max_workers=EMBED_MAX_WORKERS) as executor:
-            futures = [executor.submit(_embed_batch, batch) for batch in batches]
+            futures = []
+            for batch in batches:
+                future = executor.submit(_embed_batch, batch)
+                futures.append(future)
             for future in futures:
                 results.extend(future.result())
     except Exception as exc:
