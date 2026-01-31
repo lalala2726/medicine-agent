@@ -306,3 +306,35 @@ def cleanup_import_assets(filename: str) -> dict:
         清理结果统计字典
     """
     return cleanup_temp_assets(filename)
+
+
+def list_knowledge_chunks(
+        knowledge_name: str,
+        document_id: int,
+        page_num: int,
+        page_size: int,
+) -> tuple[list[dict], int]:
+    """
+    分页查询知识库中的文档切片数据。
+
+    Args:
+        knowledge_name: 知识库名
+        document_id: 文档ID
+        page_num: 页码（从 1 开始）
+        page_size: 每页数量
+
+    Returns:
+        (rows, total) 元组
+    """
+    if page_num <= 0 or page_size <= 0:
+        raise ServiceException(
+            code=ResponseCode.BAD_REQUEST,
+            message="page_num 和 page_size 必须大于 0",
+        )
+    vector_service.ensure_collection_exists(knowledge_name)
+    return vector_service.list_document_chunks(
+        knowledge_name=knowledge_name,
+        document_id=document_id,
+        page_num=page_num,
+        page_size=page_size,
+    )

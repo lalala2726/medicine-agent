@@ -1,15 +1,16 @@
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, Path
+from fastapi import APIRouter, BackgroundTasks, Depends, Path
 from pydantic import BaseModel, Field, field_validator
 
 from app.core.chunking import ChunkStrategyType
 from app.core.exceptions import ServiceException
-from app.schemas.response import ApiResponse
+from app.schemas.response import ApiResponse, PageResponse
 from app.services.knowledge_base_service import (
     create_collection,
     delete_knowledge,
     import_knowledge_service,
+    list_knowledge_chunks,
 )
 
 router = APIRouter(prefix="/knowledge_base", tags=["知识库管理"])
@@ -84,6 +85,40 @@ async def delete_knowledge_base(
     return ApiResponse.success(
         data={"knowledge_name": knowledge_name},
         message="删除成功",
+    )
+
+
+class ListDocumentChunksRequest(BaseModel):
+    """分页查询文档切片请求参数"""
+    knowledge_name: str = Field(
+        ...,
+        min_length=1,
+        pattern=r"^[A-Za-z][A-Za-z0-9_]*$",
+        description="knowledge 名称（仅英文/数字/下划线，需以字母开头）",
+    )
+    document_id: int = Field(..., gt=0, description="文档ID")
+    page: int = Field(default=1, gt=0, description="页码")
+    page_size: int = Field(default=10, ge=1, le=100, description="每页数量")
+
+
+@router.get(
+    "/chunks/list",
+    summary="分页查询文档切片",
+)
+async def list_document_chunks(
+        request: ListDocumentChunksRequest = Depends(),
+) -> ApiResponse[PageResponse[dict]]:
+    rows, total = list_knowledge_chunks(
+        knowledge_name=request.knowledge_name,
+        document_id=request.document_id,
+        page_num=request.page,
+        page_size=request.page_size,
+    )
+    return ApiResponse.page(
+        rows=rows,
+        total=total,
+        page_num=request.page,
+        page_size=request.page_size,
     )
 
 

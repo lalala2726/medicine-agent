@@ -17,6 +17,7 @@ DEFAULT_VECTOR_METRIC_TYPE = "COSINE"
 EMBED_BATCH_SIZE = 10  # 向量模型单次最大处理文本数
 EMBED_MAX_WORKERS = 5  # 最大并发线程数
 EMBED_MAX_TOKEN_SIZE = 8192
+COUNT_FALLBACK_LIMIT = 1000
 
 
 def _build_index_params(client: "MilvusClient"):
@@ -189,6 +190,95 @@ def insert_embeddings(
         raise ServiceException(
             code=ResponseCode.OPERATION_FAILED, message=f"写入向量失败: {exc}"
         ) from exc
+
+
+def _extract_count(result: list[dict]) -> int | None:
+    if not result:
+        return 0
+    first = result[0]
+    if isinstance(first, dict):
+        if "count(*)" in first:
+            return int(first["count(*)"])
+        if "count" in first:
+            return int(first["count"])
+    return None
+
+
+def _count_by_filter(
+        client: "MilvusClient",
+        knowledge_name: str,
+        filter_expr: str,
+) -> int:
+    try:
+        result = client.query(
+            collection_name=knowledge_name,
+            filter=filter_expr,
+            output_fields=["count(*)"],
+        )
+        count_value = _extract_count(result)
+        if count_value is not None:
+            return count_value
+    except milvus_exceptions.MilvusException as exc:
+        raise ServiceException(
+            code=ResponseCode.OPERATION_FAILED, message=f"查询知识库失败: {exc}"
+        ) from exc
+
+    total = 0
+    offset = 0
+    while True:
+        try:
+            batch = client.query(
+                collection_name=knowledge_name,
+                filter=filter_expr,
+                output_fields=["id"],
+                limit=COUNT_FALLBACK_LIMIT,
+                offset=offset,
+            )
+        except milvus_exceptions.MilvusException as exc:
+            raise ServiceException(
+                code=ResponseCode.OPERATION_FAILED, message=f"查询知识库失败: {exc}"
+            ) from exc
+        if not batch:
+            break
+        batch_len = len(batch)
+        total += batch_len
+        if batch_len < COUNT_FALLBACK_LIMIT:
+            break
+        offset += batch_len
+    return total
+
+
+def list_document_chunks(
+        knowledge_name: str,
+        document_id: int,
+        page_num: int,
+        page_size: int,
+) -> tuple[list[dict], int]:
+    """
+    分页查询指定 document_id 的向量内容（仅返回元信息与文本）。
+    """
+    if page_num <= 0 or page_size <= 0:
+        raise ServiceException(
+            code=ResponseCode.BAD_REQUEST,
+            message="page_num 和 page_size 必须大于 0",
+        )
+    client = get_milvus_client()
+    filter_expr = f"document_id == {document_id}"
+    total = _count_by_filter(client, knowledge_name, filter_expr)
+    offset = (page_num - 1) * page_size
+    try:
+        rows = client.query(
+            collection_name=knowledge_name,
+            filter=filter_expr,
+            output_fields=["id", "document_id", "content"],
+            limit=page_size,
+            offset=offset,
+        )
+    except milvus_exceptions.MilvusException as exc:
+        raise ServiceException(
+            code=ResponseCode.OPERATION_FAILED, message=f"查询知识库失败: {exc}"
+        ) from exc
+    return rows or [], total
 
 
 def embed_texts(texts: list[str]) -> list[list[float]]:
