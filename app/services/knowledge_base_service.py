@@ -1,9 +1,4 @@
-import os
-import tempfile
 from pathlib import Path
-from urllib.error import URLError
-from urllib.parse import urlparse
-from urllib.request import urlopen
 
 from app.core.chunking import ChunkStrategyType, SplitConfig, split_file
 from app.core.codes import ResponseCode
@@ -11,9 +6,9 @@ from app.core.exceptions import ServiceException
 from app.core.file_loader.base import cleanup_temp_assets
 from app.core.file_loader.factory import FileLoaderFactory
 from app.services import vector_service
+from app.utils.file_utils import FileUtils
 from app.utils.log import logger
 
-DOWNLOAD_CHUNK_SIZE = 1024 * 1024  # 文件下载块大小：1MB
 DEFAULT_CHUNK_SIZE = 500  # 默认切片长度（字符）
 DEFAULT_TOKEN_SIZE = 100  # 默认 token 切片长度
 DEFAULT_PARSE_IMAGES = False  # 默认不解析图片
@@ -56,52 +51,6 @@ def delete_knowledge(knowledge_name: str) -> None:
         knowledge_name: knowledge 名称
     """
     vector_service.delete_collection(knowledge_name)
-
-
-def _resolve_filename_from_url(file_url: str) -> str:
-    """
-    从 URL 中解析出文件名。
-
-    Args:
-        file_url: 文件 URL
-
-    Returns:
-        解析出的文件名，如果无法解析则返回默认名称
-    """
-    parsed = urlparse(file_url)
-    filename = os.path.basename(parsed.path)
-    return filename or "downloaded_file"
-
-
-def _download_file(file_url: str) -> tuple[str, Path]:
-    """
-    从 URL 下载文件到临时目录，返回文件名和临时文件路径。
-
-    Args:
-        file_url: 文件 URL
-
-    Returns:
-        (文件名, 临时文件路径) 元组
-
-    Raises:
-        ServiceException: 下载失败
-    """
-    filename = _resolve_filename_from_url(file_url)
-    suffix = Path(filename).suffix
-    try:
-        with urlopen(file_url, timeout=30) as response:
-            # 创建临时文件（不自动删除），需在使用后手动清理
-            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
-                while True:
-                    chunk = response.read(DOWNLOAD_CHUNK_SIZE)
-                    if not chunk:
-                        break
-                    tmp_file.write(chunk)
-                return filename, Path(tmp_file.name)
-    except URLError as exc:
-        raise ServiceException(
-            code=ResponseCode.OPERATION_FAILED, message=f"下载文件失败: {file_url}"
-        ) from exc
 
 
 def _validate_import_extension(filename: str) -> None:
@@ -196,7 +145,7 @@ def import_knowledge_service(
         try:
             logger.info("开始处理文件：file_url=%s", url)
             # 1. 从 URL 下载文件到临时目录
-            filename, file_path = _download_file(url)
+            filename, file_path = FileUtils.download_file(url)
             logger.info(
                 "下载完成：file_url=%s, filename=%s, temp_path=%s",
                 url,
