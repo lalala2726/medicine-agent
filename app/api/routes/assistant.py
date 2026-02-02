@@ -4,6 +4,7 @@ from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from app.agent.tools.user_tool import get_user_info
 from app.core.codes import ResponseCode
 from app.core.exceptions import ServiceException
 from app.core.llm import create_chat_model
@@ -40,7 +41,7 @@ async def assistant(request: AssistantRequest) -> StreamingResponse:
     if not request.question:
         raise ServiceException(code=ResponseCode.BAD_REQUEST, message="问题不能为空")
 
-    model = create_chat_model()
+    model = create_chat_model().bind_tools([get_user_info])
 
     async def event_stream():
         """SSE 事件流生成器"""
