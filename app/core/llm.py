@@ -1,6 +1,7 @@
 import os
 from typing import Any, Optional
 
+from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from pydantic import SecretStr
 
