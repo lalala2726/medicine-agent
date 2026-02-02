@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any, Mapping, Optional
 
 import httpx
 
 from app.core.request_context import get_authorization_header
+
+logger = logging.getLogger(__name__)
 
 
 class HttpClient:
@@ -84,16 +87,40 @@ class HttpClient:
             content: 原始字节 body
             timeout: 本次请求超时
         """
-        return await self._client.request(
-            method=method,
-            url=url,
-            headers=self._build_headers(headers),
-            params=params,
-            json=json,
-            data=data,
-            content=content,
-            timeout=timeout,
-        )
+        try:
+            response = await self._client.request(
+                method=method,
+                url=url,
+                headers=self._build_headers(headers),
+                params=params,
+                json=json,
+                data=data,
+                content=content,
+                timeout=timeout,
+            )
+        except httpx.HTTPError:
+            logger.exception(
+                "HTTP request failed: method=%s url=%s",
+                method,
+                url,
+            )
+            raise
+
+        if response.status_code >= 400:
+            logger.warning(
+                "HTTP response error: method=%s url=%s status=%s",
+                method,
+                url,
+                response.status_code,
+            )
+            body = response.text if response.content else ""
+            if body:
+                snippet = body[:500]
+                if len(body) > 500:
+                    snippet = f"{snippet}...(truncated)"
+                logger.warning("HTTP response body: %s", snippet)
+
+        return response
 
 
     async def get(

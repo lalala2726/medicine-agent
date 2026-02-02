@@ -7,7 +7,7 @@ from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel, ConfigDict, Field
 
-from agent.tools.user_tool import get_user_info
+from app.agent.tools.admin_tools import ADMIN_TOOLS
 from app.core.codes import ResponseCode
 from app.core.exceptions import ServiceException
 from app.core.llm import create_chat_model
@@ -41,7 +41,7 @@ async def assistant(request: AssistantRequest) -> StreamingResponse:
     # 创建支持流式的 Agent
     agent = create_agent(
         model,
-        tools=[get_user_info],
+        tools=ADMIN_TOOLS,
         system_prompt="You are a helpful assistant.",
     )
 
