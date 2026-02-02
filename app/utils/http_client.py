@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json as json_lib
 import os
 import time
 from typing import Any, Mapping, Optional
@@ -28,12 +29,46 @@ class HttpClient:
     ) -> None:
         if base_url is None:
             base_url = os.getenv("HTTP_BASE_URL", "http://localhost:8080")
+        self._log_enabled = self._parse_bool(os.getenv("HTTP_CLIENT_LOG_ENABLED"))
         self._default_headers = dict(headers or {})
         self._client = httpx.AsyncClient(
             base_url=base_url or "",
             headers=self._default_headers,
             timeout=timeout,
         )
+
+    @staticmethod
+    def _parse_bool(value: Optional[str]) -> bool:
+        if value is None:
+            return False
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+
+    @staticmethod
+    def _redact_headers(headers: Mapping[str, str]) -> Mapping[str, str]:
+        sensitive_keys = {
+            "authorization",
+            "proxy-authorization",
+            "x-api-key",
+        }
+        return {
+            key: "***" if key.lower() in sensitive_keys else value
+            for key, value in headers.items()
+        }
+
+    @staticmethod
+    def _truncate(value: Any, limit: int = 1000) -> str:
+        if value is None:
+            return ""
+        try:
+            if isinstance(value, (dict, list, tuple)):
+                text = json_lib.dumps(value)
+            else:
+                text = str(value)
+        except Exception:
+            text = repr(value)
+        if len(text) > limit:
+            return f"{text[:limit]}...(truncated)"
+        return text
 
     def _build_headers(self, headers: Optional[Mapping[str, str]]) -> Mapping[str, str]:
         """
@@ -87,11 +122,23 @@ class HttpClient:
             timeout: 本次请求超时
         """
         start = time.monotonic()
+        built_headers = self._build_headers(headers)
+        if self._log_enabled:
+            logger.info(
+                "HTTP request: method=%s url=%s headers=%s params=%s json=%s data=%s content_length=%s",
+                method,
+                url,
+                self._redact_headers(built_headers),
+                params,
+                self._truncate(json),
+                self._truncate(data),
+                len(content) if content else 0,
+            )
         try:
             response = await self._client.request(
                 method=method,
                 url=url,
-                headers=self._build_headers(headers),
+                headers=built_headers,
                 params=params,
                 json=json,
                 data=data,
@@ -99,25 +146,33 @@ class HttpClient:
                 timeout=timeout,
             )
         except httpx.HTTPError as exc:
-            logger.error(
-                "HTTP request failed: method=%s url=%s params=%s error=%s",
-                method,
-                url,
-                params,
-                exc,
-            )
+            if self._log_enabled:
+                logger.error(
+                    "HTTP request failed: method=%s url=%s params=%s error=%s",
+                    method,
+                    url,
+                    params,
+                    exc,
+                )
             raise
 
         elapsed_ms = int((time.monotonic() - start) * 1000)
-        logger.info(
-            "HTTP response: method=%s url=%s status=%s elapsed_ms=%s",
-            method,
-            url,
-            response.status_code,
-            elapsed_ms,
-        )
+        body = response.text if response.content else ""
+        if self._log_enabled:
+            logger.info(
+                "HTTP response: method=%s url=%s status=%s elapsed_ms=%s",
+                method,
+                url,
+                response.status_code,
+                elapsed_ms,
+            )
+            if body:
+                snippet = body[:1000]
+                if len(body) > 1000:
+                    snippet = f"{snippet}...(truncated)"
+                logger.info("HTTP response body: %s", snippet)
 
-        if response.status_code >= 400:
+        if response.status_code >= 400 and self._log_enabled:
             logger.warning(
                 "HTTP response error: method=%s url=%s status=%s params=%s",
                 method,
@@ -125,7 +180,6 @@ class HttpClient:
                 response.status_code,
                 params,
             )
-            body = response.text if response.content else ""
             if body:
                 snippet = body[:500]
                 if len(body) > 500:
