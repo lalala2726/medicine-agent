@@ -3,7 +3,8 @@ from __future__ import annotations
 from contextvars import ContextVar, Token
 from typing import Optional
 
-from core.exceptions import ServiceException
+from app.core.codes import ResponseCode
+from app.core.exceptions import ServiceException
 
 _authorization_header: ContextVar[Optional[str]] = ContextVar(
     "authorization_header",
@@ -24,5 +25,8 @@ def reset_authorization_header(token: Token) -> None:
 def get_authorization_header() -> Optional[str]:
     """获取当前请求的 Authorization 头。"""
     if _authorization_header.get() is None:
-        raise ServiceException("Authorization header is missing")
+        raise ServiceException(
+            code=ResponseCode.UNAUTHORIZED,
+            message="缺少 Authorization 请求头",
+        )
     return _authorization_header.get()
