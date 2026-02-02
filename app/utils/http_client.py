@@ -1,14 +1,13 @@
 from __future__ import annotations
 
-import logging
 import os
+import time
 from typing import Any, Mapping, Optional
 
 import httpx
 
 from app.core.request_context import get_authorization_header
-
-logger = logging.getLogger(__name__)
+from app.utils.log import logger
 
 
 class HttpClient:
@@ -87,6 +86,7 @@ class HttpClient:
             content: 原始字节 body
             timeout: 本次请求超时
         """
+        start = time.monotonic()
         try:
             response = await self._client.request(
                 method=method,
@@ -98,20 +98,32 @@ class HttpClient:
                 content=content,
                 timeout=timeout,
             )
-        except httpx.HTTPError:
-            logger.exception(
-                "HTTP request failed: method=%s url=%s",
+        except httpx.HTTPError as exc:
+            logger.error(
+                "HTTP request failed: method=%s url=%s params=%s error=%s",
                 method,
                 url,
+                params,
+                exc,
             )
             raise
 
+        elapsed_ms = int((time.monotonic() - start) * 1000)
+        logger.info(
+            "HTTP response: method=%s url=%s status=%s elapsed_ms=%s",
+            method,
+            url,
+            response.status_code,
+            elapsed_ms,
+        )
+
         if response.status_code >= 400:
             logger.warning(
-                "HTTP response error: method=%s url=%s status=%s",
+                "HTTP response error: method=%s url=%s status=%s params=%s",
                 method,
                 url,
                 response.status_code,
+                params,
             )
             body = response.text if response.content else ""
             if body:
