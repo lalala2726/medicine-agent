@@ -61,17 +61,14 @@ class PlanStep(TypedDict, total=False):
     单个执行步骤
     """
 
-    # 执行次数
-    execute_times: int
-
-    # 执行节点名称（推荐字段）
+    # 执行节点名称
     node_name: str
 
-    # 兼容字段：执行的 Agent 名称
-    agent: str
+    # 上层节点名称
+    last_node:list[str]
 
-    # 当前节点的提示信息
-    instruction: str
+    # 任务描述
+    task_description: str
 
 
 class AgentState(TypedDict):
