@@ -34,63 +34,80 @@ def build_graph():
     graph.add_conditional_edges(
         "router",
         _route_to_next_node,
-        {
-            "order_agent": "order_agent",
-            "excel_agent": "excel_agent",
-            "chart_agent": "chart_agent",
-            END: END,
-        },
+        {**{node: node for node in EXECUTION_NODES}, END: END},
     )
     return graph.compile()
 
 
-def _flatten_plan(plan: list[PlanStep | list[PlanStep]] | None) -> list[PlanStep]:
-    """将 plan 拉平为顺序步骤列表，先按顺序实现动态串行编排。"""
+def _normalize_plan_stages(plan: list[PlanStep | list[PlanStep]] | None) -> list[list[PlanStep]]:
+    """将 plan 规范化为阶段列表: 单节点=串行阶段, 列表=并行阶段。"""
     if not plan:
         return []
 
-    flattened: list[PlanStep] = []
+    stages: list[list[PlanStep]] = []
     for item in plan:
         if isinstance(item, list):
-            for step in item:
-                if isinstance(step, dict):
-                    flattened.append(step)
-            continue
-        if isinstance(item, dict):
-            flattened.append(item)
-    return flattened
+            stage = [step for step in item if isinstance(step, dict)]
+        elif isinstance(item, dict):
+            stage = [item]
+        else:
+            stage = []
+
+        if stage:
+            stages.append(stage)
+
+    return stages
 
 
 def router(state: AgentState) -> dict[str, Any]:
     """
-    根据 state['plan'] 动态计算下一跳节点。
+    根据 state['plan'] 动态计算下一跳节点（支持并行阶段）。
 
     示例:
-    - plan = [A, B, C] -> supervisor_agent -> A -> B -> C
-    - plan = [A, C]    -> supervisor_agent -> A -> C
+    - plan = [A, B, C]     -> supervisor_agent -> A -> B -> C
+    - plan = [A, C]        -> supervisor_agent -> A -> C
+    - plan = [[A, B], C]   -> supervisor_agent -> (A || B) -> C
     """
-    plan = _flatten_plan(state.get("plan"))
+    stages = _normalize_plan_stages(state.get("plan"))
     routing = dict(state.get("routing") or {})
-    plan_index = int(routing.get("plan_index", 0))
+    # 兼容旧字段 plan_index，优先使用新字段 stage_index
+    stage_index = int(routing.get("stage_index", routing.get("plan_index", 0)))
 
-    next_node = END
-    # 从当前游标开始找下一个有效节点，找到后游标前进 1
-    while plan_index < len(plan):
-        step = plan[plan_index]
-        plan_index += 1
-        candidate = step.get("node_name")
-        if candidate in EXECUTION_NODES:
-            next_node = candidate
+    next_nodes: list[str] = []
+    # 从当前游标开始找下一个有效阶段，找到后游标前进 1
+    while stage_index < len(stages):
+        stage = stages[stage_index]
+        stage_index += 1
+
+        candidate_nodes: list[str] = []
+        for step in stage:
+            candidate = step.get("node_name")
+            if candidate in EXECUTION_NODES and candidate not in candidate_nodes:
+                candidate_nodes.append(candidate)
+
+        if candidate_nodes:
+            next_nodes = candidate_nodes
             break
 
-    routing["plan_index"] = plan_index
-    routing["next_node"] = next_node
+    routing["stage_index"] = stage_index
+    routing["next_nodes"] = next_nodes
+    # 保留旧字段，避免外部依赖立即失效
+    routing["plan_index"] = stage_index
+    routing["next_node"] = next_nodes[0] if len(next_nodes) == 1 else END
     return {"routing": routing}
 
 
-def _route_to_next_node(state: AgentState) -> str:
-    """读取 router 计算结果，返回下一跳节点名；没有可执行步骤则 END。"""
-    next_node = (state.get("routing") or {}).get("next_node", END)
-    if next_node in EXECUTION_NODES:
-        return next_node
-    return END
+def _route_to_next_node(state: AgentState) -> str | list[str]:
+    """读取 router 计算结果；单节点返回 str，并行节点返回 list[str]。"""
+    routing = state.get("routing") or {}
+    raw_next_nodes = routing.get("next_nodes")
+
+    if not isinstance(raw_next_nodes, list):
+        raw_next_nodes = [routing.get("next_node")]
+
+    next_nodes = [node for node in raw_next_nodes if node in EXECUTION_NODES]
+    if not next_nodes:
+        return END
+    if len(next_nodes) == 1:
+        return next_nodes[0]
+    return next_nodes
