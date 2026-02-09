@@ -2,7 +2,7 @@ import json
 
 from fastapi.testclient import TestClient
 
-from app.api.routes import assistant as assistant_module
+from app.api.routes import admin_assistant as assistant_module
 from app.main import app
 
 
