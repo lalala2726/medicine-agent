@@ -12,7 +12,7 @@ from app.agent.admin.agent_state import AgentState, PlanStep
 from app.agent.admin.chart_node import chart_agent
 from app.agent.admin.excel_node import excel_agent
 from app.agent.admin.order_node import order_agent
-from app.agent.admin.supervisor_node import coordinator
+from app.agent.admin.coordinator_node import coordinator
 from app.core.langsmith import traceable
 from app.core.llm import DEFAULT_CHAT_MODEL, create_chat_model
 
@@ -75,6 +75,7 @@ def build_graph():
     graph.add_node("coordinator_agent", coordinator)
     graph.add_node("planner", planner)
     graph.add_node("chat_agent", chat_agent)
+    graph.add_node("summary_agent", chat_agent)
     graph.add_node("order_agent", order_agent)
     graph.add_node("excel_agent", excel_agent)
     graph.add_node("chart_agent", chart_agent)

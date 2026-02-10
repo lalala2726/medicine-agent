@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-import app.agent.admin.supervisor_node as supervisor_module
+import app.agent.admin.coordinator_node as supervisor_module
 import app.agent.admin.workflow as workflow_module
 
 
