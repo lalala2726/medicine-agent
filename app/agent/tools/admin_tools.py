@@ -110,7 +110,7 @@ async def get_order_list(
         return HttpResponse.parse_data(response)
 
 @tool
-async def get_recent_orders_detail(
+async def get_orders_detail(
     order_id: Annotated[str, "订单的唯一编号"]
 ) -> dict:
     """
@@ -127,5 +127,5 @@ ADMIN_TOOLS = [
     get_product_list,
     get_product_info,
     get_order_list,
-    get_recent_orders_detail,
+    get_orders_detail,
 ]

@@ -7,7 +7,7 @@ from app.core.file_loader.base import cleanup_temp_assets
 from app.core.file_loader.factory import FileLoaderFactory
 from app.services import vector_service
 from app.utils.file_utils import FileUtils
-from app.utils.log import logger
+from loguru import logger
 
 DEFAULT_CHUNK_SIZE = 500  # 默认切片长度（字符）
 DEFAULT_TOKEN_SIZE = 100  # 默认 token 切片长度
@@ -115,7 +115,7 @@ def import_knowledge_service(
         :param parse_images: 是否解析图片
     """
     logger.info(
-        "开始导入知识库：knowledge_name=%s, document_id=%s, file_count=%s, chunk_strategy=%s, chunk_size=%s, token_size=%s, parse_images=%s",
+        "开始导入知识库：knowledge_name={}, document_id={}, file_count={}, chunk_strategy={}, chunk_size={}, token_size={}, parse_images={}",
         knowledge_name,
         document_id,
         len(file_url) if file_url else 0,
@@ -143,11 +143,11 @@ def import_knowledge_service(
         file_path: Path | None = None
         keep_file = False
         try:
-            logger.info("开始处理文件：file_url=%s", url)
+            logger.info("开始处理文件：file_url={}", url)
             # 1. 从 URL 下载文件到临时目录
             filename, file_path = FileUtils.download_file(url)
             logger.info(
-                "下载完成：file_url=%s, filename=%s, temp_path=%s",
+                "下载完成：file_url={}, filename={}, temp_path={}",
                 url,
                 filename,
                 file_path,
@@ -168,7 +168,7 @@ def import_knowledge_service(
                     "pages": [page.to_dict() for page in pages],
                 }
             logger.info(
-                "解析完成：filename=%s, pages=%s, image_dir=%s",
+                "解析完成：filename={}, pages={}, image_dir={}",
                 filename,
                 len(parsed.get("pages") or []),
                 parsed.get("image_dir"),
@@ -188,7 +188,7 @@ def import_knowledge_service(
                 ),
             )
             logger.info(
-                "切片完成：filename=%s, chunk_strategy=%s, chunk_size=%s, chunks=%s",
+                "切片完成：filename={}, chunk_strategy={}, chunk_size={}, chunks={}",
                 filename,
                 chunk_strategy.value,
                 effective_chunk_size,
@@ -205,12 +205,12 @@ def import_knowledge_service(
                     texts,
                 )
                 logger.info(
-                    "向量写入完成：filename=%s, text_count=%s",
+                    "向量写入完成：filename={}, text_count={}",
                     filename,
                     len(texts),
                 )
             else:
-                logger.warning("未生成有效文本，跳过向量写入：filename=%s", filename)
+                logger.warning("未生成有效文本，跳过向量写入：filename={}", filename)
 
             keep_file = True
             results.append(
@@ -223,7 +223,7 @@ def import_knowledge_service(
             )
         except ServiceException as exc:
             logger.error(
-                "文件处理失败：file_url=%s, filename=%s, error=%s",
+                "文件处理失败：file_url={}, filename={}, error={}",
                 url,
                 filename,
                 exc,
@@ -236,7 +236,7 @@ def import_knowledge_service(
             # 解析失败时清理下载的临时文件，成功则等待统一清理
             if not keep_file and file_path and file_path.exists():
                 file_path.unlink(missing_ok=True)
-                logger.info("临时文件已清理：temp_path=%s", file_path)
+                logger.info("临时文件已清理：temp_path={}", file_path)
     summary = {
         "results": results,
         "failed_urls": failed_urls,

@@ -6,7 +6,7 @@ from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from app.utils.streaming_utils import message_chunk_to_text, should_stream_node_output
+from app.utils.streaming_utils import extract_text, is_final_node
 from app.agent.admin.workflow import build_graph
 from app.core.codes import ResponseCode
 from app.core.exceptions import ServiceException
@@ -19,11 +19,13 @@ STREAM_OUTPUT_NODES = {"order_agent", "chat_agent", "summary_agent"}
 
 class AssistantRequest(BaseModel):
     """AI助手请求参数"""
+
     question: str = Field(..., description="问题")
 
 
 class AssistantResponse(BaseModel):
     """AI助手响应参数"""
+
     content: str = Field(..., description="答案")
     is_end: bool = Field(default=False, description="是否结束")
 
@@ -118,9 +120,10 @@ async def assistant(request: AssistantRequest) -> StreamingResponse:
                         message_chunk, metadata = chunk
                         stream_node = metadata.get("langgraph_node")
                         if stream_node in STREAM_OUTPUT_NODES and (
-                            stream_node == "chat_agent" or should_stream_node_output(latest_state, stream_node)
+                            stream_node == "chat_agent"
+                            or is_final_node(latest_state, stream_node)
                         ):
-                            token_text = message_chunk_to_text(message_chunk)
+                            token_text = extract_text(message_chunk)
                             if token_text:
                                 has_streamed_output = True
                                 yield _build_payload(token_text, False)
@@ -138,4 +141,11 @@ async def assistant(request: AssistantRequest) -> StreamingResponse:
         finally:
             yield _build_payload("", True)
 
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )

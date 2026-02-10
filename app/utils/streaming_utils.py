@@ -1,20 +1,64 @@
+"""
+LLM 输出工具模块。
+
+提供统一的 LLM 调用接口，支持：
+- 普通文本生成
+- 带工具调用的 Agent 模式
+
+流式输出说明：
+    节点内部统一使用同步调用（llm.invoke），逐 token 的流式推送由
+    LangGraph 的 astream(stream_mode=["messages"]) 在外层自动完成。
+    节点无需关心流式细节。
+
+    关键：LLM 调用必须在 LangGraph 管理的线程上下文中执行（即使用
+    同步 llm.invoke），否则 LangGraph 无法通过 context variables
+    拦截 token 流。工具执行因为是 async 函数，会通过辅助线程运行，
+    但这不影响 LLM token 的流式推送。
+"""
+
 from __future__ import annotations
 
-from typing import Any
+import asyncio
+import json
+from typing import Any, Optional, Sequence
+
+from langchain_core.messages import ToolMessage
+from loguru import logger
 
 from app.agent.admin.agent_state import AgentState
 
+# 工具调用最大轮次，防止无限循环
+MAX_TOOL_ROUNDS = 5
+
 
 def has_plan(state: AgentState | dict[str, Any]) -> bool:
+    """
+    检查状态中是否存在执行计划。
+
+    Args:
+        state: Agent 状态字典
+
+    Returns:
+        bool: 存在非空 plan 列表时返回 True
+    """
     raw_plan = state.get("plan")
     return isinstance(raw_plan, list) and len(raw_plan) > 0
 
 
-def should_stream_node_output(state: AgentState | dict[str, Any], node_name: str) -> bool:
+def is_final_node(state: AgentState | dict[str, Any], node_name: str) -> bool:
     """
-    系统自动判断节点是否是最终输出节点（无需依赖模型字段）：
-    1. gateway_router 直达该节点且无 plan。
-    2. planner 标记最后阶段，且 next_nodes 仅包含该节点。
+    判断当前节点是否为最终输出节点。
+
+    判断条件：
+    1. gateway_router 直达该节点且无 plan
+    2. planner 标记为最后阶段，且 next_nodes 仅包含该节点
+
+    Args:
+        state: Agent 状态字典
+        node_name: 当前节点名称
+
+    Returns:
+        bool: 是最终节点返回 True
     """
     routing = state.get("routing") or {}
     route_target = routing.get("route_target")
@@ -30,42 +74,169 @@ def should_stream_node_output(state: AgentState | dict[str, Any], node_name: str
     )
 
 
-def message_chunk_to_text(message_chunk: Any) -> str:
-    content = getattr(message_chunk, "content", "")
+def extract_text(message: Any) -> str:
+    """
+    从 LangChain 消息对象中提取纯文本内容。
+
+    Args:
+        message: LangChain 消息对象（AIMessage、AIMessageChunk 等）
+
+    Returns:
+        str: 提取的文本内容，无内容时返回空字符串
+    """
+    content = getattr(message, "content", "")
     if isinstance(content, str):
         return content
     if isinstance(content, list):
-        text_parts: list[str] = []
+        parts = []
         for item in content:
-            if isinstance(item, dict):
-                text = item.get("text")
-                if isinstance(text, str):
-                    text_parts.append(text)
+            if isinstance(item, dict) and isinstance(item.get("text"), str):
+                parts.append(item["text"])
             elif isinstance(item, str):
-                text_parts.append(item)
-        return "".join(text_parts)
-    if content is None:
-        return ""
-    return str(content)
+                parts.append(item)
+        return "".join(parts)
+    return "" if content is None else str(content)
 
 
-def generate_content_with_stream_fallback(llm: Any, messages: list[Any], enable_stream: bool) -> tuple[str, list[str]]:
+def invoke(
+    llm: Any,
+    messages: list[Any],
+    *,
+    tools: Optional[Sequence[Any]] = None,
+    max_tool_rounds: int = MAX_TOOL_ROUNDS,
+) -> str:
     """
-    统一的节点生成策略：
-    - enable_stream=True 时优先 stream，失败则回退 invoke。
-    - enable_stream=False 时直接 invoke。
+    统一的 LLM 调用入口。
+
+    流式输出由 LangGraph astream 在外层自动完成，节点内部统一走非流式调用。
+
+    Args:
+        llm: LangChain ChatModel 实例
+        messages: 消息列表
+        tools: 工具列表，传入后自动进入 Agent 模式（bind_tools + 工具调用循环）
+        max_tool_rounds: 工具调用最大轮次，默认 5
+
+    Returns:
+        str: LLM 生成的完整文本
     """
-    if enable_stream:
-        try:
-            stream_chunks: list[str] = []
-            for chunk in llm.stream(messages):
-                chunk_text = message_chunk_to_text(chunk)
-                if chunk_text:
-                    stream_chunks.append(chunk_text)
-            if stream_chunks:
-                return "".join(stream_chunks), stream_chunks
-        except Exception:
-            pass
+    if tools:
+        return _invoke_with_tools(llm, messages, tools, max_tool_rounds)
 
     response = llm.invoke(messages)
-    return str(response.content), []
+    return extract_text(response)
+
+
+def _invoke_with_tools(
+    llm: Any,
+    messages: list[Any],
+    tools: Sequence[Any],
+    max_rounds: int,
+) -> str:
+    """
+    带工具调用的同步 Agent 模式。
+
+    流程：bind_tools → llm.invoke → 检查 tool_calls → 执行工具 → 结果反馈 → 循环。
+
+    关键设计：LLM 调用使用同步 llm.invoke()，保持在 LangGraph 管理的
+    线程上下文中，确保 astream(stream_mode="messages") 能够拦截 token 流。
+    工具执行（async 函数）通过 _run_async 在辅助线程中运行，不影响流式推送。
+
+    Args:
+        llm: LangChain ChatModel 实例
+        messages: 消息列表（会被原地修改）
+        tools: 工具列表
+        max_rounds: 最大工具调用轮次
+
+    Returns:
+        str: LLM 最终生成的文本
+    """
+    llm_with_tools = llm.bind_tools(tools)
+    tool_map = {t.name: t for t in tools}
+
+    for round_idx in range(max_rounds):
+        # 同步调用 — 保持 LangGraph 上下文，支持 token 流式拦截
+        response = llm_with_tools.invoke(messages)
+        messages.append(response)
+
+        if not response.tool_calls:
+            logger.info("第 {} 轮无工具调用，返回最终结果", round_idx + 1)
+            return extract_text(response)
+
+        logger.info(
+            "第 {} 轮触发 {} 个工具调用", round_idx + 1, len(response.tool_calls)
+        )
+
+        for tc in response.tool_calls:
+            result = _exec_tool(tc, tool_map)
+            messages.append(ToolMessage(content=result, tool_call_id=tc["id"]))
+
+    logger.warning("达到最大工具调用轮次 ({})，生成最终响应", max_rounds)
+    final = llm_with_tools.invoke(messages)
+    return extract_text(final)
+
+
+def _run_async(coro: Any) -> Any:
+    """
+    在当前线程中运行一个 async 协程。
+
+    如果当前线程已有 event loop 在运行（例如被 LangGraph 的 executor 管理），
+    则在新线程中启动一个临时 event loop；否则直接 asyncio.run。
+
+    Args:
+        coro: 异步协程对象
+
+    Returns:
+        协程的返回值
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop and loop.is_running():
+        import concurrent.futures
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            return pool.submit(asyncio.run, coro).result()
+    return asyncio.run(coro)
+
+
+def _exec_tool(tool_call: dict, tool_map: dict[str, Any]) -> str:
+    """
+    执行单个工具调用。
+
+    工具函数可能是 async 的（例如通过 httpx 做 HTTP 请求），
+    通过 _run_async 统一处理。
+
+    Args:
+        tool_call: 工具调用信息，包含 name、args、id
+        tool_map: 工具名称到工具函数的映射
+
+    Returns:
+        str: JSON 格式的执行结果或错误信息
+    """
+    name = tool_call["name"]
+    args = tool_call.get("args", {})
+    tool_fn = tool_map.get(name)
+
+    if tool_fn is None:
+        logger.warning("未知工具: {}", name)
+        return json.dumps({"error": f"未知工具: {name}"}, ensure_ascii=False)
+
+    logger.info("工具调用: name={} args={}", name, args)
+
+    try:
+        result = _run_async(tool_fn.ainvoke(args))
+        logger.info(
+            "工具返回: name={} result={}",
+            name,
+            json.dumps(result, ensure_ascii=False, default=str)[:500],
+        )
+        return (
+            json.dumps(result, ensure_ascii=False, default=str)
+            if isinstance(result, (dict, list))
+            else str(result)
+        )
+    except Exception as exc:
+        logger.error("工具执行失败: name={} error={}", name, exc)
+        return json.dumps({"error": f"工具执行失败: {name}, {exc}"}, ensure_ascii=False)

@@ -15,6 +15,11 @@ class _DummyModel:
     def __init__(self):
         self.stream_called = False
         self.invoke_called = False
+        self.bound_tools = None
+
+    def bind_tools(self, tools):
+        self.bound_tools = tools
+        return self
 
     def stream(self, _messages):
         self.stream_called = True
