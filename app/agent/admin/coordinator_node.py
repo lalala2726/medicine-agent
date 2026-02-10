@@ -18,6 +18,8 @@ _system_prompt = """
 - order_agent: 订单查询、订单状态与订单信息核验。
 - excel_agent: 表格解析、表格整理、Excel 导出。
 - chart_agent: 基于已有结构化数据生成图表或统计说明。
+- summary_agent: 摘要生成，如果有任务可以并行处理的话这边并行到这边
+- chat_agent: 聊天机器人，如果上述节点不能满足需求，可以考虑使用 chat_agent。或者是和业务无关的比如咨询闲聊等
 
 你输出的 JSON 必须与状态结构兼容（对应 AgentState 中的 plan）：
 {
@@ -48,11 +50,11 @@ _system_prompt = """
 3. plan 必须是数组。
 4. plan 每个元素要么是单个步骤对象（串行），要么是步骤对象数组（并行阶段）。
 5. 每个步骤对象必须包含：node_name、task_description、last_node。
-6. last_node 必须是字符串数组：
+7. last_node 必须是字符串数组：
    - 第一阶段通常为 ["coordinator_agent"]。
    - 后续阶段填写其依赖的上游节点名数组。
-7. 不要产生循环依赖，不要把 coordinator_agent 作为 plan 的 node_name。
-8. 若用户需求不清晰，给出最小可执行 plan（至少 1 个步骤）。
+8. 不要产生循环依赖，不要把 coordinator_agent 作为 plan 的 node_name。
+9. 若用户需求不清晰，给出最小可执行 plan（至少 1 个步骤）。
 """
 
 _COORDINATOR_MODEL_BY_DIFFICULTY = {
@@ -76,7 +78,7 @@ def coordinator(state: AgentState) -> dict[str, Any]:
     user_input = str(state.get("user_input") or "").strip()
     if not user_input:
         routing["difficulty"] = difficulty
-        return {"routing": routing, "user_intent": {}, "plan": []}
+        return {"routing": routing, "plan": []}
 
     llm = create_chat_model(
         model=model_name,
@@ -92,19 +94,14 @@ def coordinator(state: AgentState) -> dict[str, Any]:
         payload = json.loads(str(response.content))
     except Exception:
         routing["difficulty"] = difficulty
-        return {"routing": routing, "user_intent": {}, "plan": []}
+        return {"routing": routing, "plan": []}
 
     routing["difficulty"] = difficulty
-    user_intent = payload.get("user_intent")
-    if not isinstance(user_intent, dict):
-        user_intent = {}
-
     plan = payload.get("plan")
     if not isinstance(plan, list):
         plan = []
 
     return {
         "routing": routing,
-        "user_intent": user_intent,
         "plan": plan,
     }

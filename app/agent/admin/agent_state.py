@@ -84,6 +84,12 @@ class RoutingState(TypedDict, total=False):
     # 任务难度（simple / medium / complex）
     difficulty: str
 
+    # 当前阶段是否为最后一个有效执行阶段
+    is_final_stage: bool
+
+    # 当前阶段节点到步骤定义的映射
+    current_step_map: Dict[str, PlanStep]
+
 
 class AgentState(TypedDict):
     """

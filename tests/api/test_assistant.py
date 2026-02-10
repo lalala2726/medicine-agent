@@ -19,6 +19,20 @@ class _DummyGraph:
         return self.final_state
 
 
+class _DummyMessageChunk:
+    def __init__(self, content: str):
+        self.content = content
+
+
+class _DummyAsyncGraph:
+    def __init__(self, events: list[tuple[str, object]]):
+        self.events = events
+
+    async def astream(self, _state: dict, **_kwargs):
+        for event in self.events:
+            yield event
+
+
 def test_assistant_streaming_response_from_workflow_chat_result(monkeypatch):
     monkeypatch.setattr(
         assistant_module,
@@ -54,6 +68,163 @@ def test_assistant_streaming_response_from_order_context(monkeypatch):
     payloads = [json.loads(line[len("data: "):]) for line in lines]
     assert payloads[0]["content"] == "order done"
     assert payloads[1]["is_end"] is True
+
+
+def test_assistant_streaming_response_from_order_context_chunks_with_invoke_fallback(monkeypatch):
+    monkeypatch.setattr(
+        assistant_module,
+        "ADMIN_WORKFLOW",
+        _DummyGraph(
+            final_state={
+                "order_context": {
+                    "result": {"content": "order done", "is_end": True},
+                    "stream_chunks": ["order ", "done"],
+                }
+            }
+        ),
+    )
+    client = TestClient(app)
+
+    response = client.post("/api/admin/assistant/chat", json={"question": "查订单"})
+
+    assert response.status_code == 200
+    lines = [line for line in response.text.splitlines() if line.startswith("data: ")]
+    payloads = [json.loads(line[len("data: "):]) for line in lines]
+    assert payloads[0]["content"] == "order done"
+    assert payloads[0]["is_end"] is False
+    assert payloads[1]["content"] == ""
+    assert payloads[1]["is_end"] is True
+
+
+def test_assistant_streaming_response_from_astream_order_tokens(monkeypatch):
+    graph = _DummyAsyncGraph(
+        events=[
+            (
+                "values",
+                {"routing": {"route_target": "order_agent"}, "plan": []},
+            ),
+            (
+                "messages",
+                (_DummyMessageChunk("订"), {"langgraph_node": "order_agent"}),
+            ),
+            (
+                "messages",
+                (_DummyMessageChunk("单"), {"langgraph_node": "order_agent"}),
+            ),
+            (
+                "values",
+                {"order_context": {"result": {"content": "订单"}}},
+            ),
+        ]
+    )
+    monkeypatch.setattr(assistant_module, "ADMIN_WORKFLOW", graph)
+    client = TestClient(app)
+
+    response = client.post("/api/admin/assistant/chat", json={"question": "查订单"})
+
+    assert response.status_code == 200
+    lines = [line for line in response.text.splitlines() if line.startswith("data: ")]
+    payloads = [json.loads(line[len("data: "):]) for line in lines]
+    assert payloads[0]["content"] == "订"
+    assert payloads[1]["content"] == "单"
+    assert payloads[2]["content"] == ""
+    assert payloads[2]["is_end"] is True
+
+
+def test_assistant_streaming_response_from_astream_non_order_tokens(monkeypatch):
+    graph = _DummyAsyncGraph(
+        events=[
+            (
+                "messages",
+                (_DummyMessageChunk("忽略"), {"langgraph_node": "coordinator_agent"}),
+            ),
+            (
+                "values",
+                {"results": {"chat": {"content": "final answer"}}},
+            ),
+        ]
+    )
+    monkeypatch.setattr(assistant_module, "ADMIN_WORKFLOW", graph)
+    client = TestClient(app)
+
+    response = client.post("/api/admin/assistant/chat", json={"question": "hi"})
+
+    assert response.status_code == 200
+    lines = [line for line in response.text.splitlines() if line.startswith("data: ")]
+    payloads = [json.loads(line[len("data: "):]) for line in lines]
+    assert payloads[0]["content"] == "final answer"
+    assert payloads[0]["is_end"] is False
+    assert payloads[1]["content"] == ""
+    assert payloads[1]["is_end"] is True
+
+
+def test_assistant_does_not_stream_order_tokens_when_order_is_not_final(monkeypatch):
+    graph = _DummyAsyncGraph(
+        events=[
+            (
+                "values",
+                {
+                    "routing": {
+                        "route_target": "coordinator_agent",
+                        "next_nodes": ["order_agent"],
+                        "is_final_stage": False,
+                    },
+                    "plan": [{"node_name": "order_agent"}],
+                },
+            ),
+            (
+                "messages",
+                (_DummyMessageChunk("中间结果"), {"langgraph_node": "order_agent"}),
+            ),
+            (
+                "values",
+                {"results": {"chat": {"content": "final answer"}}},
+            ),
+        ]
+    )
+    monkeypatch.setattr(assistant_module, "ADMIN_WORKFLOW", graph)
+    client = TestClient(app)
+
+    response = client.post("/api/admin/assistant/chat", json={"question": "hi"})
+
+    assert response.status_code == 200
+    lines = [line for line in response.text.splitlines() if line.startswith("data: ")]
+    payloads = [json.loads(line[len("data: "):]) for line in lines]
+    assert payloads[0]["content"] == "final answer"
+    assert payloads[0]["is_end"] is False
+    assert payloads[1]["content"] == ""
+    assert payloads[1]["is_end"] is True
+
+
+def test_assistant_streaming_response_from_astream_chat_tokens(monkeypatch):
+    graph = _DummyAsyncGraph(
+        events=[
+            (
+                "messages",
+                (_DummyMessageChunk("你"), {"langgraph_node": "chat_agent"}),
+            ),
+            (
+                "messages",
+                (_DummyMessageChunk("好"), {"langgraph_node": "chat_agent"}),
+            ),
+            (
+                "values",
+                {"results": {"chat": {"content": "你好"}}},
+            ),
+        ]
+    )
+    monkeypatch.setattr(assistant_module, "ADMIN_WORKFLOW", graph)
+    client = TestClient(app)
+
+    response = client.post("/api/admin/assistant/chat", json={"question": "你好"})
+
+    assert response.status_code == 200
+    lines = [line for line in response.text.splitlines() if line.startswith("data: ")]
+    payloads = [json.loads(line[len("data: "):]) for line in lines]
+    assert payloads[0]["content"] == "你"
+    assert payloads[1]["content"] == "好"
+    assert payloads[2]["content"] == ""
+    assert payloads[2]["is_end"] is True
 
 
 def test_assistant_streaming_response_when_workflow_raises(monkeypatch):

@@ -3,6 +3,7 @@ from langchain_core.prompts import SystemMessagePromptTemplate
 from app.agent.admin.agent_state import AgentState
 from app.core.langsmith import traceable
 from app.core.llm import create_chat_model
+from schemas.prompt import base_prompt
 
 system_prompt = """
     # 系统角色定义
@@ -34,20 +35,66 @@ system_prompt = """
     - 不得违背协调节点的调度指令
     
     下面是你的任务描述: {instruction}
-     """
+     """ + base_prompt
+
+
+def _has_plan(state: AgentState) -> bool:
+    raw_plan = state.get("plan")
+    return isinstance(raw_plan, list) and len(raw_plan) > 0
+
+
+def _should_stream_output(state: AgentState, node_name: str) -> bool:
+    """
+    自动判断当前节点是否应作为收尾输出节点：
+    1. gateway_router 直达该节点且不存在执行计划 => 该节点是收尾节点。
+    2. planner 标记当前阶段为最后阶段，且该节点在 next_nodes 中 => 该节点是收尾节点。
+    """
+    routing = state.get("routing") or {}
+    route_target = routing.get("route_target")
+    if route_target == node_name and not _has_plan(state):
+        return True
+
+    next_nodes = routing.get("next_nodes")
+    return (
+        bool(routing.get("is_final_stage"))
+        and isinstance(next_nodes, list)
+        and len(next_nodes) == 1
+        and next_nodes[0] == node_name
+    )
 
 
 @traceable(name="Order Agent Node", run_type="chain")
 def order_agent(state: AgentState) -> dict:
     routing = state.get("routing") or {}
     instruction = routing.get("instruction") or state.get("user_input") or "请处理订单相关任务"
+    step_is_end = _should_stream_output(state, "order_agent")
 
-    llm = create_chat_model()
+    llm = create_chat_model(
+        model="qwen3-max"
+    )
     system_template = SystemMessagePromptTemplate.from_template(template=system_prompt).format_messages(instruction=instruction)
-    response = llm.invoke(system_template)
+    stream_chunks: list[str] = []
+    content = ""
+
+    if step_is_end:
+        try:
+            for chunk in llm.stream(system_template):
+                chunk_text = getattr(chunk, "content")
+                print(chunk_text, end="", flush=True)
+                stream_chunks.append(chunk_text)
+                content += chunk_text
+        except Exception:
+            # 流式失败时退回普通调用，保证节点输出稳定。
+            response = llm.invoke(system_template)
+            content = str(response.content)
+    else:
+        response = llm.invoke(system_template)
+        content = str(response.content)
 
     order_context = dict(state.get("order_context") or {})
-    order_context["result"] = {"content": response.content}
+    order_context["result"] = {"content": content, "is_end": step_is_end}
+    if step_is_end and stream_chunks:
+        order_context["stream_chunks"] = stream_chunks
     order_context["status"] = "COMPLETED"
 
     return {"order_context": order_context}

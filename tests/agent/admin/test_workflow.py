@@ -152,6 +152,44 @@ def test_chat_node_handles_non_business_chat(monkeypatch: pytest.MonkeyPatch):
     assert result["results"]["chat"]["content"] == "你好，我可以陪你聊聊日常问题。"
 
 
+def test_chat_node_streams_when_model_supports_stream(monkeypatch: pytest.MonkeyPatch):
+    class _DummyChunk:
+        def __init__(self, content: str):
+            self.content = content
+
+    class _DummyModel:
+        def __init__(self):
+            self.invoke_called = False
+
+        def stream(self, _messages):
+            yield _DummyChunk("你")
+            yield _DummyChunk("好")
+
+        def invoke(self, _messages):
+            self.invoke_called = True
+            return _DummyChunk("你好")
+
+    dummy_model = _DummyModel()
+    monkeypatch.setattr(chat_module, "create_chat_model", lambda *args, **kwargs: dummy_model)
+
+    state = {
+        "user_input": "你好",
+        "user_intent": {},
+        "plan": [],
+        "routing": {},
+        "order_context": {},
+        "aftersale_context": {},
+        "excel_context": {},
+        "shared_memory": {},
+        "results": {},
+        "errors": [],
+    }
+    result = chat_module.chat_agent(state)
+
+    assert dummy_model.invoke_called is False
+    assert result["results"]["chat"]["content"] == "你好"
+
+
 @pytest.mark.parametrize(
     ("case_name", "plan", "expected_stages"),
     [

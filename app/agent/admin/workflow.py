@@ -130,6 +130,13 @@ def _normalize_difficulty(value: str) -> str:
     return "medium"
 
 
+def _stage_has_executable_node(stage: list[PlanStep]) -> bool:
+    for step in stage:
+        if step.get("node_name") in EXECUTION_NODES:
+            return True
+    return False
+
+
 @traceable(name="Gateway Router Node", run_type="chain")
 def gateway_router(state: AgentState) -> dict[str, Any]:
     """
@@ -197,23 +204,37 @@ def planner(state: AgentState) -> dict[str, Any]:
         stage_index = 0
 
     next_nodes: list[str] = []
+    current_step_map: dict[str, PlanStep] = {}
     # 从当前游标开始找下一个有效阶段，找到后游标前进 1
     while stage_index < len(stages):
         stage = stages[stage_index]
         stage_index += 1
 
         candidate_nodes: list[str] = []
+        candidate_steps: dict[str, PlanStep] = {}
         for step in stage:
             candidate = step.get("node_name")
             if candidate in EXECUTION_NODES and candidate not in candidate_nodes:
                 candidate_nodes.append(candidate)
+                candidate_steps[candidate] = step
 
         if candidate_nodes:
             next_nodes = candidate_nodes
+            current_step_map = candidate_steps
             break
+
+    # 记录当前阶段是否为最后一个有效阶段，供节点决定是否走收尾流式输出。
+    is_final_stage = True
+    if next_nodes:
+        for stage in stages[stage_index:]:
+            if _stage_has_executable_node(stage):
+                is_final_stage = False
+                break
 
     routing["stage_index"] = stage_index
     routing["next_nodes"] = next_nodes
+    routing["current_step_map"] = current_step_map
+    routing["is_final_stage"] = is_final_stage
     return {"routing": routing}
 
 

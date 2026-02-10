@@ -173,3 +173,27 @@ def test_planner_returns_parallel_stage_nodes_and_next_stage():
     second = workflow_module.planner(second_state)["routing"]
     assert second["next_nodes"] == ["chart_agent"]
     assert second["stage_index"] == 2
+
+
+def test_planner_exposes_current_step_map_and_final_stage_flag():
+    plan = [
+        {"node_name": "excel_agent", "task_description": "准备表格"},
+        {"node_name": "order_agent", "task_description": "收尾回答"},
+    ]
+    state = _build_initial_state(
+        "先处理再回复",
+        plan=plan,
+        routing={"difficulty": "medium", "stage_index": 0},
+    )
+
+    first = workflow_module.planner(state)["routing"]
+    assert first["next_nodes"] == ["excel_agent"]
+    assert first["is_final_stage"] is False
+    assert first["current_step_map"]["excel_agent"]["task_description"] == "准备表格"
+
+    second = workflow_module.planner(
+        _build_initial_state("先处理再回复", plan=plan, routing=first)
+    )["routing"]
+    assert second["next_nodes"] == ["order_agent"]
+    assert second["is_final_stage"] is True
+    assert second["current_step_map"]["order_agent"]["task_description"] == "收尾回答"

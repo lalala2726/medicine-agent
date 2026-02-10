@@ -13,6 +13,7 @@ from app.core.langsmith import build_langsmith_runnable_config
 
 router = APIRouter(prefix="/admin/assistant", tags=["管理助手"])
 ADMIN_WORKFLOW = build_graph()
+STREAM_OUTPUT_NODES = {"order_agent", "chat_agent"}
 
 
 class AssistantRequest(BaseModel):
@@ -35,6 +36,59 @@ def _invoke_admin_workflow(state: dict) -> dict:
     if config:
         return ADMIN_WORKFLOW.invoke(state, config=config)
     return ADMIN_WORKFLOW.invoke(state)
+
+
+def _build_stream_config() -> dict | None:
+    return build_langsmith_runnable_config(
+        run_name="admin_assistant_graph",
+        tags=["admin-assistant", "langgraph"],
+        metadata={"entrypoint": "api.admin_assistant.chat"},
+    )
+
+
+def _message_chunk_to_text(message_chunk) -> str:
+    content = getattr(message_chunk, "content", "")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        text_parts: list[str] = []
+        for item in content:
+            if isinstance(item, dict):
+                part = item.get("text")
+                if isinstance(part, str):
+                    text_parts.append(part)
+            elif isinstance(item, str):
+                text_parts.append(item)
+        return "".join(text_parts)
+    if content is None:
+        return ""
+    return str(content)
+
+
+def _has_plan(state: dict) -> bool:
+    raw_plan = state.get("plan")
+    return isinstance(raw_plan, list) and len(raw_plan) > 0
+
+
+def _should_stream_node_by_state(state: dict, node_name: str) -> bool:
+    if node_name == "chat_agent":
+        return True
+
+    if node_name != "order_agent":
+        return False
+
+    routing = state.get("routing") or {}
+    route_target = routing.get("route_target")
+    if route_target == "order_agent" and not _has_plan(state):
+        return True
+
+    next_nodes = routing.get("next_nodes")
+    return (
+        bool(routing.get("is_final_stage"))
+        and isinstance(next_nodes, list)
+        and len(next_nodes) == 1
+        and next_nodes[0] == "order_agent"
+    )
 
 
 @router.post("/chat", summary="管理助手对话")
@@ -87,8 +141,33 @@ async def assistant(request: AssistantRequest) -> StreamingResponse:
 
         try:
             state = _build_initial_state(request.question)
-            final_state = await run_in_threadpool(_invoke_admin_workflow, state)
-            yield _build_payload(_extract_content(final_state), False)
+            latest_state = state
+            has_streamed_output = False
+
+            if hasattr(ADMIN_WORKFLOW, "astream"):
+                config = _build_stream_config()
+                stream_kwargs = {
+                    "stream_mode": ["messages", "values"],
+                }
+                if config:
+                    stream_kwargs["config"] = config
+
+                async for mode, chunk in ADMIN_WORKFLOW.astream(state, **stream_kwargs):
+                    if mode == "messages":
+                        message_chunk, metadata = chunk
+                        stream_node = metadata.get("langgraph_node")
+                        if stream_node in STREAM_OUTPUT_NODES and _should_stream_node_by_state(latest_state, stream_node):
+                            token_text = _message_chunk_to_text(message_chunk)
+                            if token_text:
+                                has_streamed_output = True
+                                yield _build_payload(token_text, False)
+                    elif mode == "values" and isinstance(chunk, dict):
+                        latest_state = chunk
+            else:
+                latest_state = await run_in_threadpool(_invoke_admin_workflow, state)
+
+            if not has_streamed_output:
+                yield _build_payload(_extract_content(latest_state), False)
         except ServiceException as exc:
             yield _build_payload(f"处理失败: {exc.message}", False)
         except Exception:
