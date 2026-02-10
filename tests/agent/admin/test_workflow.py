@@ -6,6 +6,7 @@ import pytest
 from langgraph.constants import END, START
 from langgraph.graph import StateGraph
 
+import app.agent.admin.chat_node as chat_module
 import app.agent.admin.workflow as workflow_module
 from app.agent.admin.workflow import build_graph
 
@@ -120,6 +121,35 @@ def _assert_execution_trace_by_stages(execution_trace: list[str], expected_stage
         assert set(actual_stage) == set(expected_stage)
         offset += stage_size
     assert offset == len(execution_trace)
+
+
+def test_chat_node_handles_non_business_chat(monkeypatch: pytest.MonkeyPatch):
+    class _DummyResponse:
+        def __init__(self, content: str):
+            self.content = content
+
+    class _DummyModel:
+        def invoke(self, _messages):
+            return _DummyResponse("你好，我可以陪你聊聊日常问题。")
+
+    monkeypatch.setattr(chat_module, "create_chat_model", lambda *args, **kwargs: _DummyModel())
+
+    state = {
+        "user_input": "今天天气有点冷，给点保暖建议",
+        "user_intent": {},
+        "plan": [],
+        "routing": {},
+        "order_context": {},
+        "aftersale_context": {},
+        "excel_context": {},
+        "shared_memory": {},
+        "results": {},
+        "errors": [],
+    }
+    result = chat_module.chat_agent(state)
+    print(result["results"]["chat"]["content"])
+    assert result["results"]["chat"]["mode"] == "chat"
+    assert result["results"]["chat"]["content"] == "你好，我可以陪你聊聊日常问题。"
 
 
 @pytest.mark.parametrize(

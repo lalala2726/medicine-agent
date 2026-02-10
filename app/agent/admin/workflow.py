@@ -7,7 +7,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.constants import END, START
 from langgraph.graph import StateGraph
 
-from agent.admin.chat_node import chat_agent
+from app.agent.admin.chat_node import chat_agent
 from app.agent.admin.agent_state import AgentState, PlanStep
 from app.agent.admin.chart_node import chart_agent
 from app.agent.admin.excel_node import excel_agent
@@ -17,7 +17,7 @@ from app.core.llm import DEFAULT_CHAT_MODEL, create_chat_model
 
 # 当前图中允许被执行的业务节点
 EXECUTION_NODES = ("order_agent", "excel_agent", "chart_agent")
-GATEWAY_ROUTE_NODES = (*EXECUTION_NODES, "coordinator_agent")
+GATEWAY_ROUTE_NODES = (*EXECUTION_NODES, "chat_agent", "coordinator_agent")
 GATEWAY_ROUTE_MAP = {
     "order_agent": "order_agent",
     "excel_agent": "excel_agent",
@@ -52,7 +52,7 @@ GATEWAY_ROUTER_PROMPT = """
 
 请严格输出 JSON 对象，且只输出 JSON，不要包含其他文字：
 {
-  "route_target": "order_agent | excel_agent | chart_agent | coordinator_agent",
+  "route_target": "order_agent | excel_agent | chart_agent | chat_agent | coordinator_agent",
   "difficulty": "simple | medium | complex"
 }
     
@@ -87,6 +87,7 @@ def build_graph():
 
     # 进入协调器后，由 planner 按 plan 与阶段继续调度
     graph.add_edge("coordinator_agent", "planner")
+    graph.add_edge("chat_agent", END)
 
     # 业务节点执行结束后回到 planner 决定下一步或结束
     for node in EXECUTION_NODES:
