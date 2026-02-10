@@ -4,6 +4,7 @@ from typing import Any
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.agent.admin.agent_state import AgentState
+from app.core.langsmith import traceable
 from app.core.llm import create_chat_model
 
 _system_prompt = """
@@ -71,6 +72,7 @@ def _select_model_by_difficulty(difficulty: str) -> str:
     return _COORDINATOR_MODEL_BY_DIFFICULTY.get(key, _COORDINATOR_MODEL_BY_DIFFICULTY["simple"])
 
 
+@traceable(name="Coordinator Agent Node", run_type="chain")
 def coordinator(state: AgentState) -> dict[str,Any]:
     routing = dict(state.get("routing") or {})
     difficulty = str(routing.get("difficulty") or "medium").strip().lower()

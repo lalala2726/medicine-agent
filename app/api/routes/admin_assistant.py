@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from app.agent.admin.workflow import build_graph
 from app.core.codes import ResponseCode
 from app.core.exceptions import ServiceException
+from app.core.langsmith import build_langsmith_runnable_config
 
 router = APIRouter(prefix="/admin/assistant", tags=["管理助手"])
 ADMIN_WORKFLOW = build_graph()
@@ -23,6 +24,17 @@ class AssistantResponse(BaseModel):
     """AI助手响应参数"""
     content: str = Field(..., description="答案")
     is_end: bool = Field(default=False, description="是否结束")
+
+
+def _invoke_admin_workflow(state: dict) -> dict:
+    config = build_langsmith_runnable_config(
+        run_name="admin_assistant_graph",
+        tags=["admin-assistant", "langgraph"],
+        metadata={"entrypoint": "api.admin_assistant.chat"},
+    )
+    if config:
+        return ADMIN_WORKFLOW.invoke(state, config=config)
+    return ADMIN_WORKFLOW.invoke(state)
 
 
 @router.post("/chat", summary="管理助手对话")
@@ -75,7 +87,7 @@ async def assistant(request: AssistantRequest) -> StreamingResponse:
 
         try:
             state = _build_initial_state(request.question)
-            final_state = await run_in_threadpool(ADMIN_WORKFLOW.invoke, state)
+            final_state = await run_in_threadpool(_invoke_admin_workflow, state)
             yield _build_payload(_extract_content(final_state), False)
         except ServiceException as exc:
             yield _build_payload(f"处理失败: {exc.message}", False)

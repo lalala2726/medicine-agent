@@ -2,3 +2,4 @@
 .idea
 medicine_ai_agent.egg-info
 tmp
+.langgraph_api

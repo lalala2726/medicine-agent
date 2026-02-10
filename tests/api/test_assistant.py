@@ -10,8 +10,10 @@ class _DummyGraph:
     def __init__(self, final_state: dict | None = None, should_raise: bool = False) -> None:
         self.final_state = final_state or {}
         self.should_raise = should_raise
+        self.captured_config = None
 
-    def invoke(self, _state: dict) -> dict:
+    def invoke(self, _state: dict, config: dict | None = None) -> dict:
+        self.captured_config = config
         if self.should_raise:
             raise RuntimeError("graph failed")
         return self.final_state
@@ -80,3 +82,24 @@ def test_assistant_requires_question():
     body = response.json()
     assert body["code"] == 400
     assert body["message"] == "问题不能为空"
+
+
+def test_invoke_admin_workflow_passes_langsmith_config(monkeypatch):
+    graph = _DummyGraph(final_state={"results": {"chat": {"content": "ok"}}})
+    monkeypatch.setattr(assistant_module, "ADMIN_WORKFLOW", graph)
+    monkeypatch.setattr(
+        assistant_module,
+        "build_langsmith_runnable_config",
+        lambda **kwargs: {
+            "run_name": "admin_assistant_graph",
+            "tags": ["admin-assistant", "langgraph"],
+            "metadata": {"entrypoint": "api.admin_assistant.chat"},
+        },
+    )
+
+    state = {"user_input": "hello"}
+    result = assistant_module._invoke_admin_workflow(state)
+
+    assert result["results"]["chat"]["content"] == "ok"
+    assert graph.captured_config is not None
+    assert graph.captured_config["run_name"] == "admin_assistant_graph"

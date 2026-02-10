@@ -13,6 +13,7 @@ from app.agent.admin.chart_node import chart_agent
 from app.agent.admin.excel_node import excel_agent
 from app.agent.admin.order_node import order_agent
 from app.agent.admin.supervisor_node import coordinator
+from app.core.langsmith import traceable
 from app.core.llm import DEFAULT_CHAT_MODEL, create_chat_model
 
 # 当前图中允许被执行的业务节点
@@ -128,6 +129,7 @@ def _normalize_difficulty(value: str) -> str:
     return "medium"
 
 
+@traceable(name="Gateway Router Node", run_type="chain")
 def gateway_router(state: AgentState) -> dict[str, Any]:
     """
     第一跳网关节点：判断直接执行还是进入 coordinator_agent。
@@ -179,6 +181,7 @@ def _route_from_gateway(state: AgentState) -> str:
     return END
 
 
+@traceable(name="Planner Node", run_type="chain")
 def planner(state: AgentState) -> dict[str, Any]:
     """
     planner 根据 plan 的阶段返回 next_nodes（支持并行阶段）。

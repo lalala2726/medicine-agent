@@ -1,6 +1,7 @@
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.agent.admin.agent_state import AgentState
+from app.core.langsmith import traceable
 from app.core.llm import create_chat_model
 
 _CHAT_SYSTEM_PROMPT = """
@@ -14,6 +15,7 @@ _CHAT_SYSTEM_PROMPT = """
 """
 
 
+@traceable(name="Chat Agent Node", run_type="chain")
 def chat_agent(state: AgentState) -> AgentState:
     user_input = str(state.get("user_input") or "").strip()
     if not user_input:
