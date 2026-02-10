@@ -39,4 +39,8 @@
   `MILVUS_TIMEOUT`.
 - Redis configuration (optional): `REDIS_URL`, `REDIS_HOST`, `REDIS_PORT`, `REDIS_DB`, `REDIS_PASSWORD`, `REDIS_SSL`.
 - RQ configuration (optional): `RQ_QUEUE_NAME`, `RQ_DEFAULT_TIMEOUT`.
+- HTTP client configuration (optional): `HTTP_BASE_URL` (defaults to `http://localhost:8080`).
+- HTTP client logging (optional): `HTTP_CLIENT_LOG_ENABLED` (default false, set true to log request/response details).
+- LangSmith tracing (optional): `LANGSMITH_TRACING` (or legacy `LANGCHAIN_TRACING_V2`), `LANGSMITH_API_KEY`,
+  `LANGSMITH_PROJECT`, `LANGSMITH_ENDPOINT`.
 - Document new config values in this file when you introduce them.

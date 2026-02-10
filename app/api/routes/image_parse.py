@@ -1,7 +1,7 @@
 """
 图像解析 API 路由
 
-接收 Spring Boot 处理好的图片 base64 并调用大模型进行结构化解析。
+接收图片 URL 并调用大模型进行结构化解析。
 """
 
 from typing import List
@@ -20,13 +20,13 @@ router = APIRouter(prefix="/image/parse", tags=["图像解析"])
 class ImageParseRequest(BaseModel):
     """图像解析请求参数"""
 
-    images: List[str] = Field(..., description="图片 base64 编码列表")
+    image_urls: List[str] = Field(..., description="图片 URL 列表")
 
 
 @router.post("/drug", summary="解析药品图片")
 async def parse_image(request: ImageParseRequest) -> ApiResponse[dict]:
     """
-    接收 base64 图片并使用大模型进行解析
+    接收图片 URL 并使用大模型进行解析
 
     Args:
         request: 图像解析请求参数
@@ -37,8 +37,8 @@ async def parse_image(request: ImageParseRequest) -> ApiResponse[dict]:
     Raises:
         ServiceException: 图片列表为空时抛出异常
     """
-    if not request.images:
+    if not request.image_urls:
         raise ServiceException(code=ResponseCode.BAD_REQUEST, message="图片不能为空")
 
-    data = parse_drug_images(request.images)
+    data = parse_drug_images(request.image_urls)
     return ApiResponse.success(data=data, message="解析成功")
