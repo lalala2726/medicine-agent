@@ -227,6 +227,48 @@ def test_assistant_streaming_response_from_astream_chat_tokens(monkeypatch):
     assert payloads[2]["is_end"] is True
 
 
+def test_assistant_streaming_response_from_astream_summary_tokens(monkeypatch):
+    graph = _DummyAsyncGraph(
+        events=[
+            (
+                "values",
+                {
+                    "routing": {
+                        "route_target": "coordinator_agent",
+                        "next_nodes": ["summary_agent"],
+                        "is_final_stage": True,
+                    },
+                    "plan": [{"node_name": "summary_agent"}],
+                },
+            ),
+            (
+                "messages",
+                (_DummyMessageChunk("总"), {"langgraph_node": "summary_agent"}),
+            ),
+            (
+                "messages",
+                (_DummyMessageChunk("结"), {"langgraph_node": "summary_agent"}),
+            ),
+            (
+                "values",
+                {"results": {"summary": {"content": "总结"}}},
+            ),
+        ]
+    )
+    monkeypatch.setattr(assistant_module, "ADMIN_WORKFLOW", graph)
+    client = TestClient(app)
+
+    response = client.post("/api/admin/assistant/chat", json={"question": "汇总一下"})
+
+    assert response.status_code == 200
+    lines = [line for line in response.text.splitlines() if line.startswith("data: ")]
+    payloads = [json.loads(line[len("data: "):]) for line in lines]
+    assert payloads[0]["content"] == "总"
+    assert payloads[1]["content"] == "结"
+    assert payloads[2]["content"] == ""
+    assert payloads[2]["is_end"] is True
+
+
 def test_assistant_streaming_response_when_workflow_raises(monkeypatch):
     monkeypatch.setattr(
         assistant_module,

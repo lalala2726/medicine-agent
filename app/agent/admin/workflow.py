@@ -13,16 +13,18 @@ from app.agent.admin.chart_node import chart_agent
 from app.agent.admin.excel_node import excel_agent
 from app.agent.admin.order_node import order_agent
 from app.agent.admin.coordinator_node import coordinator
+from app.agent.admin.summary_node import summary_agent
 from app.core.langsmith import traceable
 from app.core.llm import DEFAULT_CHAT_MODEL, create_chat_model
 
 # 当前图中允许被执行的业务节点
-EXECUTION_NODES = ("order_agent", "excel_agent", "chart_agent")
+EXECUTION_NODES = ("order_agent", "excel_agent", "chart_agent", "summary_agent")
 GATEWAY_ROUTE_NODES = (*EXECUTION_NODES, "chat_agent", "coordinator_agent")
 GATEWAY_ROUTE_MAP = {
     "order_agent": "order_agent",
     "excel_agent": "excel_agent",
     "chart_agent": "chart_agent",
+    "summary_agent": "summary_agent",
     "chat_agent": "chat_agent",
     "coordinator_agent": "coordinator_agent",
     END: END,
@@ -31,6 +33,7 @@ PLANNER_ROUTE_MAP = {
     "order_agent": "order_agent",
     "excel_agent": "excel_agent",
     "chart_agent": "chart_agent",
+    "summary_agent": "summary_agent",
     END: END,
 }
 
@@ -45,15 +48,17 @@ GATEWAY_ROUTER_PROMPT = """
    - 表格域任务：Excel 文件解析、结构化导出、表格数据整理。
 3. chart_agent
    - 图表域任务：根据已有结构化数据生成图表、统计可视化结果说明。
-4. chat_agent
+4. summary_agent
+   - 汇总域任务：汇总多个节点结果，输出最终结论。
+5. chat_agent
     - 普通对话：非业务相关问题、咨询、闲聊。
-5. coordinator_agent
+7. coordinator_agent
    - 协调域任务：多节点任务拆解、并行/串行编排、跨节点结果整合。
    - 当请求涉及两个及以上业务域，或依赖关系复杂时，必须路由到该节点。
 
 请严格输出 JSON 对象，且只输出 JSON，不要包含其他文字：
 {
-  "route_target": "order_agent | excel_agent | chart_agent | chat_agent | coordinator_agent",
+  "route_target": "order_agent | excel_agent | chart_agent | summary_agent | chat_agent | coordinator_agent",
   "difficulty": "simple | medium | complex"
 }
     
@@ -75,7 +80,7 @@ def build_graph():
     graph.add_node("coordinator_agent", coordinator)
     graph.add_node("planner", planner)
     graph.add_node("chat_agent", chat_agent)
-    graph.add_node("summary_agent", chat_agent)
+    graph.add_node("summary_agent", summary_agent)
     graph.add_node("order_agent", order_agent)
     graph.add_node("excel_agent", excel_agent)
     graph.add_node("chart_agent", chart_agent)

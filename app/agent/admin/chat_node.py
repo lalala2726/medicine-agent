@@ -3,7 +3,8 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from app.agent.admin.agent_state import AgentState
 from app.core.langsmith import traceable
 from app.core.llm import create_chat_model
-from schemas.prompt import base_prompt
+from app.schemas.prompt import base_prompt
+from app.utils.streaming_utils import generate_content_with_stream_fallback
 
 _CHAT_SYSTEM_PROMPT = """
 你是药品商城后台管理助手里的聊天节点（chat_agent）。
@@ -13,7 +14,6 @@ _CHAT_SYSTEM_PROMPT = """
 1. 不编造订单、售后、库存、报表等业务数据。
 2. 若用户问题明显属于业务查询/处理，请礼貌提示该问题应走业务节点。
 3. 回复尽量简洁、自然、直接。
-4. 禁止暴露你的模型名称，开发商
 """ + base_prompt
 
 
@@ -32,22 +32,11 @@ def chat_agent(state: AgentState) -> AgentState:
             SystemMessage(content=_CHAT_SYSTEM_PROMPT),
             HumanMessage(content=user_input),
         ]
-        stream_chunks: list[str] = []
-        try:
-            for chunk in llm.stream(messages):
-                chunk_text = getattr(chunk, "content", "")
-                if not isinstance(chunk_text, str):
-                    chunk_text = str(chunk_text or "")
-                if chunk_text:
-                    stream_chunks.append(chunk_text)
-        except Exception:
-            stream_chunks = []
-
-        if stream_chunks:
-            content = "".join(stream_chunks)
-        else:
-            response = llm.invoke(messages)
-            content = str(response.content)
+        content, _ = generate_content_with_stream_fallback(
+            llm=llm,
+            messages=messages,
+            enable_stream=True,
+        )
     except Exception:
         content = "聊天服务暂时不可用，请稍后重试。"
 

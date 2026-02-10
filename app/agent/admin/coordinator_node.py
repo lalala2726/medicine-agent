@@ -18,8 +18,10 @@ _system_prompt = """
 - order_agent: 订单查询、订单状态与订单信息核验。
 - excel_agent: 表格解析、表格整理、Excel 导出。
 - chart_agent: 基于已有结构化数据生成图表或统计说明。
-- summary_agent: 摘要生成，如果有任务可以并行处理的话这边并行到这边
-- chat_agent: 聊天机器人，如果上述节点不能满足需求，可以考虑使用 chat_agent。或者是和业务无关的比如咨询闲聊等
+- summary_agent: 对多个节点结果做汇总并输出最终结论。
+
+注意：
+- chat_agent 由 gateway_router 处理，不要出现在 plan 中。
 
 你输出的 JSON 必须与状态结构兼容（对应 AgentState 中的 plan）：
 {

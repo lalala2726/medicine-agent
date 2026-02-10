@@ -6,6 +6,7 @@ from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from app.utils.streaming_utils import message_chunk_to_text, should_stream_node_output
 from app.agent.admin.workflow import build_graph
 from app.core.codes import ResponseCode
 from app.core.exceptions import ServiceException
@@ -13,7 +14,7 @@ from app.core.langsmith import build_langsmith_runnable_config
 
 router = APIRouter(prefix="/admin/assistant", tags=["管理助手"])
 ADMIN_WORKFLOW = build_graph()
-STREAM_OUTPUT_NODES = {"order_agent", "chat_agent"}
+STREAM_OUTPUT_NODES = {"order_agent", "chat_agent", "summary_agent"}
 
 
 class AssistantRequest(BaseModel):
@@ -46,51 +47,6 @@ def _build_stream_config() -> dict | None:
     )
 
 
-def _message_chunk_to_text(message_chunk) -> str:
-    content = getattr(message_chunk, "content", "")
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        text_parts: list[str] = []
-        for item in content:
-            if isinstance(item, dict):
-                part = item.get("text")
-                if isinstance(part, str):
-                    text_parts.append(part)
-            elif isinstance(item, str):
-                text_parts.append(item)
-        return "".join(text_parts)
-    if content is None:
-        return ""
-    return str(content)
-
-
-def _has_plan(state: dict) -> bool:
-    raw_plan = state.get("plan")
-    return isinstance(raw_plan, list) and len(raw_plan) > 0
-
-
-def _should_stream_node_by_state(state: dict, node_name: str) -> bool:
-    if node_name == "chat_agent":
-        return True
-
-    if node_name != "order_agent":
-        return False
-
-    routing = state.get("routing") or {}
-    route_target = routing.get("route_target")
-    if route_target == "order_agent" and not _has_plan(state):
-        return True
-
-    next_nodes = routing.get("next_nodes")
-    return (
-        bool(routing.get("is_final_stage"))
-        and isinstance(next_nodes, list)
-        and len(next_nodes) == 1
-        and next_nodes[0] == "order_agent"
-    )
-
-
 @router.post("/chat", summary="管理助手对话")
 async def assistant(request: AssistantRequest) -> StreamingResponse:
     if not request.question:
@@ -116,6 +72,11 @@ async def assistant(request: AssistantRequest) -> StreamingResponse:
         chat_content = chat_result.get("content")
         if isinstance(chat_content, str) and chat_content:
             return chat_content
+
+        summary_result = results.get("summary") or {}
+        summary_content = summary_result.get("content")
+        if isinstance(summary_content, str) and summary_content:
+            return summary_content
 
         order_context = final_state.get("order_context") or {}
         order_result = order_context.get("result") or {}
@@ -156,8 +117,10 @@ async def assistant(request: AssistantRequest) -> StreamingResponse:
                     if mode == "messages":
                         message_chunk, metadata = chunk
                         stream_node = metadata.get("langgraph_node")
-                        if stream_node in STREAM_OUTPUT_NODES and _should_stream_node_by_state(latest_state, stream_node):
-                            token_text = _message_chunk_to_text(message_chunk)
+                        if stream_node in STREAM_OUTPUT_NODES and (
+                            stream_node == "chat_agent" or should_stream_node_output(latest_state, stream_node)
+                        ):
+                            token_text = message_chunk_to_text(message_chunk)
                             if token_text:
                                 has_streamed_output = True
                                 yield _build_payload(token_text, False)
