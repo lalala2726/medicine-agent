@@ -6,78 +6,75 @@ from app.api.routes import admin_assistant as assistant_module
 from app.main import app
 
 
-class DummyMessage:
-    def __init__(self, content: str, tool_calls: list | None = None) -> None:
-        self.content = content
-        self.tool_calls = tool_calls or []
+class _DummyGraph:
+    def __init__(self, final_state: dict | None = None, should_raise: bool = False) -> None:
+        self.final_state = final_state or {}
+        self.should_raise = should_raise
+
+    def invoke(self, _state: dict) -> dict:
+        if self.should_raise:
+            raise RuntimeError("graph failed")
+        return self.final_state
 
 
-class DummyModel:
-    def bind_tools(self, tools):
-        return self
-
-    async def ainvoke(self, messages):
-        return DummyMessage("hello world")
-
-
-def test_assistant_streaming_response(monkeypatch):
-    monkeypatch.setattr(assistant_module, "create_chat_model", lambda: DummyModel())
+def test_assistant_streaming_response_from_workflow_chat_result(monkeypatch):
+    monkeypatch.setattr(
+        assistant_module,
+        "ADMIN_WORKFLOW",
+        _DummyGraph(final_state={"results": {"chat": {"content": "hello from workflow"}}}),
+    )
     client = TestClient(app)
 
-    response = client.post("/api/assistant/chat", json={"question": "hi"})
+    response = client.post("/api/admin/assistant/chat", json={"question": "hi"})
 
     assert response.status_code == 200
     lines = [line for line in response.text.splitlines() if line.startswith("data: ")]
     assert len(lines) == 2
     payloads = [json.loads(line[len("data: "):]) for line in lines]
-    assert payloads[0]["content"] == "hello world"
+    assert payloads[0]["content"] == "hello from workflow"
     assert payloads[0]["is_end"] is False
     assert payloads[1]["content"] == ""
     assert payloads[1]["is_end"] is True
 
 
-def test_assistant_calls_tool(monkeypatch):
-    class DummyTool:
-        name = "get_user_info"
-
-        def __init__(self) -> None:
-            self.called = False
-
-        async def ainvoke(self, args):
-            self.called = True
-            return {"name": "Alice"}
-
-    class ToolModel:
-        def __init__(self) -> None:
-            self.calls = 0
-
-        def bind_tools(self, tools):
-            return self
-
-        async def ainvoke(self, messages):
-            self.calls += 1
-            if self.calls == 1:
-                return DummyMessage("", tool_calls=[{"name": "get_user_info", "args": {}, "id": "call-1"}])
-            return DummyMessage("你好，Alice")
-
-    dummy_tool = DummyTool()
-    monkeypatch.setattr(assistant_module, "get_user_info", dummy_tool)
-    monkeypatch.setattr(assistant_module, "create_chat_model", lambda: ToolModel())
+def test_assistant_streaming_response_from_order_context(monkeypatch):
+    monkeypatch.setattr(
+        assistant_module,
+        "ADMIN_WORKFLOW",
+        _DummyGraph(final_state={"order_context": {"result": {"content": "order done"}}}),
+    )
     client = TestClient(app)
 
-    response = client.post("/api/assistant/chat", json={"question": "当前用户是谁？"})
+    response = client.post("/api/admin/assistant/chat", json={"question": "查订单"})
 
     assert response.status_code == 200
-    assert dummy_tool.called is True
     lines = [line for line in response.text.splitlines() if line.startswith("data: ")]
     payloads = [json.loads(line[len("data: "):]) for line in lines]
-    assert payloads[0]["content"] == "你好，Alice"
+    assert payloads[0]["content"] == "order done"
+    assert payloads[1]["is_end"] is True
+
+
+def test_assistant_streaming_response_when_workflow_raises(monkeypatch):
+    monkeypatch.setattr(
+        assistant_module,
+        "ADMIN_WORKFLOW",
+        _DummyGraph(should_raise=True),
+    )
+    client = TestClient(app)
+
+    response = client.post("/api/admin/assistant/chat", json={"question": "hi"})
+
+    assert response.status_code == 200
+    lines = [line for line in response.text.splitlines() if line.startswith("data: ")]
+    payloads = [json.loads(line[len("data: "):]) for line in lines]
+    assert payloads[0]["content"] == "服务暂时不可用，请稍后重试。"
+    assert payloads[1]["is_end"] is True
 
 
 def test_assistant_requires_question():
     client = TestClient(app)
 
-    response = client.post("/api/assistant/chat", json={"question": ""})
+    response = client.post("/api/admin/assistant/chat", json={"question": ""})
 
     assert response.status_code == 400
     body = response.json()
