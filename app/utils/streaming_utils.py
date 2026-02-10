@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from typing import Any, Optional, Sequence
 
 from langchain_core.messages import ToolMessage
@@ -29,6 +30,17 @@ from app.agent.admin.agent_state import AgentState
 
 # 工具调用最大轮次，防止无限循环
 MAX_TOOL_ROUNDS = 5
+
+
+def _is_tool_log_enabled() -> bool:
+    """
+    检查是否启用工具调用日志。
+
+    Returns:
+        bool: AGENT_TOOL_LOG_ENABLED 为 true 时返回 True
+    """
+    value = os.getenv("AGENT_TOOL_LOG_ENABLED", "false").strip().lower()
+    return value in {"1", "true", "yes", "on"}
 
 
 def has_plan(state: AgentState | dict[str, Any]) -> bool:
@@ -152,6 +164,7 @@ def _invoke_with_tools(
     """
     llm_with_tools = llm.bind_tools(tools)
     tool_map = {t.name: t for t in tools}
+    log_enabled = _is_tool_log_enabled()
 
     for round_idx in range(max_rounds):
         # 同步调用 — 保持 LangGraph 上下文，支持 token 流式拦截
@@ -159,18 +172,21 @@ def _invoke_with_tools(
         messages.append(response)
 
         if not response.tool_calls:
-            logger.info("第 {} 轮无工具调用，返回最终结果", round_idx + 1)
+            if log_enabled:
+                logger.info("第 {} 轮无工具调用，返回最终结果", round_idx + 1)
             return extract_text(response)
 
-        logger.info(
-            "第 {} 轮触发 {} 个工具调用", round_idx + 1, len(response.tool_calls)
-        )
+        if log_enabled:
+            logger.info(
+                "第 {} 轮触发 {} 个工具调用", round_idx + 1, len(response.tool_calls)
+            )
 
         for tc in response.tool_calls:
-            result = _exec_tool(tc, tool_map)
+            result = _exec_tool(tc, tool_map, log_enabled)
             messages.append(ToolMessage(content=result, tool_call_id=tc["id"]))
 
-    logger.warning("达到最大工具调用轮次 ({})，生成最终响应", max_rounds)
+    if log_enabled:
+        logger.warning("达到最大工具调用轮次 ({})，生成最终响应", max_rounds)
     final = llm_with_tools.invoke(messages)
     return extract_text(final)
 
@@ -201,7 +217,9 @@ def _run_async(coro: Any) -> Any:
     return asyncio.run(coro)
 
 
-def _exec_tool(tool_call: dict, tool_map: dict[str, Any]) -> str:
+def _exec_tool(
+    tool_call: dict, tool_map: dict[str, Any], log_enabled: bool = None
+) -> str:
     """
     执行单个工具调用。
 
@@ -211,6 +229,7 @@ def _exec_tool(tool_call: dict, tool_map: dict[str, Any]) -> str:
     Args:
         tool_call: 工具调用信息，包含 name、args、id
         tool_map: 工具名称到工具函数的映射
+        log_enabled: 是否启用日志（None 时自动检查环境变量）
 
     Returns:
         str: JSON 格式的执行结果或错误信息
@@ -219,24 +238,31 @@ def _exec_tool(tool_call: dict, tool_map: dict[str, Any]) -> str:
     args = tool_call.get("args", {})
     tool_fn = tool_map.get(name)
 
+    if log_enabled is None:
+        log_enabled = _is_tool_log_enabled()
+
     if tool_fn is None:
-        logger.warning("未知工具: {}", name)
+        if log_enabled:
+            logger.warning("未知工具: {}", name)
         return json.dumps({"error": f"未知工具: {name}"}, ensure_ascii=False)
 
-    logger.info("工具调用: name={} args={}", name, args)
+    if log_enabled:
+        logger.info("工具调用: name={} args={}", name, args)
 
     try:
         result = _run_async(tool_fn.ainvoke(args))
-        logger.info(
-            "工具返回: name={} result={}",
-            name,
-            json.dumps(result, ensure_ascii=False, default=str)[:500],
-        )
+        if log_enabled:
+            logger.info(
+                "工具返回: name={} result={}",
+                name,
+                json.dumps(result, ensure_ascii=False, default=str)[:500],
+            )
         return (
             json.dumps(result, ensure_ascii=False, default=str)
             if isinstance(result, (dict, list))
             else str(result)
         )
     except Exception as exc:
-        logger.error("工具执行失败: name={} error={}", name, exc)
+        if log_enabled:
+            logger.error("工具执行失败: name={} error={}", name, exc)
         return json.dumps({"error": f"工具执行失败: {name}, {exc}"}, ensure_ascii=False)
