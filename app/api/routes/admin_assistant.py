@@ -11,6 +11,7 @@ from app.agent.admin.workflow import build_graph
 from app.core.codes import ResponseCode
 from app.core.exceptions import ServiceException
 from app.core.langsmith import build_langsmith_runnable_config
+from app.schemas.sse_response import AssistantResponse
 
 router = APIRouter(prefix="/admin/assistant", tags=["管理助手"])
 ADMIN_WORKFLOW = build_graph()
@@ -21,13 +22,6 @@ class AssistantRequest(BaseModel):
     """AI助手请求参数"""
 
     question: str = Field(..., description="问题")
-
-
-class AssistantResponse(BaseModel):
-    """AI助手响应参数"""
-
-    content: str = Field(..., description="答案")
-    is_end: bool = Field(default=False, description="是否结束")
 
 
 def _invoke_admin_workflow(state: dict) -> dict:
