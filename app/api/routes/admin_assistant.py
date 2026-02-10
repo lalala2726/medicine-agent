@@ -11,7 +11,7 @@ from app.agent.admin.workflow import build_graph
 from app.core.codes import ResponseCode
 from app.core.exceptions import ServiceException
 from app.core.langsmith import build_langsmith_runnable_config
-from app.schemas.sse_response import AssistantResponse
+from app.schemas.sse_response import AssistantResponse, Content, MessageType
 
 router = APIRouter(prefix="/admin/assistant", tags=["管理助手"])
 ADMIN_WORKFLOW = build_graph()
@@ -93,8 +93,12 @@ async def assistant(request: AssistantRequest) -> StreamingResponse:
         """SSE 事件流生成器"""
 
         def _build_payload(content: str, is_end: bool) -> str:
-            payload = AssistantResponse(content=content, is_end=is_end)
-            return f"data: {json.dumps(payload.model_dump(), ensure_ascii=False)}\n\n"
+            payload = AssistantResponse(
+                content=Content(text=content),
+                type=MessageType.ANSWER,
+                is_end=is_end,
+            )
+            return f"data: {json.dumps(payload.model_dump(mode='json', exclude_none=True), ensure_ascii=False)}\n\n"
 
         try:
             state = _build_initial_state(request.question)
