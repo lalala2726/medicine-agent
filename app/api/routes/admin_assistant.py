@@ -18,7 +18,7 @@ from app.schemas.sse_response import AssistantResponse, Content, MessageType
 
 router = APIRouter(prefix="/admin/assistant", tags=["管理助手"])
 ADMIN_WORKFLOW = build_graph()
-STREAM_OUTPUT_NODES = {"order_agent", "chat_agent", "summary_agent"}
+STREAM_OUTPUT_NODES = {"order_agent", "chat_agent", "summary_agent", "chart_agent"}
 
 
 class AssistantRequest(BaseModel):
@@ -76,6 +76,11 @@ async def assistant(request: AssistantRequest) -> StreamingResponse:
         summary_content = summary_result.get("content")
         if isinstance(summary_content, str) and summary_content:
             return summary_content
+
+        chart_result = results.get("chart") or {}
+        chart_content = chart_result.get("content")
+        if isinstance(chart_content, str) and chart_content:
+            return chart_content
 
         order_context = final_state.get("order_context") or {}
         order_result = order_context.get("result") or {}
