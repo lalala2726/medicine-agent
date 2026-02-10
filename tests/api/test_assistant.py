@@ -3,6 +3,7 @@ import json
 from fastapi.testclient import TestClient
 
 from app.api.routes import admin_assistant as assistant_module
+from app.core.assistant_status import emit_function_call, emit_status
 from app.main import app
 
 
@@ -33,6 +34,15 @@ class _DummyAsyncGraph:
             yield event
 
 
+def _extract_payloads(response_text: str) -> list[dict]:
+    lines = [line for line in response_text.splitlines() if line.startswith("data: ")]
+    return [json.loads(line[len("data: "):]) for line in lines]
+
+
+def _answer_text(payload: dict) -> str:
+    return payload["content"]["text"]
+
+
 def test_assistant_streaming_response_from_workflow_chat_result(monkeypatch):
     monkeypatch.setattr(
         assistant_module,
@@ -44,12 +54,11 @@ def test_assistant_streaming_response_from_workflow_chat_result(monkeypatch):
     response = client.post("/api/admin/assistant/chat", json={"question": "hi"})
 
     assert response.status_code == 200
-    lines = [line for line in response.text.splitlines() if line.startswith("data: ")]
-    assert len(lines) == 2
-    payloads = [json.loads(line[len("data: "):]) for line in lines]
-    assert payloads[0]["content"] == "hello from workflow"
+    payloads = _extract_payloads(response.text)
+    assert len(payloads) == 2
+    assert _answer_text(payloads[0]) == "hello from workflow"
     assert payloads[0]["is_end"] is False
-    assert payloads[1]["content"] == ""
+    assert _answer_text(payloads[1]) == ""
     assert payloads[1]["is_end"] is True
 
 
@@ -64,9 +73,8 @@ def test_assistant_streaming_response_from_order_context(monkeypatch):
     response = client.post("/api/admin/assistant/chat", json={"question": "查订单"})
 
     assert response.status_code == 200
-    lines = [line for line in response.text.splitlines() if line.startswith("data: ")]
-    payloads = [json.loads(line[len("data: "):]) for line in lines]
-    assert payloads[0]["content"] == "order done"
+    payloads = _extract_payloads(response.text)
+    assert _answer_text(payloads[0]) == "order done"
     assert payloads[1]["is_end"] is True
 
 
@@ -88,11 +96,10 @@ def test_assistant_streaming_response_from_order_context_chunks_with_invoke_fall
     response = client.post("/api/admin/assistant/chat", json={"question": "查订单"})
 
     assert response.status_code == 200
-    lines = [line for line in response.text.splitlines() if line.startswith("data: ")]
-    payloads = [json.loads(line[len("data: "):]) for line in lines]
-    assert payloads[0]["content"] == "order done"
+    payloads = _extract_payloads(response.text)
+    assert _answer_text(payloads[0]) == "order done"
     assert payloads[0]["is_end"] is False
-    assert payloads[1]["content"] == ""
+    assert _answer_text(payloads[1]) == ""
     assert payloads[1]["is_end"] is True
 
 
@@ -123,11 +130,10 @@ def test_assistant_streaming_response_from_astream_order_tokens(monkeypatch):
     response = client.post("/api/admin/assistant/chat", json={"question": "查订单"})
 
     assert response.status_code == 200
-    lines = [line for line in response.text.splitlines() if line.startswith("data: ")]
-    payloads = [json.loads(line[len("data: "):]) for line in lines]
-    assert payloads[0]["content"] == "订"
-    assert payloads[1]["content"] == "单"
-    assert payloads[2]["content"] == ""
+    payloads = _extract_payloads(response.text)
+    assert _answer_text(payloads[0]) == "订"
+    assert _answer_text(payloads[1]) == "单"
+    assert _answer_text(payloads[2]) == ""
     assert payloads[2]["is_end"] is True
 
 
@@ -150,11 +156,10 @@ def test_assistant_streaming_response_from_astream_non_order_tokens(monkeypatch)
     response = client.post("/api/admin/assistant/chat", json={"question": "hi"})
 
     assert response.status_code == 200
-    lines = [line for line in response.text.splitlines() if line.startswith("data: ")]
-    payloads = [json.loads(line[len("data: "):]) for line in lines]
-    assert payloads[0]["content"] == "final answer"
+    payloads = _extract_payloads(response.text)
+    assert _answer_text(payloads[0]) == "final answer"
     assert payloads[0]["is_end"] is False
-    assert payloads[1]["content"] == ""
+    assert _answer_text(payloads[1]) == ""
     assert payloads[1]["is_end"] is True
 
 
@@ -188,11 +193,10 @@ def test_assistant_does_not_stream_order_tokens_when_order_is_not_final(monkeypa
     response = client.post("/api/admin/assistant/chat", json={"question": "hi"})
 
     assert response.status_code == 200
-    lines = [line for line in response.text.splitlines() if line.startswith("data: ")]
-    payloads = [json.loads(line[len("data: "):]) for line in lines]
-    assert payloads[0]["content"] == "final answer"
+    payloads = _extract_payloads(response.text)
+    assert _answer_text(payloads[0]) == "final answer"
     assert payloads[0]["is_end"] is False
-    assert payloads[1]["content"] == ""
+    assert _answer_text(payloads[1]) == ""
     assert payloads[1]["is_end"] is True
 
 
@@ -219,11 +223,10 @@ def test_assistant_streaming_response_from_astream_chat_tokens(monkeypatch):
     response = client.post("/api/admin/assistant/chat", json={"question": "你好"})
 
     assert response.status_code == 200
-    lines = [line for line in response.text.splitlines() if line.startswith("data: ")]
-    payloads = [json.loads(line[len("data: "):]) for line in lines]
-    assert payloads[0]["content"] == "你"
-    assert payloads[1]["content"] == "好"
-    assert payloads[2]["content"] == ""
+    payloads = _extract_payloads(response.text)
+    assert _answer_text(payloads[0]) == "你"
+    assert _answer_text(payloads[1]) == "好"
+    assert _answer_text(payloads[2]) == ""
     assert payloads[2]["is_end"] is True
 
 
@@ -261,11 +264,10 @@ def test_assistant_streaming_response_from_astream_summary_tokens(monkeypatch):
     response = client.post("/api/admin/assistant/chat", json={"question": "汇总一下"})
 
     assert response.status_code == 200
-    lines = [line for line in response.text.splitlines() if line.startswith("data: ")]
-    payloads = [json.loads(line[len("data: "):]) for line in lines]
-    assert payloads[0]["content"] == "总"
-    assert payloads[1]["content"] == "结"
-    assert payloads[2]["content"] == ""
+    payloads = _extract_payloads(response.text)
+    assert _answer_text(payloads[0]) == "总"
+    assert _answer_text(payloads[1]) == "结"
+    assert _answer_text(payloads[2]) == ""
     assert payloads[2]["is_end"] is True
 
 
@@ -280,10 +282,85 @@ def test_assistant_streaming_response_when_workflow_raises(monkeypatch):
     response = client.post("/api/admin/assistant/chat", json={"question": "hi"})
 
     assert response.status_code == 200
-    lines = [line for line in response.text.splitlines() if line.startswith("data: ")]
-    payloads = [json.loads(line[len("data: "):]) for line in lines]
-    assert payloads[0]["content"] == "服务暂时不可用，请稍后重试。"
+    payloads = _extract_payloads(response.text)
+    assert _answer_text(payloads[0]) == "服务暂时不可用，请稍后重试。"
     assert payloads[1]["is_end"] is True
+
+
+def test_assistant_streaming_status_events(monkeypatch):
+    class _StatusAsyncGraph:
+        async def astream(self, _state: dict, **_kwargs):
+            emit_status(node="router", state="start", message="正在分析问题")
+            yield ("values", {"routing": {"route_target": "order_agent"}, "plan": []})
+            emit_status(node="router", state="end")
+
+            emit_status(node="order", state="start", message="正在处理订单问题")
+            emit_function_call(node="tool:get_order_list", state="start", message="正在查询订单信息")
+            emit_function_call(node="tool:get_order_list", state="end")
+            emit_status(node="order", state="end")
+
+            yield ("messages", (_DummyMessageChunk("订"), {"langgraph_node": "order_agent"}))
+            yield ("values", {"order_context": {"result": {"content": "订单"}}})
+
+    monkeypatch.setattr(assistant_module, "ADMIN_WORKFLOW", _StatusAsyncGraph())
+    client = TestClient(app)
+
+    response = client.post("/api/admin/assistant/chat", json={"question": "查订单"})
+
+    assert response.status_code == 200
+    payloads = _extract_payloads(response.text)
+
+    status_payloads = [item for item in payloads if item["type"] == "status"]
+    status_contents = [item["content"] for item in status_payloads]
+    assert {"node": "router", "state": "start", "message": "正在分析问题"} in status_contents
+    assert {"node": "router", "state": "end"} in status_contents
+    assert {"node": "order", "state": "start", "message": "正在处理订单问题"} in status_contents
+    assert {"node": "order", "state": "end"} in status_contents
+
+    function_call_payloads = [item for item in payloads if item["type"] == "function_call"]
+    function_call_contents = [item["content"] for item in function_call_payloads]
+    assert {"node": "tool:get_order_list", "state": "start", "message": "正在查询订单信息"} in function_call_contents
+    assert {"node": "tool:get_order_list", "state": "end"} in function_call_contents
+
+    first_answer_index = next(
+        index
+        for index, payload in enumerate(payloads)
+        if payload["type"] == "answer" and _answer_text(payload) == "订"
+    )
+    router_start_index = next(
+        index
+        for index, payload in enumerate(payloads)
+        if payload["type"] == "status"
+        and payload["content"].get("node") == "router"
+        and payload["content"].get("state") == "start"
+    )
+    assert router_start_index < first_answer_index
+
+
+def test_assistant_streaming_function_call_timely_events(monkeypatch):
+    class _TimelyAsyncGraph:
+        async def astream(self, _state: dict, **_kwargs):
+            emit_function_call(node="tool:get_order_list", state="start", message="正在查询订单信息")
+            emit_function_call(
+                node="tool:get_order_list",
+                state="timely",
+                message="订单信息正在持续处理中",
+            )
+            yield ("values", {"results": {"chat": {"content": "处理中"}}})
+
+    monkeypatch.setattr(assistant_module, "ADMIN_WORKFLOW", _TimelyAsyncGraph())
+    client = TestClient(app)
+
+    response = client.post("/api/admin/assistant/chat", json={"question": "查订单"})
+
+    assert response.status_code == 200
+    payloads = _extract_payloads(response.text)
+    function_call_payloads = [item for item in payloads if item["type"] == "function_call"]
+    function_call_contents = [item["content"] for item in function_call_payloads]
+
+    assert {"node": "tool:get_order_list", "state": "start", "message": "正在查询订单信息"} in function_call_contents
+    assert {"node": "tool:get_order_list", "state": "timely", "message": "订单信息正在持续处理中"} in function_call_contents
+    assert all(item.get("state") != "end" for item in function_call_contents)
 
 
 def test_assistant_requires_question():

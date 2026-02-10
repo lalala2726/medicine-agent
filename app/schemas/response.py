@@ -4,7 +4,7 @@
 提供统一的 API 响应格式，包含状态码、消息、数据和时间戳。
 """
 
-from datetime import datetime
+import time
 from typing import Generic, TypeVar, Optional, Any, overload
 
 from pydantic import BaseModel, Field
@@ -23,7 +23,7 @@ class ApiResponse(BaseModel, Generic[T]):
         code: 状态码，默认 200 表示成功
         message: 响应消息，用于描述操作结果
         data: 响应数据，支持任意类型
-        timestamp: Unix 时间戳（秒级）
+        timestamp: Unix 时间戳（毫秒级）
 
     Generic:
         T: 响应数据的类型，通过泛型支持类型提示
@@ -32,25 +32,29 @@ class ApiResponse(BaseModel, Generic[T]):
     code: int = Field(default=200, description="状态码")
     message: str = Field(default="success", description="响应消息")
     data: Optional[T] = Field(default=None, description="响应数据")
-    timestamp: int = Field(default_factory=lambda: int(datetime.now().timestamp()), description="时间戳")
+    timestamp: int = Field(
+        default_factory=lambda: int(time.time() * 1000), description="时间戳（毫秒）"
+    )
 
     def model_dump(self, **kwargs):  # type: ignore[override]
         kwargs["exclude_none"] = True
         return super().model_dump(**kwargs)
 
     @classmethod
-    def success(cls, data: T = None, message: str = ResponseCode.SUCCESS.message) -> "ApiResponse[T]":
+    def success(
+        cls, data: T = None, message: str = ResponseCode.SUCCESS.message
+    ) -> "ApiResponse[T]":
         return cls(code=ResponseCode.SUCCESS, message=message, data=data)
 
     @classmethod
     def page(
-            cls,
-            *,
-            rows: list[T],
-            total: int,
-            page_num: int,
-            page_size: int,
-            message: str = ResponseCode.SUCCESS.message,
+        cls,
+        *,
+        rows: list[T],
+        total: int,
+        page_num: int,
+        page_size: int,
+        message: str = ResponseCode.SUCCESS.message,
     ) -> "ApiResponse[PageResponse[T]]":
         page_data: PageResponse[T] = PageResponse(
             rows=rows,
@@ -62,20 +66,20 @@ class ApiResponse(BaseModel, Generic[T]):
 
     @classmethod
     @overload
-    def error(cls, response: ResponseCode, data: T = None) -> "ApiResponse[T]":
-        ...
+    def error(cls, response: ResponseCode, data: T = None) -> "ApiResponse[T]": ...
 
     @classmethod
     @overload
-    def error(cls, response: ResponseCode, message: str, data: T = None) -> "ApiResponse[T]":
-        ...
+    def error(
+        cls, response: ResponseCode, message: str, data: T = None
+    ) -> "ApiResponse[T]": ...
 
     @classmethod
     def error(
-            cls,
-            response: ResponseCode,
-            message: Optional[str] = None,
-            data: T = None,
+        cls,
+        response: ResponseCode,
+        message: Optional[str] = None,
+        data: T = None,
     ) -> "ApiResponse[T]":
         resolved_message = message if message is not None else response.message
         return cls(code=response.code, message=resolved_message, data=data)

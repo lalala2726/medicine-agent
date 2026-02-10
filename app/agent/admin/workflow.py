@@ -14,6 +14,7 @@ from app.agent.admin.excel_node import excel_agent
 from app.agent.admin.order_node import order_agent
 from app.agent.admin.coordinator_node import coordinator
 from app.agent.admin.summary_node import summary_agent
+from app.core.assistant_status import status_node
 from app.core.langsmith import traceable
 from app.core.llm import DEFAULT_CHAT_MODEL, create_chat_model
 
@@ -142,6 +143,7 @@ def _stage_has_executable_node(stage: list[PlanStep]) -> bool:
     return False
 
 
+@status_node(node="router", start_message="正在分析问题")
 @traceable(name="Gateway Router Node", run_type="chain")
 def gateway_router(state: AgentState) -> dict[str, Any]:
     """

@@ -4,9 +4,10 @@ from app.agent.admin.agent_state import AgentState
 from app.core.langsmith import traceable
 from app.core.llm import create_chat_model
 from app.schemas.prompt import base_prompt
-from app.utils.streaming_utils import generate_content_with_stream_fallback
+from app.utils.streaming_utils import invoke
 
-_CHAT_SYSTEM_PROMPT = """
+_CHAT_SYSTEM_PROMPT = (
+    """
 你是药品商城后台管理助手里的聊天节点（chat_agent）。
 你的职责是处理非业务问题，例如日常问候、使用方式说明、通用建议等轻量对话。
 
@@ -14,7 +15,9 @@ _CHAT_SYSTEM_PROMPT = """
 1. 不编造订单、售后、库存、报表等业务数据。
 2. 若用户问题明显属于业务查询/处理，请礼貌提示该问题应走业务节点。
 3. 回复尽量简洁、自然、直接。
-""" + base_prompt
+"""
+    + base_prompt
+)
 
 
 @traceable(name="Chat Agent Node", run_type="chain")
@@ -32,11 +35,7 @@ def chat_agent(state: AgentState) -> AgentState:
             SystemMessage(content=_CHAT_SYSTEM_PROMPT),
             HumanMessage(content=user_input),
         ]
-        content, _ = generate_content_with_stream_fallback(
-            llm=llm,
-            messages=messages,
-            enable_stream=True,
-        )
+        content = invoke(llm, messages)
     except Exception:
         content = "聊天服务暂时不可用，请稍后重试。"
 

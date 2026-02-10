@@ -3,12 +3,14 @@ from __future__ import annotations
 import json as json_lib
 import os
 import time
+from pathlib import Path
 from typing import Any, Mapping, Optional
 
 import httpx
+from dotenv import load_dotenv
+from loguru import logger
 
 from app.core.request_context import get_authorization_header
-from app.utils.log import logger
 
 
 class HttpClient:
@@ -20,16 +22,21 @@ class HttpClient:
     - 提供统一的超时与基础 headers
     """
 
+    _dotenv_checked = False
+
     def __init__(
-            self,
-            *,
-            base_url: Optional[str] = None,
-            headers: Optional[Mapping[str, str]] = None,
-            timeout: Optional[float] = 30.0,
+        self,
+        *,
+        base_url: Optional[str] = None,
+        headers: Optional[Mapping[str, str]] = None,
+        timeout: Optional[float] = 30.0,
     ) -> None:
+        self._ensure_env_loaded()
         if base_url is None:
             base_url = os.getenv("HTTP_BASE_URL", "http://localhost:8080")
-        self._log_enabled = self._parse_bool(os.getenv("HTTP_CLIENT_LOG_ENABLED"))
+        self._default_log_enabled = self._parse_bool(
+            os.getenv("HTTP_CLIENT_LOG_ENABLED")
+        )
         self._default_headers = dict(headers or {})
         self._client = httpx.AsyncClient(
             base_url=base_url or "",
@@ -38,10 +45,31 @@ class HttpClient:
         )
 
     @staticmethod
-    def _parse_bool(value: Optional[str]) -> bool:
+    def _parse_bool(value: Optional[str | bool]) -> bool:
+        if isinstance(value, bool):
+            return value
         if value is None:
             return False
         return value.strip().lower() in {"1", "true", "yes", "on"}
+
+    @classmethod
+    def _ensure_env_loaded(cls) -> None:
+        """
+        兜底加载项目根目录 .env。
+        避免在非 FastAPI 入口（例如脚本、LangGraph 本地运行）下没有提前 load_dotenv 导致配置不生效。
+        """
+        if cls._dotenv_checked:
+            return
+        env_path = Path(__file__).resolve().parents[2] / ".env"
+        if env_path.exists():
+            load_dotenv(dotenv_path=env_path, override=False)
+        cls._dotenv_checked = True
+
+    def _is_log_enabled(self) -> bool:
+        value = os.getenv("HTTP_CLIENT_LOG_ENABLED")
+        if value is None:
+            return self._default_log_enabled
+        return self._parse_bool(value)
 
     @staticmethod
     def _redact_headers(headers: Mapping[str, str]) -> Mapping[str, str]:
@@ -97,16 +125,16 @@ class HttpClient:
         await self.close()
 
     async def request(
-            self,
-            method: str,
-            url: str,
-            *,
-            headers: Optional[Mapping[str, str]] = None,
-            params: Optional[Mapping[str, Any]] = None,
-            json: Optional[Any] = None,
-            data: Optional[Mapping[str, Any]] = None,
-            content: Optional[bytes] = None,
-            timeout: Optional[float] = None,
+        self,
+        method: str,
+        url: str,
+        *,
+        headers: Optional[Mapping[str, str]] = None,
+        params: Optional[Mapping[str, Any]] = None,
+        json: Optional[Any] = None,
+        data: Optional[Mapping[str, Any]] = None,
+        content: Optional[bytes] = None,
+        timeout: Optional[float] = None,
     ) -> httpx.Response:
         """
         统一请求入口。
@@ -121,11 +149,23 @@ class HttpClient:
             content: 原始字节 body
             timeout: 本次请求超时
         """
+        log_enabled = self._is_log_enabled()
         start = time.monotonic()
-        built_headers = self._build_headers(headers)
-        if self._log_enabled:
+        try:
+            built_headers = self._build_headers(headers)
+        except Exception as exc:
+            if log_enabled:
+                logger.warning(
+                    "HTTP request blocked before send: method={} url={} reason={}",
+                    method,
+                    url,
+                    exc,
+                )
+            raise
+
+        if log_enabled:
             logger.info(
-                "HTTP request: method=%s url=%s headers=%s params=%s json=%s data=%s content_length=%s",
+                "HTTP request: method={} url={} headers={} params={} json={} data={} content_length={}",
                 method,
                 url,
                 self._redact_headers(built_headers),
@@ -146,9 +186,9 @@ class HttpClient:
                 timeout=timeout,
             )
         except httpx.HTTPError as exc:
-            if self._log_enabled:
+            if log_enabled:
                 logger.error(
-                    "HTTP request failed: method=%s url=%s params=%s error=%s",
+                    "HTTP request failed: method={} url={} params={} error={}",
                     method,
                     url,
                     params,
@@ -158,9 +198,9 @@ class HttpClient:
 
         elapsed_ms = int((time.monotonic() - start) * 1000)
         body = response.text if response.content else ""
-        if self._log_enabled:
+        if log_enabled:
             logger.info(
-                "HTTP response: method=%s url=%s status=%s elapsed_ms=%s",
+                "HTTP response: method={} url={} status={} elapsed_ms={}",
                 method,
                 url,
                 response.status_code,
@@ -170,11 +210,11 @@ class HttpClient:
                 snippet = body[:1000]
                 if len(body) > 1000:
                     snippet = f"{snippet}...(truncated)"
-                logger.info("HTTP response body: %s", snippet)
+                logger.info("HTTP response body: {}", snippet)
 
-        if response.status_code >= 400 and self._log_enabled:
+        if response.status_code >= 400 and log_enabled:
             logger.warning(
-                "HTTP response error: method=%s url=%s status=%s params=%s",
+                "HTTP response error: method={} url={} status={} params={}",
                 method,
                 url,
                 response.status_code,
@@ -184,18 +224,17 @@ class HttpClient:
                 snippet = body[:500]
                 if len(body) > 500:
                     snippet = f"{snippet}...(truncated)"
-                logger.warning("HTTP response body: %s", snippet)
+                logger.warning("HTTP response body: {}", snippet)
 
         return response
 
-
     async def get(
-            self,
-            url: str,
-            *,
-            headers: Optional[Mapping[str, str]] = None,
-            params: Optional[Mapping[str, Any]] = None,
-            timeout: Optional[float] = None,
+        self,
+        url: str,
+        *,
+        headers: Optional[Mapping[str, str]] = None,
+        params: Optional[Mapping[str, Any]] = None,
+        timeout: Optional[float] = None,
     ) -> httpx.Response:
         """发送 GET 请求。"""
         return await self.request(
@@ -206,17 +245,16 @@ class HttpClient:
             timeout=timeout,
         )
 
-
     async def post(
-            self,
-            url: str,
-            *,
-            headers: Optional[Mapping[str, str]] = None,
-            params: Optional[Mapping[str, Any]] = None,
-            json: Optional[Any] = None,
-            data: Optional[Mapping[str, Any]] = None,
-            content: Optional[bytes] = None,
-            timeout: Optional[float] = None,
+        self,
+        url: str,
+        *,
+        headers: Optional[Mapping[str, str]] = None,
+        params: Optional[Mapping[str, Any]] = None,
+        json: Optional[Any] = None,
+        data: Optional[Mapping[str, Any]] = None,
+        content: Optional[bytes] = None,
+        timeout: Optional[float] = None,
     ) -> httpx.Response:
         """发送 POST 请求。"""
         return await self.request(
@@ -231,15 +269,15 @@ class HttpClient:
         )
 
     async def put(
-            self,
-            url: str,
-            *,
-            headers: Optional[Mapping[str, str]] = None,
-            params: Optional[Mapping[str, Any]] = None,
-            json: Optional[Any] = None,
-            data: Optional[Mapping[str, Any]] = None,
-            content: Optional[bytes] = None,
-            timeout: Optional[float] = None,
+        self,
+        url: str,
+        *,
+        headers: Optional[Mapping[str, str]] = None,
+        params: Optional[Mapping[str, Any]] = None,
+        json: Optional[Any] = None,
+        data: Optional[Mapping[str, Any]] = None,
+        content: Optional[bytes] = None,
+        timeout: Optional[float] = None,
     ) -> httpx.Response:
         """发送 PUT 请求。"""
         return await self.request(
@@ -254,15 +292,15 @@ class HttpClient:
         )
 
     async def delete(
-            self,
-            url: str,
-            *,
-            headers: Optional[Mapping[str, str]] = None,
-            params: Optional[Mapping[str, Any]] = None,
-            json: Optional[Any] = None,
-            data: Optional[Mapping[str, Any]] = None,
-            content: Optional[bytes] = None,
-            timeout: Optional[float] = None,
+        self,
+        url: str,
+        *,
+        headers: Optional[Mapping[str, str]] = None,
+        params: Optional[Mapping[str, Any]] = None,
+        json: Optional[Any] = None,
+        data: Optional[Mapping[str, Any]] = None,
+        content: Optional[bytes] = None,
+        timeout: Optional[float] = None,
     ) -> httpx.Response:
         """发送 DELETE 请求。"""
         return await self.request(
