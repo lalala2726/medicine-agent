@@ -144,6 +144,73 @@ def test_coordinator_switches_model_by_difficulty(
     assert "plan" in result
 
 
+def test_review_plan_rejects_coordinator_node_name():
+    plan = [
+        {
+            "node_name": "coordinator_agent",
+            "task_description": "bad step",
+            "last_node": ["coordinator_agent"],
+        }
+    ]
+
+    is_valid, normalized_plan, reason = supervisor_module.review_plan(plan, "medium")
+    assert is_valid is False
+    assert normalized_plan == []
+    assert "coordinator_agent" in reason
+
+
+def test_coordinator_retries_when_plan_review_fails(monkeypatch: pytest.MonkeyPatch):
+    call_count = {"value": 0}
+
+    invalid_payload = json.dumps(
+        {
+            "plan": [
+                {
+                    "node_name": "coordinator_agent",
+                    "task_description": "bad step",
+                    "last_node": ["coordinator_agent"],
+                }
+            ]
+        }
+    )
+    valid_payload = json.dumps(
+        {
+            "plan": [
+                {
+                    "node_name": "order_agent",
+                    "task_description": "query order",
+                    "last_node": ["coordinator_agent"],
+                }
+            ]
+        }
+    )
+
+    class _RetryModel:
+        def invoke(self, _messages):
+            call_count["value"] += 1
+            if call_count["value"] == 1:
+                return _DummyResponse(invalid_payload)
+            return _DummyResponse(valid_payload)
+
+    monkeypatch.setattr(
+        supervisor_module,
+        "create_chat_model",
+        lambda *args, **kwargs: _RetryModel(),
+    )
+
+    state = _build_initial_state("先查订单")
+    result = supervisor_module.coordinator(state)
+
+    assert call_count["value"] == 2
+    assert result["plan"] == [
+        {
+            "node_name": "order_agent",
+            "task_description": "query order",
+            "last_node": ["coordinator_agent"],
+        }
+    ]
+
+
 def test_planner_returns_parallel_stage_nodes_and_next_stage():
     plan = [
         [
