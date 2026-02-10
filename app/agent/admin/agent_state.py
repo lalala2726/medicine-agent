@@ -6,14 +6,8 @@ class OrderContext(TypedDict, total=False):
     订单 Agent 使用的上下文
     """
 
-    # 需要处理的订单 ID 列表
-    order_ids: List[str]
-
-    # 订单查询条件
-    order_query_conditions: Dict[str, Any]
-
-    # 查询得到的订单数据
-    order_data: List[Dict[str, Any]]
+    # 结果
+    result: Dict[str, Any]
 
     # 订单 Agent 当前状态
     status: str
@@ -24,13 +18,13 @@ class AfterSaleContext(TypedDict, total=False):
     售后 Agent 使用的上下文
     """
     # 售后或退款单 ID 列表
-    refund_ids: List[str]
+    refund_ids: list[str]
 
     # 售后类型
     aftersale_type: str
 
     # 售后处理结果数据
-    aftersale_data: List[Dict[str, Any]]
+    aftersale_data: list[Dict[str, Any]]
 
     # 售后 Agent 当前状态
     status: str
@@ -47,10 +41,10 @@ class ExcelContext(TypedDict, total=False):
     source_agent: str
 
     # 导出的列名
-    columns: List[str]
+    columns: list[str]
 
-    # Excel 文件路径
-    file_path: Optional[str]
+    # URL 地址
+    url: str
 
     # Excel Agent 当前状态
     status: str
@@ -65,10 +59,25 @@ class PlanStep(TypedDict, total=False):
     node_name: str
 
     # 上层节点名称
-    last_node:list[str]
+    last_node: list[str]
 
     # 任务描述
     task_description: str
+
+
+class RoutingState(TypedDict, total=False):
+    """
+    路由状态（供 workflow/router 与各 agent 共享）
+    """
+
+    # 当前执行到第几个阶段（并行编排使用）
+    stage_index: int
+
+    # router 计算出的下一批可执行节点（单节点或并行多节点）
+    next_nodes: list[str]
+
+    # 当前节点的任务描述（可由上游写入，供具体 agent 使用）
+    instruction: str
 
 
 class AgentState(TypedDict):
@@ -83,10 +92,10 @@ class AgentState(TypedDict):
     user_intent: Dict[str, Any]
 
     # 执行计划
-    plan: List[Union[PlanStep, List[PlanStep]]]
+    plan: list[Union[PlanStep, list[PlanStep]]]
 
     # 当前执行状态
-    routing: Dict[str, Any]
+    routing: RoutingState
 
     # 订单 Agent 上下文
     order_context: OrderContext

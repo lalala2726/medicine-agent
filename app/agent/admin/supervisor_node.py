@@ -17,11 +17,15 @@ _system_prompt = """
     当前可用的 Agent 包括：
     - 订单 Agent：负责订单相关任务，如订单查询、订单状态处理等；
     - 售后 Agent：负责售后相关任务，如售后查询、售后状态处理等；
-    - Excel Agent：负责数据导出与处理相关任务，如生成或整理 Excel 文件。
+    - Excel Agent：负责解析和处理 Excel 文件，如解析一个Excel URL ，或者是将一个信息整理成Excel文件然后返回一个下载链接
+    - Summary agent：负责总结、汇总和生成最终结果。通常是两个并行节点汇总到本节点之后进行汇总
+    - Coordinator Agent：这是你当前的 Agent，负责任务规划、生成计划并统一调度上面提到的 Agent。
     
     Agent 调用规则：
     - 你可以同时调用多个 Agent 并行执行任务；
     - 在返回最终结果前，必须等待所有被调用的 Agent 执行完成，并统一汇总结果。
+    
+    当任务出现复杂的时候
     
     数据安全规则：
     - 涉及数据修改的操作，原则上需要用户确认；
@@ -32,5 +36,5 @@ _system_prompt = """
     """
 
 
-def supervisor_agent(state: AgentState) -> AgentState:
+def coordinator(state: AgentState) -> AgentState:
     pass

@@ -36,7 +36,7 @@ def _build_fake_plan(*node_names: str) -> list[dict]:
         {
             "node_name": node_name,
             "task_description": f"fake task for {node_name}",
-            "last_node": ["supervisor_agent"],
+            "last_node": ["coordinator_agent"],
         }
         for node_name in node_names
     ]
@@ -70,7 +70,7 @@ def _build_stage_visual_graph(stage_node_names: list[list[str]]):
         return {"trace": []}
 
     all_nodes = {
-        "supervisor_agent",
+        "coordinator_agent",
         *(node_name for stage in stage_node_names for node_name in stage),
     }
     for node_name in all_nodes:
@@ -80,9 +80,9 @@ def _build_stage_visual_graph(stage_node_names: list[list[str]]):
         graph.add_edge(START, END)
         return graph.compile()
 
-    graph.add_edge(START, "supervisor_agent")
+    graph.add_edge(START, "coordinator_agent")
     for first_stage_node in stage_node_names[0]:
-        graph.add_edge("supervisor_agent", first_stage_node)
+        graph.add_edge("coordinator_agent", first_stage_node)
 
     for stage_index in range(len(stage_node_names) - 1):
         current_stage = stage_node_names[stage_index]
@@ -162,7 +162,7 @@ def test_workflow_dynamic_plan_sequence_and_export_path_image(
 ):
     execution_trace: list[str] = []
 
-    def fake_supervisor_agent(state: dict) -> dict:
+    def fake_coordinator_agent(state: dict) -> dict:
         # 这里不改计划，直接进入 router，保证测试关注路由编排行为。
         return {}
 
@@ -174,7 +174,7 @@ def test_workflow_dynamic_plan_sequence_and_export_path_image(
 
         return _runner
 
-    monkeypatch.setattr(workflow_module, "supervisor_agent", fake_supervisor_agent)
+    monkeypatch.setattr(workflow_module, "coordinator", fake_coordinator_agent)
     monkeypatch.setattr(workflow_module, "order_agent", _fake_node("order_agent"))
     monkeypatch.setattr(workflow_module, "excel_agent", _fake_node("excel_agent"))
     monkeypatch.setattr(workflow_module, "chart_agent", _fake_node("chart_agent"))
@@ -185,7 +185,7 @@ def test_workflow_dynamic_plan_sequence_and_export_path_image(
     _assert_execution_trace_by_stages(execution_trace, expected_stages)
     assert result["routing"]["stage_index"] >= len(expected_stages)
 
-    # 产出每个场景的编排图片: START -> supervisor_agent -> (并行/串行阶段) -> END
-    output_path = Path(f"tmp/admin_workflow_path_{case_name}.png")
+    # 产出每个场景的编排图片: START -> coordinator_agent -> (并行/串行阶段) -> END
+    output_path = Path(f"../tmp/admin_workflow_path_{case_name}.png")
     _draw_execution_path_png(expected_stages, output_path)
     assert output_path.exists()
