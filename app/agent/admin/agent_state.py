@@ -76,8 +76,11 @@ class RoutingState(TypedDict, total=False):
     # router 计算出的下一批可执行节点（单节点或并行多节点）
     next_nodes: list[str]
 
-    # 当前节点的任务描述（可由上游写入，供具体 agent 使用）
-    instruction: str
+    # gateway_router 的路由结果
+    route_target: str
+
+    # 任务难度（simple / medium / complex）
+    difficulty: str
 
 
 class AgentState(TypedDict):

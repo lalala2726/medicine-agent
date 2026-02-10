@@ -38,10 +38,7 @@ system_prompt = """
 
 def order_agent(state: AgentState) -> AgentState:
     routing = state.get("routing") or {}
-    instruction = routing.get("instruction")
-    if not instruction:
-        # todo 未指定任务描述，这边后期将直接拒绝并将结果告诉协调器为什么未传递任务描述
-        pass
+    instruction = routing.get("instruction") or state.get("user_input") or "请处理订单相关任务"
 
     llm = create_chat_model()
     system_template = SystemMessagePromptTemplate.from_template(template=system_prompt).format_messages(instruction=instruction)
