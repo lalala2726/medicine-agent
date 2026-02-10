@@ -1,4 +1,4 @@
-from datetime import datetime
+import time
 from enum import Enum
 from pydantic import BaseModel, Field
 
@@ -26,4 +26,6 @@ class AssistantResponse(BaseModel):
     content: Content = Field(..., description="内容")
     type: MessageType = Field(default=MessageType.ANSWER, description="类型")
     is_end: bool = Field(default=False, description="是否结束")
-    timestamp: int = Field(default_factory=lambda: int(datetime.now().timestamp()), description="时间戳")
+    timestamp: int = Field(
+        default_factory=lambda: int(time.time() * 1000), description="时间戳（毫秒）"
+    )

@@ -3,7 +3,7 @@ import json
 from fastapi.testclient import TestClient
 
 from app.api.routes import admin_assistant as assistant_module
-from app.core.assistant_status import emit_status
+from app.core.assistant_status import emit_function_call, emit_status
 from app.main import app
 
 
@@ -295,8 +295,8 @@ def test_assistant_streaming_status_events(monkeypatch):
             emit_status(node="router", state="end")
 
             emit_status(node="order", state="start", message="正在处理订单问题")
-            emit_status(node="tool:get_order_list", state="start", message="正在查询订单信息")
-            emit_status(node="tool:get_order_list", state="end")
+            emit_function_call(node="tool:get_order_list", state="start", message="正在查询订单信息")
+            emit_function_call(node="tool:get_order_list", state="end")
             emit_status(node="order", state="end")
 
             yield ("messages", (_DummyMessageChunk("订"), {"langgraph_node": "order_agent"}))
@@ -316,8 +316,11 @@ def test_assistant_streaming_status_events(monkeypatch):
     assert {"node": "router", "state": "end"} in status_contents
     assert {"node": "order", "state": "start", "message": "正在处理订单问题"} in status_contents
     assert {"node": "order", "state": "end"} in status_contents
-    assert {"node": "tool:get_order_list", "state": "start", "message": "正在查询订单信息"} in status_contents
-    assert {"node": "tool:get_order_list", "state": "end"} in status_contents
+
+    function_call_payloads = [item for item in payloads if item["type"] == "function_call"]
+    function_call_contents = [item["content"] for item in function_call_payloads]
+    assert {"node": "tool:get_order_list", "state": "start", "message": "正在查询订单信息"} in function_call_contents
+    assert {"node": "tool:get_order_list", "state": "end"} in function_call_contents
 
     first_answer_index = next(
         index
@@ -332,6 +335,32 @@ def test_assistant_streaming_status_events(monkeypatch):
         and payload["content"].get("state") == "start"
     )
     assert router_start_index < first_answer_index
+
+
+def test_assistant_streaming_function_call_timely_events(monkeypatch):
+    class _TimelyAsyncGraph:
+        async def astream(self, _state: dict, **_kwargs):
+            emit_function_call(node="tool:get_order_list", state="start", message="正在查询订单信息")
+            emit_function_call(
+                node="tool:get_order_list",
+                state="timely",
+                message="订单信息正在持续处理中",
+            )
+            yield ("values", {"results": {"chat": {"content": "处理中"}}})
+
+    monkeypatch.setattr(assistant_module, "ADMIN_WORKFLOW", _TimelyAsyncGraph())
+    client = TestClient(app)
+
+    response = client.post("/api/admin/assistant/chat", json={"question": "查订单"})
+
+    assert response.status_code == 200
+    payloads = _extract_payloads(response.text)
+    function_call_payloads = [item for item in payloads if item["type"] == "function_call"]
+    function_call_contents = [item["content"] for item in function_call_payloads]
+
+    assert {"node": "tool:get_order_list", "state": "start", "message": "正在查询订单信息"} in function_call_contents
+    assert {"node": "tool:get_order_list", "state": "timely", "message": "订单信息正在持续处理中"} in function_call_contents
+    assert all(item.get("state") != "end" for item in function_call_contents)
 
 
 def test_assistant_requires_question():

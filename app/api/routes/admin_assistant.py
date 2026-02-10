@@ -106,18 +106,28 @@ async def assistant(request: AssistantRequest) -> StreamingResponse:
             )
             return _to_sse(payload)
 
-        def _build_status_payload(status_content: dict[str, Any]) -> str:
+        def _build_emitted_payload(event_payload: dict[str, Any]) -> str | None:
+            content = event_payload.get("content")
+            if not isinstance(content, dict):
+                return None
+
+            raw_type = str(event_payload.get("type") or MessageType.STATUS.value)
+            try:
+                message_type = MessageType(raw_type)
+            except ValueError:
+                message_type = MessageType.STATUS
+
             payload = AssistantResponse(
                 content=Content(
-                    text=status_content.get("text"),
-                    node=status_content.get("node"),
-                    state=status_content.get("state"),
-                    message=status_content.get("message"),
-                    result=status_content.get("result"),
-                    name=status_content.get("name"),
-                    arguments=status_content.get("arguments"),
+                    text=content.get("text"),
+                    node=content.get("node"),
+                    state=content.get("state"),
+                    message=content.get("message"),
+                    result=content.get("result"),
+                    name=content.get("name"),
+                    arguments=content.get("arguments"),
                 ),
-                type=MessageType.STATUS,
+                type=message_type,
             )
             return _to_sse(payload)
 
@@ -134,8 +144,8 @@ async def assistant(request: AssistantRequest) -> StreamingResponse:
         queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
         loop = asyncio.get_running_loop()
 
-        def _status_emitter(event: dict[str, Any]) -> None:
-            loop.call_soon_threadsafe(queue.put_nowait, ("status", event))
+        def _event_emitter(event: dict[str, Any]) -> None:
+            loop.call_soon_threadsafe(queue.put_nowait, ("emitted", event))
 
         async def _produce_workflow_events() -> None:
             nonlocal latest_state
@@ -157,15 +167,17 @@ async def assistant(request: AssistantRequest) -> StreamingResponse:
             finally:
                 await queue.put(("done", None))
 
-        emitter_token = set_status_emitter(_status_emitter)
+        emitter_token = set_status_emitter(_event_emitter)
         producer_task = asyncio.create_task(_produce_workflow_events())
 
         try:
             while True:
                 event_type, payload = await queue.get()
 
-                if event_type == "status":
-                    yield _build_status_payload(payload)
+                if event_type == "emitted":
+                    rendered = _build_emitted_payload(payload)
+                    if rendered:
+                        yield rendered
                     continue
 
                 if event_type == "graph":
@@ -199,8 +211,10 @@ async def assistant(request: AssistantRequest) -> StreamingResponse:
                         except asyncio.QueueEmpty:
                             break
 
-                        if pending_type == "status":
-                            yield _build_status_payload(pending_payload)
+                        if pending_type == "emitted":
+                            rendered = _build_emitted_payload(pending_payload)
+                            if rendered:
+                                yield rendered
                             continue
                         if pending_type == "graph":
                             pending_mode, pending_chunk = pending_payload
