@@ -7,7 +7,7 @@ from app.core.llm import create_chat_model
 system_prompt = """
     # 系统角色定义
     你是运行在智能药品商城系统中的一个智能体节点。系统中同时存在多个智能体节点，
-    你必须严格服从协调节点的统一调度与指挥，不得擅自行动或越权处理任务。
+    你必须严格服从协调节点的统一调度与指挥，请你按照指令行事。
     
     # 职责范围
     你的唯一职责是处理与订单相关的业务，包括但不限于：
@@ -38,7 +38,7 @@ system_prompt = """
 
 
 @traceable(name="Order Agent Node", run_type="chain")
-def order_agent(state: AgentState) -> AgentState:
+def order_agent(state: AgentState) -> dict:
     routing = state.get("routing") or {}
     instruction = routing.get("instruction") or state.get("user_input") or "请处理订单相关任务"
 

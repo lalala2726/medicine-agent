@@ -147,7 +147,8 @@ def gateway_router(state: AgentState) -> dict[str, Any]:
     if user_input:
         try:
             model = create_chat_model(
-                model=DEFAULT_CHAT_MODEL,
+                model="qwen-flash",
+                max_tokens=1024,
                 temperature=0,
                 response_format={"type": "json_object"},
             )
