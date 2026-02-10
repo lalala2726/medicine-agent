@@ -1,5 +1,7 @@
+import asyncio
 import json
-from typing import AsyncIterable
+from contextlib import suppress
+from typing import Any, AsyncIterable
 
 from fastapi.concurrency import run_in_threadpool
 from fastapi import APIRouter
@@ -8,6 +10,7 @@ from pydantic import BaseModel, Field
 
 from app.utils.streaming_utils import extract_text, is_final_node
 from app.agent.admin.workflow import build_graph
+from app.core.assistant_status import reset_status_emitter, set_status_emitter
 from app.core.codes import ResponseCode
 from app.core.exceptions import ServiceException
 from app.core.langsmith import build_langsmith_runnable_config
@@ -92,28 +95,81 @@ async def assistant(request: AssistantRequest) -> StreamingResponse:
     async def event_stream() -> AsyncIterable[str]:
         """SSE 事件流生成器"""
 
-        def _build_payload(content: str, is_end: bool) -> str:
+        def _to_sse(payload: AssistantResponse) -> str:
+            return f"data: {json.dumps(payload.model_dump(mode='json', exclude_none=True), ensure_ascii=False)}\n\n"
+
+        def _build_answer_payload(content: str, is_end: bool) -> str:
             payload = AssistantResponse(
                 content=Content(text=content),
                 type=MessageType.ANSWER,
                 is_end=is_end,
             )
-            return f"data: {json.dumps(payload.model_dump(mode='json', exclude_none=True), ensure_ascii=False)}\n\n"
+            return _to_sse(payload)
+
+        def _build_status_payload(status_content: dict[str, Any]) -> str:
+            payload = AssistantResponse(
+                content=Content(
+                    text=status_content.get("text"),
+                    node=status_content.get("node"),
+                    state=status_content.get("state"),
+                    message=status_content.get("message"),
+                    result=status_content.get("result"),
+                    name=status_content.get("name"),
+                    arguments=status_content.get("arguments"),
+                ),
+                type=MessageType.STATUS,
+            )
+            return _to_sse(payload)
+
+        def _emit_error_payload(exc: Exception) -> str:
+            if isinstance(exc, ServiceException):
+                return _build_answer_payload(f"处理失败: {exc.message}", False)
+            return _build_answer_payload("服务暂时不可用，请稍后重试。", False)
+
+        state = _build_initial_state(request.question)
+        latest_state = state
+        has_streamed_output = False
+        has_emitted_error = False
+
+        queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
+        loop = asyncio.get_running_loop()
+
+        def _status_emitter(event: dict[str, Any]) -> None:
+            loop.call_soon_threadsafe(queue.put_nowait, ("status", event))
+
+        async def _produce_workflow_events() -> None:
+            nonlocal latest_state
+            try:
+                if hasattr(ADMIN_WORKFLOW, "astream"):
+                    config = _build_stream_config()
+                    stream_kwargs = {
+                        "stream_mode": ["messages", "values"],
+                    }
+                    if config:
+                        stream_kwargs["config"] = config
+
+                    async for mode, chunk in ADMIN_WORKFLOW.astream(state, **stream_kwargs):
+                        await queue.put(("graph", (mode, chunk)))
+                else:
+                    latest_state = await run_in_threadpool(_invoke_admin_workflow, state)
+            except Exception as exc:
+                await queue.put(("error", exc))
+            finally:
+                await queue.put(("done", None))
+
+        emitter_token = set_status_emitter(_status_emitter)
+        producer_task = asyncio.create_task(_produce_workflow_events())
 
         try:
-            state = _build_initial_state(request.question)
-            latest_state = state
-            has_streamed_output = False
+            while True:
+                event_type, payload = await queue.get()
 
-            if hasattr(ADMIN_WORKFLOW, "astream"):
-                config = _build_stream_config()
-                stream_kwargs = {
-                    "stream_mode": ["messages", "values"],
-                }
-                if config:
-                    stream_kwargs["config"] = config
+                if event_type == "status":
+                    yield _build_status_payload(payload)
+                    continue
 
-                async for mode, chunk in ADMIN_WORKFLOW.astream(state, **stream_kwargs):
+                if event_type == "graph":
+                    mode, chunk = payload
                     if mode == "messages":
                         message_chunk, metadata = chunk
                         stream_node = metadata.get("langgraph_node")
@@ -124,20 +180,59 @@ async def assistant(request: AssistantRequest) -> StreamingResponse:
                             token_text = extract_text(message_chunk)
                             if token_text:
                                 has_streamed_output = True
-                                yield _build_payload(token_text, False)
+                                yield _build_answer_payload(token_text, False)
                     elif mode == "values" and isinstance(chunk, dict):
                         latest_state = chunk
-            else:
-                latest_state = await run_in_threadpool(_invoke_admin_workflow, state)
+                    continue
 
-            if not has_streamed_output:
-                yield _build_payload(_extract_content(latest_state), False)
-        except ServiceException as exc:
-            yield _build_payload(f"处理失败: {exc.message}", False)
-        except Exception:
-            yield _build_payload("服务暂时不可用，请稍后重试。", False)
+                if event_type == "error":
+                    has_emitted_error = True
+                    yield _emit_error_payload(payload)
+                    continue
+
+                if event_type == "done":
+                    # 消费 done 前后可能并发压入的尾部状态事件
+                    await asyncio.sleep(0)
+                    while True:
+                        try:
+                            pending_type, pending_payload = queue.get_nowait()
+                        except asyncio.QueueEmpty:
+                            break
+
+                        if pending_type == "status":
+                            yield _build_status_payload(pending_payload)
+                            continue
+                        if pending_type == "graph":
+                            pending_mode, pending_chunk = pending_payload
+                            if pending_mode == "messages":
+                                message_chunk, metadata = pending_chunk
+                                stream_node = metadata.get("langgraph_node")
+                                if stream_node in STREAM_OUTPUT_NODES and (
+                                    stream_node == "chat_agent"
+                                    or is_final_node(latest_state, stream_node)
+                                ):
+                                    token_text = extract_text(message_chunk)
+                                    if token_text:
+                                        has_streamed_output = True
+                                        yield _build_answer_payload(token_text, False)
+                            elif pending_mode == "values" and isinstance(pending_chunk, dict):
+                                latest_state = pending_chunk
+                            continue
+                        if pending_type == "error":
+                            has_emitted_error = True
+                            yield _emit_error_payload(pending_payload)
+
+                    break
+
+            if not has_emitted_error and not has_streamed_output:
+                yield _build_answer_payload(_extract_content(latest_state), False)
         finally:
-            yield _build_payload("", True)
+            reset_status_emitter(emitter_token)
+            if not producer_task.done():
+                producer_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await producer_task
+            yield _build_answer_payload("", True)
 
     return StreamingResponse(
         event_stream(),

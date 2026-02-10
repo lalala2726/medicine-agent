@@ -27,6 +27,7 @@ from langchain_core.messages import ToolMessage
 from loguru import logger
 
 from app.agent.admin.agent_state import AgentState
+from app.core.assistant_status import emit_status, resolve_tool_status_messages
 
 # 工具调用最大轮次，防止无限循环
 MAX_TOOL_ROUNDS = 5
@@ -237,20 +238,32 @@ def _exec_tool(
     name = tool_call["name"]
     args = tool_call.get("args", {})
     tool_fn = tool_map.get(name)
+    tool_node = f"tool:{name}"
+    start_message, mapped_error_message = resolve_tool_status_messages(name)
 
     if log_enabled is None:
         log_enabled = _is_tool_log_enabled()
 
+    emit_status(node=tool_node, state="start", message=start_message)
+
     if tool_fn is None:
+        unknown_message = f"未知工具: {name}"
+        emit_status(
+            node=tool_node,
+            state="end",
+            result="error",
+            message=unknown_message,
+        )
         if log_enabled:
             logger.warning("未知工具: {}", name)
-        return json.dumps({"error": f"未知工具: {name}"}, ensure_ascii=False)
+        return json.dumps({"error": unknown_message}, ensure_ascii=False)
 
     if log_enabled:
         logger.info("工具调用: name={} args={}", name, args)
 
     try:
         result = _run_async(tool_fn.ainvoke(args))
+        emit_status(node=tool_node, state="end")
         if log_enabled:
             logger.info(
                 "工具返回: name={} result={}",
@@ -263,6 +276,12 @@ def _exec_tool(
             else str(result)
         )
     except Exception as exc:
+        emit_status(
+            node=tool_node,
+            state="end",
+            result="error",
+            message=mapped_error_message,
+        )
         if log_enabled:
             logger.error("工具执行失败: name={} error={}", name, exc)
         return json.dumps({"error": f"工具执行失败: {name}, {exc}"}, ensure_ascii=False)

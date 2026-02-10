@@ -2,6 +2,7 @@ from langchain_core.prompts import SystemMessagePromptTemplate
 
 from app.agent.tools.admin_tools import get_orders_detail, get_order_list
 from app.agent.admin.agent_state import AgentState
+from app.core.assistant_status import status_node
 from app.core.langsmith import traceable
 from app.core.llm import create_chat_model
 from app.schemas.prompt import base_prompt
@@ -35,6 +36,7 @@ system_prompt = (
 )
 
 
+@status_node(node="order", start_message="正在处理订单问题")
 @traceable(name="Order Agent Node", run_type="chain")
 def order_agent(state: AgentState) -> dict:
     routing = state.get("routing") or {}
