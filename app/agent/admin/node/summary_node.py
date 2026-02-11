@@ -10,7 +10,7 @@ from app.core.langsmith import traceable
 from app.core.llm import create_chat_model
 from app.schemas.prompt import base_prompt
 from app.utils.streaming_utils import invoke
-from core.assistant_status import status_node
+from app.core.assistant_status import status_node
 
 _SUMMARY_PROMPT = (
         """

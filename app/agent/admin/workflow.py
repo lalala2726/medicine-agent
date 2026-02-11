@@ -8,12 +8,14 @@ from langgraph.constants import END, START
 from langgraph.graph import StateGraph
 
 from app.agent.admin.agent_state import AgentState, PlanStep
-from app.agent.admin.chart_node import chart_agent
-from app.agent.admin.chat_node import chat_agent
-from app.agent.admin.coordinator_node import coordinator
-from app.agent.admin.excel_node import excel_agent
-from app.agent.admin.order_node import order_agent
-from app.agent.admin.summary_node import summary_agent
+from app.agent.admin.node import (
+    chat_agent,
+    chart_agent,
+    coordinator,
+    excel_agent,
+    order_agent,
+    summary_agent,
+)
 from app.core.assistant_status import status_node
 from app.core.langsmith import traceable
 from app.core.llm import create_chat_model
@@ -39,29 +41,31 @@ PLANNER_ROUTE_MAP = {
 }
 
 GATEWAY_ROUTER_PROMPT = """
-你是药品商城后台的网关路由节点（gateway_router）。
-你的任务是根据用户请求，决定是直接交给单个业务节点，还是交给 coordinator_agent 协调多节点执行。
-
-可用节点与业务范围：
-1. order_agent
-   - 订单域任务：订单查询、订单状态判断、订单信息核验、订单明细检索。
-2. excel_agent
-   - 表格域任务：Excel 文件解析、结构化导出、表格数据整理。
-3. chart_agent
-   - 图表域任务：根据已有结构化数据生成图表、统计可视化结果说明。
-4. summary_agent
-   - 汇总域任务：汇总多个节点结果，输出最终结论。
-5. chat_agent
-    - 普通对话：非业务相关问题、咨询、闲聊。
-7. coordinator_agent
-   - 协调域任务：多节点任务拆解、并行/串行编排、跨节点结果整合。
-   - 当请求涉及两个及以上业务域，或依赖关系复杂时，必须路由到该节点。
-
-请严格输出 JSON 对象，且只输出 JSON，不要包含其他文字：
-{
-  "route_target": "order_agent | excel_agent | chart_agent | summary_agent | chat_agent | coordinator_agent",
-  "difficulty": "simple | medium | complex"
-}
+    你是药品商城后台的网关路由节点（gateway_router）。
+    你的任务是根据用户请求，决定是直接交给单个业务节点，还是交给 coordinator_agent 协调多节点执行。
+    
+    可用节点与业务范围：
+    1. order_agent
+       - 订单域任务：订单查询、订单状态判断、订单信息核验、订单明细检索。
+    2. excel_agent
+       - 表格域任务：支持将结构化数据转换为 Excel 文件、数据整理、表格生成。
+       - 此Agent有导出系统中的列表为表格的能力并且能进行复杂的公式计算。
+       - 支持导出系统中数据为 Excel 文件如下：商品列表、订单列表、用户列表
+    3. chart_agent
+       - 图表域任务：根据已有结构化数据生成图表、统计可视化结果说明。
+    4. summary_agent
+       - 汇总域任务：汇总多个节点结果，输出最终结论。
+    5. chat_agent
+        - 普通对话：非业务相关问题、咨询、闲聊。
+    7. coordinator_agent
+       - 协调域任务：多节点任务拆解、并行/串行编排、跨节点结果整合。
+       - 当请求涉及两个及以上业务域，或依赖关系复杂时，必须路由到该节点。
+    
+    请严格输出 JSON 对象，且只输出 JSON，不要包含其他文字：
+    {
+      "route_target": "order_agent | excel_agent | chart_agent | summary_agent | chat_agent | coordinator_agent",
+      "difficulty": "simple | medium | complex"
+    }
     
     路由规则：
     1. 如果单个业务节点即可完成，且不需要跨节点协作：
@@ -70,7 +74,7 @@ GATEWAY_ROUTER_PROMPT = """
     2. 如果任务涉及多个业务域、需要拆解并行/串行步骤、或存在明显依赖关系：
        - route_target = coordinator_agent
        - difficulty 按复杂度设置为 medium 或 complex
-    3. 如果意图不清晰，默认 route_target = coordinator_agent, difficulty = medium。
+    3. 如果意图不清晰，默认 route_target = chat_agent, difficulty = simple。
 """
 
 
