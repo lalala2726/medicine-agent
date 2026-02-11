@@ -10,6 +10,7 @@ from app.core.langsmith import traceable
 from app.core.llm import create_chat_model
 from app.schemas.prompt import base_prompt
 from app.utils.streaming_utils import invoke
+from core.assistant_status import status_node
 
 _SUMMARY_PROMPT = (
         """
@@ -35,6 +36,7 @@ def _build_summary_input(state: AgentState) -> dict[str, Any]:
     }
 
 
+@status_node(node="summary", start_message="正在汇总问题")
 @traceable(name="Summary Agent Node", run_type="chain")
 def summary_agent(state: AgentState) -> dict:
     routing = state.get("routing") or {}
