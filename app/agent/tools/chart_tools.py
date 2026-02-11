@@ -359,7 +359,7 @@ def _find_template(name_or_type: str) -> dict[str, Any] | None:
 
 
 @tool
-@tool_call_status()
+@tool_call_status(tool_name="获取图表模板")
 def get_chart_sample_by_name(
     explanation: Annotated[str, "说明调用原因，例如：根据趋势数据准备生成折线图"],
     name_or_type: Annotated[str, "图表名称或类型，例如 line、折线图、pie"],

@@ -33,7 +33,7 @@ class MallOrderListRequest(BaseModel):
 # --- 工具定义 ---
 
 @tool
-@tool_call_status()
+@tool_call_status(tool_name="获取用户信息")
 async def get_user_info() -> dict:
     """
     获取当前登录用户的基本信息。
@@ -44,7 +44,7 @@ async def get_user_info() -> dict:
         return HttpResponse.parse_data(response)
 
 @tool(args_schema=MallProductListQueryRequest)
-@tool_call_status()
+@tool_call_status(tool_name="获取商品列表")
 async def get_product_list(
     page_num: int = 1,
     page_size: int = 10,
@@ -74,7 +74,7 @@ async def get_product_list(
         return HttpResponse.parse_data(response)
 
 @tool
-@tool_call_status()
+@tool_call_status(tool_name="获取商品详情")
 async def get_product_info(
     product_id: Annotated[str, "商品的唯一ID，例如 '1001'"]
 ) -> dict:
@@ -86,7 +86,7 @@ async def get_product_info(
         return HttpResponse.parse_data(response)
 
 @tool(args_schema=MallOrderListRequest)
-@tool_call_status()
+@tool_call_status(tool_name="获取订单列表")
 async def get_order_list(
     page_num: int = 1,
     page_size: int = 10,
@@ -115,7 +115,7 @@ async def get_order_list(
         return HttpResponse.parse_data(response)
 
 @tool
-@tool_call_status()
+@tool_call_status(tool_name="获取订单详情")
 async def get_orders_detail(
     order_id: Annotated[str, "订单的唯一编号"]
 ) -> dict:
