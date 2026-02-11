@@ -5,7 +5,7 @@ from app.core.assistant_status import status_node
 from app.core.langsmith import traceable
 from app.core.llm import create_chat_model
 from app.schemas.prompt import base_prompt
-from app.utils.streaming_utils import invoke
+from app.utils.streaming_utils import extract_text, invoke
 
 _CHAT_SYSTEM_PROMPT = (
     """
@@ -37,7 +37,17 @@ def chat_agent(state: AgentState) -> AgentState:
             SystemMessage(content=_CHAT_SYSTEM_PROMPT),
             HumanMessage(content=user_input),
         ]
-        content = invoke(llm, messages)
+        if hasattr(llm, "stream") and callable(getattr(llm, "stream")):
+            streamed_parts: list[str] = []
+            for chunk in llm.stream(messages):
+                part = extract_text(chunk)
+                if part:
+                    streamed_parts.append(part)
+            content = "".join(streamed_parts)
+            if not content:
+                content = invoke(llm, messages)
+        else:
+            content = invoke(llm, messages)
     except Exception:
         content = "聊天服务暂时不可用，请稍后重试。"
 
@@ -46,4 +56,4 @@ def chat_agent(state: AgentState) -> AgentState:
         "mode": "chat",
         "content": content,
     }
-    return state
+    return {"results": results}

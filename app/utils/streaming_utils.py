@@ -182,17 +182,18 @@ def _invoke_with_tools(
         response = llm_with_tools.invoke(messages)
         messages.append(response)
 
-        if not response.tool_calls:
+        tool_calls = getattr(response, "tool_calls", None)
+        if not tool_calls:
             if log_enabled:
                 logger.info("第 {} 轮无工具调用，返回最终结果", round_idx + 1)
             return extract_text(response)
 
         if log_enabled:
             logger.info(
-                "第 {} 轮触发 {} 个工具调用", round_idx + 1, len(response.tool_calls)
+                "第 {} 轮触发 {} 个工具调用", round_idx + 1, len(tool_calls)
             )
 
-        for tc in response.tool_calls:
+        for tc in tool_calls:
             result = _exec_tool(tc, tool_map, log_enabled)
             messages.append(ToolMessage(content=result, tool_call_id=tc["id"]))
 

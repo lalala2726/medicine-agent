@@ -7,7 +7,7 @@
 from typing import List
 
 from fastapi import APIRouter
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 
 from app.core.codes import ResponseCode
 from app.core.exceptions import ServiceException
@@ -20,7 +20,11 @@ router = APIRouter(prefix="/image/parse", tags=["图像解析"])
 class ImageParseRequest(BaseModel):
     """图像解析请求参数"""
 
-    image_urls: List[str] = Field(..., description="图片 URL 列表")
+    image_urls: List[str] = Field(
+        ...,
+        validation_alias=AliasChoices("image_urls", "images"),
+        description="图片 URL 列表",
+    )
 
 
 @router.post("/drug", summary="解析药品图片")

@@ -355,7 +355,7 @@ def test_assistant_streaming_function_call_timely_events(monkeypatch):
 def test_assistant_route_delegates_to_stream_service(monkeypatch):
     captured: dict = {}
 
-    def _fake_create_assistant_streaming_response(question: str, config: AssistantStreamConfig):
+    def _fake_create_streaming_response(question: str, config: AssistantStreamConfig):
         captured["question"] = question
         captured["config"] = config
 
@@ -393,8 +393,8 @@ def test_assistant_route_delegates_to_stream_service(monkeypatch):
 
     monkeypatch.setattr(
         assistant_module,
-        "create_assistant_streaming_response",
-        _fake_create_assistant_streaming_response,
+        "create_streaming_response",
+        _fake_create_streaming_response,
     )
     client = TestClient(app)
 
