@@ -42,19 +42,19 @@ class ApiResponse(BaseModel, Generic[T]):
 
     @classmethod
     def success(
-        cls, data: T = None, message: str = ResponseCode.SUCCESS.message
+            cls, data: T = None, message: str = ResponseCode.SUCCESS.message
     ) -> "ApiResponse[T]":
         return cls(code=ResponseCode.SUCCESS, message=message, data=data)
 
     @classmethod
     def page(
-        cls,
-        *,
-        rows: list[T],
-        total: int,
-        page_num: int,
-        page_size: int,
-        message: str = ResponseCode.SUCCESS.message,
+            cls,
+            *,
+            rows: list[T],
+            total: int,
+            page_num: int,
+            page_size: int,
+            message: str = ResponseCode.SUCCESS.message,
     ) -> "ApiResponse[PageResponse[T]]":
         page_data: PageResponse[T] = PageResponse(
             rows=rows,
@@ -71,15 +71,15 @@ class ApiResponse(BaseModel, Generic[T]):
     @classmethod
     @overload
     def error(
-        cls, response: ResponseCode, message: str, data: T = None
+            cls, response: ResponseCode, message: str, data: T = None
     ) -> "ApiResponse[T]": ...
 
     @classmethod
     def error(
-        cls,
-        response: ResponseCode,
-        message: Optional[str] = None,
-        data: T = None,
+            cls,
+            response: ResponseCode,
+            message: Optional[str] = None,
+            data: T = None,
     ) -> "ApiResponse[T]":
         resolved_message = message if message is not None else response.message
         return cls(code=response.code, message=resolved_message, data=data)

@@ -7,16 +7,16 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.constants import END, START
 from langgraph.graph import StateGraph
 
-from app.agent.admin.chat_node import chat_agent
 from app.agent.admin.agent_state import AgentState, PlanStep
 from app.agent.admin.chart_node import chart_agent
+from app.agent.admin.chat_node import chat_agent
+from app.agent.admin.coordinator_node import coordinator
 from app.agent.admin.excel_node import excel_agent
 from app.agent.admin.order_node import order_agent
-from app.agent.admin.coordinator_node import coordinator
 from app.agent.admin.summary_node import summary_agent
 from app.core.assistant_status import status_node
 from app.core.langsmith import traceable
-from app.core.llm import DEFAULT_CHAT_MODEL, create_chat_model
+from app.core.llm import create_chat_model
 
 # 当前图中允许被执行的业务节点
 EXECUTION_NODES = ("order_agent", "excel_agent", "chart_agent", "summary_agent")

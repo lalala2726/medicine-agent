@@ -12,16 +12,16 @@ from app.schemas.prompt import base_prompt
 from app.utils.streaming_utils import invoke
 
 _SUMMARY_PROMPT = (
+        """
+        你是药品商城后台的总结节点（summary_agent）。
+        你的任务是把已有节点产出整理成对用户可直接阅读的最终结论。
+        
+        输出要求：
+        1. 先给结论，再给关键依据。
+        2. 若存在不确定项，明确标注“待确认”。
+        3. 保持简洁、准确，不编造不存在的数据。
     """
-你是药品商城后台的总结节点（summary_agent）。
-你的任务是把已有节点产出整理成对用户可直接阅读的最终结论。
-
-输出要求：
-1. 先给结论，再给关键依据。
-2. 若存在不确定项，明确标注“待确认”。
-3. 保持简洁、准确，不编造不存在的数据。
-"""
-    + base_prompt
+        + base_prompt
 )
 
 

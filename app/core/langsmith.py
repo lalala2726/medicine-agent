@@ -23,9 +23,9 @@ def is_langsmith_enabled() -> bool:
 
 
 def build_langsmith_runnable_config(
-    run_name: str,
-    tags: list[str] | None = None,
-    metadata: dict[str, Any] | None = None,
+        run_name: str,
+        tags: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     if not is_langsmith_enabled():
         return None

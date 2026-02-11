@@ -1,6 +1,4 @@
-from typing import TypedDict, List, Dict, Any, Optional, Union
-
-from pydantic import BaseModel, Field
+from typing import TypedDict, List, Dict, Any, Union
 
 
 class OrderContext(TypedDict, total=False):

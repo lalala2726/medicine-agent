@@ -1,6 +1,6 @@
-from dotenv import load_dotenv
 from typing import Awaitable, Callable
 
+from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import Response

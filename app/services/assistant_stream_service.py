@@ -168,7 +168,7 @@ def _resolve_message_type(raw_type: Any) -> MessageType:
 
 
 def build_emitted_sse(
-    event_payload: dict[str, Any], hide_node_types: set[MessageType]
+        event_payload: dict[str, Any], hide_node_types: set[MessageType]
 ) -> str | None:
     """
     将状态发射器事件（status/function_call/tool_response）转换为 SSE 文本。
@@ -212,10 +212,10 @@ def build_emitted_sse(
 
 
 def handle_graph_message_chunk(
-    *,
-    chunk: Any,
-    runtime_state: StreamRuntimeState,
-    should_stream_token: Callable[[str | None, dict[str, Any]], bool],
+        *,
+        chunk: Any,
+        runtime_state: StreamRuntimeState,
+        should_stream_token: Callable[[str | None, dict[str, Any]], bool],
 ) -> EventProcessResult:
     """
     处理 graph `messages` 事件。
@@ -264,9 +264,9 @@ def _process_graph_values_event(chunk: Any, runtime_state: StreamRuntimeState) -
 
 
 def _process_graph_event(
-    payload: GraphEventPayload,
-    runtime_state: StreamRuntimeState,
-    should_stream_token: Callable[[str | None, dict[str, Any]], bool],
+        payload: GraphEventPayload,
+        runtime_state: StreamRuntimeState,
+        should_stream_token: Callable[[str | None, dict[str, Any]], bool],
 ) -> EventProcessResult:
     """
     处理 graph 事件分支，并按 mode 分发到 message/values 处理器。
@@ -289,13 +289,13 @@ def _process_graph_event(
 
 
 def _process_stream_event(
-    *,
-    event_type: str,
-    payload: Any,
-    runtime_state: StreamRuntimeState,
-    should_stream_token: Callable[[str | None, dict[str, Any]], bool],
-    hide_node_types: set[MessageType],
-    map_exception: Callable[[Exception], str],
+        *,
+        event_type: str,
+        payload: Any,
+        runtime_state: StreamRuntimeState,
+        should_stream_token: Callable[[str | None, dict[str, Any]], bool],
+        hide_node_types: set[MessageType],
+        map_exception: Callable[[Exception], str],
 ) -> EventProcessResult:
     """
     统一处理单个队列事件。
@@ -328,12 +328,12 @@ def _process_stream_event(
 
 
 async def drain_pending_events(
-    *,
-    queue: asyncio.Queue[StreamEvent],
-    runtime_state: StreamRuntimeState,
-    should_stream_token: Callable[[str | None, dict[str, Any]], bool],
-    hide_node_types: set[MessageType],
-    map_exception: Callable[[Exception], str],
+        *,
+        queue: asyncio.Queue[StreamEvent],
+        runtime_state: StreamRuntimeState,
+        should_stream_token: Callable[[str | None, dict[str, Any]], bool],
+        hide_node_types: set[MessageType],
+        map_exception: Callable[[Exception], str],
 ) -> EventProcessResult:
     """
     在 `done` 事件后，尽可能消费并输出队列里的尾部事件。
@@ -382,11 +382,11 @@ def _build_stream_kwargs(config: AssistantStreamConfig) -> dict[str, Any]:
 
 
 async def _produce_workflow_events(
-    *,
-    queue: asyncio.Queue[StreamEvent],
-    state: dict[str, Any],
-    runtime_state: StreamRuntimeState,
-    config: AssistantStreamConfig,
+        *,
+        queue: asyncio.Queue[StreamEvent],
+        state: dict[str, Any],
+        runtime_state: StreamRuntimeState,
+        config: AssistantStreamConfig,
 ) -> None:
     """
     生产 workflow 事件并写入队列。
@@ -429,7 +429,7 @@ async def _finalize_stream(emitter_token: Any, producer_task: asyncio.Task[Any])
 
 
 async def _event_stream(
-    *, question: str, config: AssistantStreamConfig
+        *, question: str, config: AssistantStreamConfig
 ) -> AsyncIterable[str]:
     """
     核心事件流生成器。
@@ -500,7 +500,7 @@ async def _event_stream(
 
 
 def create_streaming_response(
-    question: str, config: AssistantStreamConfig
+        question: str, config: AssistantStreamConfig
 ) -> StreamingResponse:
     """
     对外统一入口：创建 FastAPI StreamingResponse。

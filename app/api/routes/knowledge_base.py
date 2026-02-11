@@ -136,6 +136,7 @@ async def list_document_chunks(
         page_size=request.page_size,
     )
 
+
 @router.delete("/document/{id}", summary="删除文档切片")
 async def delete_document_chunk(
         id: int = Path(..., gt=0, description="文档ID"),

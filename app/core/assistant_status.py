@@ -40,13 +40,13 @@ def reset_status_emitter(token: Token) -> None:
 
 
 def _build_event_content(
-    *,
-    node: str,
-    state: str,
-    message: str | None = None,
-    result: str | None = None,
-    name: str | None = None,
-    arguments: str | None = None,
+        *,
+        node: str,
+        state: str,
+        message: str | None = None,
+        result: str | None = None,
+        name: str | None = None,
+        arguments: str | None = None,
 ) -> EventContent:
     content: EventContent = {
         "node": node,
@@ -77,13 +77,13 @@ def _emit_event(*, event_type: str, content: EventContent) -> None:
 
 
 def emit_status(
-    *,
-    node: str,
-    state: str,
-    message: str | None = None,
-    result: str | None = None,
-    name: str | None = None,
-    arguments: str | None = None,
+        *,
+        node: str,
+        state: str,
+        message: str | None = None,
+        result: str | None = None,
+        name: str | None = None,
+        arguments: str | None = None,
 ) -> None:
     """发射节点状态事件（type=status）。"""
     _emit_event(
@@ -100,13 +100,13 @@ def emit_status(
 
 
 def emit_function_call(
-    *,
-    node: str,
-    state: str,
-    message: str | None = None,
-    result: str | None = None,
-    name: str | None = None,
-    arguments: str | None = None,
+        *,
+        node: str,
+        state: str,
+        message: str | None = None,
+        result: str | None = None,
+        name: str | None = None,
+        arguments: str | None = None,
 ) -> None:
     """发射工具调用事件（type=function_call）。"""
     _emit_event(
@@ -132,10 +132,10 @@ def resolve_tool_call_messages(tool_name: str) -> tuple[str, str, str]:
 
 
 def status_node(
-    *,
-    node: str,
-    start_message: str,
-    error_message: str | None = None,
+        *,
+        node: str,
+        start_message: str,
+        error_message: str | None = None,
 ):
     """节点状态装饰器：自动发 start/end/error 状态事件。"""
 
@@ -182,11 +182,11 @@ def status_node(
 
 
 def tool_call_status(
-    *,
-    tool_name: str | None = None,
-    start_message: str | None = None,
-    error_message: str | None = None,
-    timely_message: str | None = None,
+        *,
+        tool_name: str | None = None,
+        start_message: str | None = None,
+        error_message: str | None = None,
+        timely_message: str | None = None,
 ):
     """工具状态装饰器：自动发 function_call start/end/error/timely。"""
 
