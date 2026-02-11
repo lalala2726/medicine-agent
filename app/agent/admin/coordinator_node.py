@@ -4,6 +4,7 @@ from typing import Any
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.agent.admin.agent_state import AgentState
+from app.core.assistant_status import status_node
 from app.core.langsmith import traceable
 from app.core.llm import create_chat_model
 
@@ -184,6 +185,7 @@ def _build_retry_feedback(reason: str) -> str:
     )
 
 
+@status_node(node="coordinator", start_message="正在规划任务中")
 @traceable(name="Coordinator Agent Node", run_type="chain")
 def coordinator(state: AgentState) -> dict[str, Any]:
     routing = dict(state.get("routing") or {})

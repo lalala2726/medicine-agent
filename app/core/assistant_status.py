@@ -20,6 +20,10 @@ _TOOL_FUNCTION_CALL_MESSAGES: dict[str, dict[str, str]] = {
         "error": "订单服务调用失败",
         "timely": "订单信息正在持续处理中",
     },
+    "get_chart_sample_by_name": {
+        "start": "正在获取图表配置模板",
+        "error": "获取图表模板失败",
+    },
 }
 
 _DEFAULT_TOOL_TIMELY_MESSAGE = "工具正在持续处理中，请稍后查看结果"

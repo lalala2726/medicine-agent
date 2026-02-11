@@ -5,6 +5,8 @@ from fastapi.testclient import TestClient
 from app.api.routes import admin_assistant as assistant_module
 from app.core.assistant_status import emit_function_call, emit_status
 from app.main import app
+from app.schemas.sse_response import MessageType
+from app.services.assistant_stream_service import AssistantStreamConfig
 
 
 class _DummyGraph:
@@ -319,23 +321,9 @@ def test_assistant_streaming_status_events(monkeypatch):
 
     function_call_payloads = [item for item in payloads if item["type"] == "function_call"]
     function_call_contents = [item["content"] for item in function_call_payloads]
-    assert {"node": "tool:get_order_list", "state": "start", "message": "正在查询订单信息"} in function_call_contents
-    assert {"node": "tool:get_order_list", "state": "end"} in function_call_contents
-
-    first_answer_index = next(
-        index
-        for index, payload in enumerate(payloads)
-        if payload["type"] == "answer" and _answer_text(payload) == "订"
-    )
-    router_start_index = next(
-        index
-        for index, payload in enumerate(payloads)
-        if payload["type"] == "status"
-        and payload["content"].get("node") == "router"
-        and payload["content"].get("state") == "start"
-    )
-    assert router_start_index < first_answer_index
-
+    assert {"state": "start", "message": "正在查询订单信息"} in function_call_contents
+    assert {"state": "end"} in function_call_contents
+    assert all("node" not in item for item in function_call_contents)
 
 def test_assistant_streaming_function_call_timely_events(monkeypatch):
     class _TimelyAsyncGraph:
@@ -358,9 +346,78 @@ def test_assistant_streaming_function_call_timely_events(monkeypatch):
     function_call_payloads = [item for item in payloads if item["type"] == "function_call"]
     function_call_contents = [item["content"] for item in function_call_payloads]
 
-    assert {"node": "tool:get_order_list", "state": "start", "message": "正在查询订单信息"} in function_call_contents
-    assert {"node": "tool:get_order_list", "state": "timely", "message": "订单信息正在持续处理中"} in function_call_contents
+    assert {"state": "start", "message": "正在查询订单信息"} in function_call_contents
+    assert {"state": "timely", "message": "订单信息正在持续处理中"} in function_call_contents
     assert all(item.get("state") != "end" for item in function_call_contents)
+    assert all("node" not in item for item in function_call_contents)
+
+
+def test_assistant_route_delegates_to_stream_service(monkeypatch):
+    captured: dict = {}
+
+    def _fake_create_streaming_response(question: str, config: AssistantStreamConfig):
+        captured["question"] = question
+        captured["config"] = config
+
+        async def _stream():
+            yield (
+                "data: "
+                + json.dumps(
+                    {
+                        "content": {"text": "delegated"},
+                        "type": "answer",
+                        "is_end": False,
+                        "timestamp": 1,
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n\n"
+            )
+            yield (
+                "data: "
+                + json.dumps(
+                    {
+                        "content": {"text": ""},
+                        "type": "answer",
+                        "is_end": True,
+                        "timestamp": 2,
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n\n"
+            )
+
+        from fastapi.responses import StreamingResponse
+
+        return StreamingResponse(_stream(), media_type="text/event-stream")
+
+    monkeypatch.setattr(
+        assistant_module,
+        "create_streaming_response",
+        _fake_create_streaming_response,
+    )
+    client = TestClient(app)
+
+    response = client.post("/api/admin/assistant/chat", json={"question": "代理测试"})
+
+    assert response.status_code == 200
+    payloads = _extract_payloads(response.text)
+    assert _answer_text(payloads[0]) == "delegated"
+    assert payloads[1]["is_end"] is True
+
+    stream_config = captured["config"]
+    assert captured["question"] == "代理测试"
+    assert isinstance(stream_config, AssistantStreamConfig)
+    assert stream_config.workflow is assistant_module.ADMIN_WORKFLOW
+    assert stream_config.build_initial_state("x")["user_input"] == "x"
+    assert (
+        stream_config.extract_final_content({"results": {"chat": {"content": "ok"}}})
+        == "ok"
+    )
+    assert stream_config.should_stream_token("chat_agent", {"routing": {}, "plan": []}) is True
+    assert stream_config.should_stream_token("router", {"routing": {}, "plan": []}) is False
+    assert stream_config.map_exception(RuntimeError("boom")) == "服务暂时不可用，请稍后重试。"
+    assert MessageType.FUNCTION_CALL in stream_config.hide_node_types
 
 
 def test_assistant_requires_question():

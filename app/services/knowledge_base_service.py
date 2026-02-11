@@ -3,7 +3,11 @@ from pathlib import Path
 from app.core.chunking import ChunkStrategyType, SplitConfig, split_file
 from app.core.codes import ResponseCode
 from app.core.exceptions import ServiceException
-from app.core.file_loader.base import cleanup_temp_assets
+from app.core.file_loader.base import (
+    cleanup_temp_assets,
+    create_temp_image_dir,
+    register_temp_assets,
+)
 from app.core.file_loader.factory import FileLoaderFactory
 from app.services import vector_service
 from app.utils.file_utils import FileUtils
@@ -27,6 +31,17 @@ SUPPORTED_IMPORT_EXTENSIONS = {
     ".html",
     ".htm",
 }
+
+
+def _download_file(url: str) -> tuple[str, Path]:
+    """
+    下载文件并返回（文件名，临时文件路径）。
+
+    单独封装该函数是为了测试可替换（monkeypatch），
+    同时避免导入流程与底层下载实现强耦合。
+    """
+
+    return FileUtils.download_file(url)
 
 
 def create_collection(
@@ -145,7 +160,7 @@ def import_knowledge_service(
         try:
             logger.info("开始处理文件：file_url={}", url)
             # 1. 从 URL 下载文件到临时目录
-            filename, file_path = FileUtils.download_file(url)
+            filename, file_path = _download_file(url)
             logger.info(
                 "下载完成：file_url={}, filename={}, temp_path={}",
                 url,
@@ -162,9 +177,13 @@ def import_knowledge_service(
                     file_path, source_name=filename
                 )
             else:
+                # 即使不解析图片，也创建并注册临时图片目录，保持导入资产结构一致，
+                # 便于 cleanup_import_assets 统一清理。
+                image_dir = create_temp_image_dir(file_path.stem or "file")
+                register_temp_assets(filename, image_dir, source_path=file_path)
                 pages = FileLoaderFactory.parse_file(file_path)
                 parsed = {
-                    "image_dir": None,
+                    "image_dir": str(image_dir),
                     "pages": [page.to_dict() for page in pages],
                 }
             logger.info(

@@ -1,9 +1,18 @@
 """
-LLM 输出工具模块。
+LLM 执行与工具调用辅助模块（execution utils）。
 
 提供统一的 LLM 调用接口，支持：
 - 普通文本生成
 - 带工具调用的 Agent 模式
+
+职责边界：
+- 这里负责“如何执行模型/工具调用”（invoke、tool loop、工具执行）；
+- 不负责 SSE 输出编排、事件队列消费、HTTP streaming 封包。
+  这类逻辑应放在 `app/services/assistant_stream_service.py`。
+
+放置建议：
+- 与模型调用/工具调用强相关的执行逻辑放在这里；
+- 与流式响应协议（SSE）强相关的传输逻辑不要放这里。
 
 流式输出说明：
     节点内部统一使用同步调用（llm.invoke），逐 token 的流式推送由
@@ -19,6 +28,7 @@ LLM 输出工具模块。
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import json
 import os
 from typing import Any, Optional, Sequence
@@ -172,17 +182,18 @@ def _invoke_with_tools(
         response = llm_with_tools.invoke(messages)
         messages.append(response)
 
-        if not response.tool_calls:
+        tool_calls = getattr(response, "tool_calls", None)
+        if not tool_calls:
             if log_enabled:
                 logger.info("第 {} 轮无工具调用，返回最终结果", round_idx + 1)
             return extract_text(response)
 
         if log_enabled:
             logger.info(
-                "第 {} 轮触发 {} 个工具调用", round_idx + 1, len(response.tool_calls)
+                "第 {} 轮触发 {} 个工具调用", round_idx + 1, len(tool_calls)
             )
 
-        for tc in response.tool_calls:
+        for tc in tool_calls:
             result = _exec_tool(tc, tool_map, log_enabled)
             messages.append(ToolMessage(content=result, tool_call_id=tc["id"]))
 
@@ -213,8 +224,11 @@ def _run_async(coro: Any) -> Any:
     if loop and loop.is_running():
         import concurrent.futures
 
+        # 透传当前 contextvars（如 Authorization、状态事件发射器）到线程池任务，
+        # 否则工具执行线程拿不到请求上下文。
+        current_context = contextvars.copy_context()
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            return pool.submit(asyncio.run, coro).result()
+            return pool.submit(current_context.run, asyncio.run, coro).result()
     return asyncio.run(coro)
 
 
