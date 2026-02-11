@@ -1,3 +1,21 @@
+"""
+管理助手流式输出编排层（SSE transport/orchestration）。
+
+这个文件只负责“如何把事件流式推给前端”，包括：
+1. workflow 事件消费（messages / values / emitted / error / done）；
+2. 事件到 SSE 协议的封包与输出；
+3. 结束收尾、尾事件 drain、fallback 文本输出。
+
+这个文件不负责“业务节点如何执行”与“工具如何调用”，例如：
+- LLM invoke/tool 调用循环；
+- tool 参数编排与工具执行失败重试；
+- 具体业务状态字段如何产生。
+
+放置建议：
+- 需要复用 SSE 输出流程、事件分发、收尾逻辑的代码放这里；
+- 需要做模型调用、工具调用、业务执行策略的代码不要放这里。
+"""
+
 import asyncio
 import json
 from contextlib import suppress
