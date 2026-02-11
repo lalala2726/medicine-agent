@@ -28,4 +28,6 @@ dependencies = [
     "loguru>=0.7.2",
     "ipython>=9.10.0",
     "langsmith>=0.6.4",
+    "pandas>=3.0.0",
+    "pandas-stubs>=3.0.0.260204",
 ]
