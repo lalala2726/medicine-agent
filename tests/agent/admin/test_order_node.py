@@ -1,4 +1,5 @@
-import app.agent.admin.order_node as order_module
+import app.agent.admin.node.order_node as order_module
+from app.core.assistant_status import reset_status_emitter, set_status_emitter
 
 
 class _DummyResponse:
@@ -110,3 +111,60 @@ def test_order_agent_uses_non_stream_when_not_final(monkeypatch):
     assert result["order_context"]["result"]["is_end"] is False
     assert result["order_context"]["result"]["content"] == "hello order"
     assert "stream_chunks" not in result["order_context"]
+
+
+def test_order_agent_status_hidden_when_route_not_coordinator(monkeypatch):
+    model = _DummyModel()
+    monkeypatch.setattr(order_module, "create_chat_model", lambda *args, **kwargs: model)
+
+    events: list[dict] = []
+    token = set_status_emitter(events.append)
+    try:
+        state = _build_state(
+            routing={
+                "route_target": "order_agent",
+                "next_nodes": [],
+                "is_final_stage": False,
+            },
+            plan=[],
+        )
+        order_module.order_agent(state)
+    finally:
+        reset_status_emitter(token)
+
+    status_events = [item for item in events if item.get("type") == "status"]
+    assert status_events == []
+
+
+def test_order_agent_status_visible_when_route_is_coordinator(monkeypatch):
+    model = _DummyModel()
+    monkeypatch.setattr(order_module, "create_chat_model", lambda *args, **kwargs: model)
+
+    events: list[dict] = []
+    token = set_status_emitter(events.append)
+    try:
+        state = _build_state(
+            routing={
+                "route_target": "coordinator_agent",
+                "next_nodes": ["order_agent"],
+                "is_final_stage": False,
+            },
+            plan=[
+                {"node_name": "order_agent", "task_description": "中间步骤"},
+            ],
+        )
+        order_module.order_agent(state)
+    finally:
+        reset_status_emitter(token)
+
+    status_events = [item for item in events if item.get("type") == "status"]
+    assert status_events == [
+        {
+            "type": "status",
+            "content": {"node": "order", "state": "start", "message": "正在处理订单问题"},
+        },
+        {
+            "type": "status",
+            "content": {"node": "order", "state": "end"},
+        },
+    ]

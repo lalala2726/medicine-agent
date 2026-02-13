@@ -3,11 +3,12 @@ from __future__ import annotations
 import inspect
 from contextvars import ContextVar, Token
 from functools import wraps
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 
 EventPayload = dict[str, Any]
 EventContent = dict[str, Any]
 EventEmitter = Callable[[EventPayload], None]
+StatusDisplayWhen = Literal["always", "after_coordinator", "never"]
 
 _status_emitter: ContextVar[EventEmitter | None] = ContextVar(
     "assistant_status_emitter",
@@ -131,49 +132,106 @@ def resolve_tool_call_messages(tool_name: str) -> tuple[str, str, str]:
     return start_message, error_message, timely_message
 
 
+def _extract_state_from_call(
+        args: tuple[Any, ...], kwargs: dict[str, Any]
+) -> dict[str, Any] | None:
+    """从装饰器调用参数中提取状态字典。"""
+    state = kwargs.get("state")
+    if isinstance(state, dict):
+        return state
+
+    if args and isinstance(args[0], dict):
+        return args[0]
+
+    return None
+
+
+def _should_emit_status(
+        display_when: StatusDisplayWhen,
+        args: tuple[Any, ...],
+        kwargs: dict[str, Any],
+) -> bool:
+    """判断本次调用是否需要发状态事件。"""
+    if display_when == "always":
+        return True
+    if display_when == "never":
+        return False
+
+    state = _extract_state_from_call(args, kwargs)
+    if not isinstance(state, dict):
+        return False
+
+    routing = state.get("routing")
+    if not isinstance(routing, dict):
+        return False
+
+    return routing.get("route_target") == "coordinator_agent"
+
+
 def status_node(
         *,
         node: str,
         start_message: str,
         error_message: str | None = None,
+        display_when: StatusDisplayWhen = "always",
 ):
-    """节点状态装饰器：自动发 start/end/error 状态事件。"""
+    """
+    节点状态装饰器：自动发 start/end/error 状态事件。
+
+    Args:
+        node: 状态事件中的节点名。
+        start_message: 节点开始执行时的提示文案。
+        error_message: 节点失败时的兜底错误文案。
+        display_when: 状态显示策略。
+            - always: 始终发状态事件。
+            - after_coordinator: 仅当 state.routing.route_target == "coordinator_agent" 时发事件。
+              若 route_target 缺失或非法，则默认不发。
+            - never: 永不发状态事件。
+    """
 
     def _decorate(func):
         if inspect.iscoroutinefunction(func):
 
             @wraps(func)
             async def _async_wrapper(*args, **kwargs):
-                emit_status(node=node, state="start", message=start_message)
+                should_emit = _should_emit_status(display_when, args, kwargs)
+                if should_emit:
+                    emit_status(node=node, state="start", message=start_message)
                 try:
                     result = await func(*args, **kwargs)
                 except Exception as exc:
-                    emit_status(
-                        node=node,
-                        state="end",
-                        result="error",
-                        message=error_message or str(exc),
-                    )
+                    if should_emit:
+                        emit_status(
+                            node=node,
+                            state="end",
+                            result="error",
+                            message=error_message or str(exc),
+                        )
                     raise
-                emit_status(node=node, state="end")
+                if should_emit:
+                    emit_status(node=node, state="end")
                 return result
 
             return _async_wrapper
 
         @wraps(func)
         def _wrapper(*args, **kwargs):
-            emit_status(node=node, state="start", message=start_message)
+            should_emit = _should_emit_status(display_when, args, kwargs)
+            if should_emit:
+                emit_status(node=node, state="start", message=start_message)
             try:
                 result = func(*args, **kwargs)
             except Exception as exc:
-                emit_status(
-                    node=node,
-                    state="end",
-                    result="error",
-                    message=error_message or str(exc),
-                )
+                if should_emit:
+                    emit_status(
+                        node=node,
+                        state="end",
+                        result="error",
+                        message=error_message or str(exc),
+                    )
                 raise
-            emit_status(node=node, state="end")
+            if should_emit:
+                emit_status(node=node, state="end")
             return result
 
         return _wrapper

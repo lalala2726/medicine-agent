@@ -36,7 +36,11 @@ def _build_summary_input(state: AgentState) -> dict[str, Any]:
     }
 
 
-@status_node(node="summary", start_message="正在汇总问题")
+@status_node(
+    node="summary",
+    start_message="正在汇总问题",
+    display_when="after_coordinator",
+)
 @traceable(name="Summary Agent Node", run_type="chain")
 def summary_agent(state: AgentState) -> dict:
     routing = state.get("routing") or {}

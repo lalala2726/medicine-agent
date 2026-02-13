@@ -21,7 +21,6 @@ _CHAT_SYSTEM_PROMPT = (
 )
 
 
-@status_node(node="chat", start_message="正在组织聊天内容")
 @traceable(name="Chat Agent Node", run_type="chain")
 def chat_agent(state: AgentState) -> AgentState:
     user_input = str(state.get("user_input") or "").strip()

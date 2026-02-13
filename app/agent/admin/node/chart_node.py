@@ -69,7 +69,11 @@ def _build_chart_input(state: AgentState) -> dict[str, Any]:
     }
 
 
-@status_node(node="chart", start_message="正在分析数据准备生成图表")
+@status_node(
+    node="chart",
+    start_message="正在分析数据准备生成图表",
+    display_when="after_coordinator",
+)
 @traceable(name="Chart Agent Node", run_type="chain")
 def chart_agent(state: AgentState) -> dict:
     chart_input = _build_chart_input(state)

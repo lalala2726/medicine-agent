@@ -148,7 +148,6 @@ def _stage_has_executable_node(stage: list[PlanStep]) -> bool:
     return False
 
 
-@status_node(node="router", start_message="正在分析问题")
 @traceable(name="Gateway Router Node", run_type="chain")
 def gateway_router(state: AgentState) -> dict[str, Any]:
     """

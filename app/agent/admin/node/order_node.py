@@ -36,7 +36,11 @@ system_prompt = (
 )
 
 
-@status_node(node="order", start_message="正在处理订单问题")
+@status_node(
+    node="order",
+    start_message="正在处理订单问题",
+    display_when="after_coordinator",
+)
 @traceable(name="Order Agent Node", run_type="chain")
 def order_agent(state: AgentState) -> dict:
     routing = state.get("routing") or {}
