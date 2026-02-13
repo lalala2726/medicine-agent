@@ -44,6 +44,12 @@
 - HTTP client configuration (optional): `HTTP_BASE_URL` (defaults to `http://localhost:8080`).
 - HTTP client logging (optional): `HTTP_CLIENT_LOG_ENABLED` (default false, set true to log request/response details).
 - Agent tool logging (optional): `AGENT_TOOL_LOG_ENABLED` (default false, set true to log tool invocations and results).
+- CORS configuration (optional): `CORS_ALLOW_ORIGINS` (comma-separated origins, takes precedence over regex when set).
+- CORS configuration (optional): `CORS_ALLOW_ORIGIN_REGEX` (defaults to allowing `localhost`/`127.0.0.1` on any port).
+- CORS configuration (optional): `CORS_ALLOW_METHODS` (comma-separated methods, defaults to `*`).
+- CORS configuration (optional): `CORS_ALLOW_HEADERS` (comma-separated headers, defaults to `*`).
+- CORS configuration (optional): `CORS_ALLOW_CREDENTIALS` (default true).
+- CORS defaults are intended for local localhost debugging; tighten allowed origins/methods/headers explicitly in production.
 - LangSmith tracing (optional): `LANGSMITH_TRACING` (or legacy `LANGCHAIN_TRACING_V2`), `LANGSMITH_API_KEY`,
   `LANGSMITH_PROJECT`, `LANGSMITH_ENDPOINT`.
 - Document new config values in this file when you introduce them.

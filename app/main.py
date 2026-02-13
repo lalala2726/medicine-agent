@@ -2,10 +2,12 @@ from typing import Awaitable, Callable
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import Response
 
 from app.api.main import api_router
+from app.core.cors import load_cors_config
 from app.core.exception_handlers import ExceptionHandlers
 from app.core.exceptions import ServiceException
 from app.core.request_context import (
@@ -17,6 +19,7 @@ from app.core.request_context import (
 load_dotenv()
 
 app = FastAPI()
+app.add_middleware(CORSMiddleware, **load_cors_config())
 app.include_router(api_router)
 
 app.add_exception_handler(ServiceException, ExceptionHandlers.service_exception_handler)
