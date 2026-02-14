@@ -9,24 +9,34 @@ from app.agent.admin.dag_rules import (
     review_plan,
     select_model_by_difficulty,
 )
+from app.agent.tools.coordinator_tools import get_agent_detail
 from app.core.assistant_status import status_node
 from app.core.langsmith import traceable
 from app.core.llm import create_chat_model
+from app.utils.streaming_utils import invoke
 
 _system_prompt = """
     你是后台工作流中的 coordinator_agent，负责把用户请求拆解成 DAG 计划（仅规划，不执行）。
-    
+
     可用执行节点（node_name 只能从以下值中选择）：
     - order_agent: 订单查询、订单状态与订单信息核验。
     - excel_agent: 表格解析、表格整理、Excel 导出。
     - chart_agent: 基于已有结构化数据生成图表或统计说明。
     - summary_agent: 对多个节点结果做汇总并输出最终结论。
     - product_agent: 商品查询、商品详情查询。
-    
+
+    上述只是简单描述，如果你需要调用某些节点，你必须调用 get_agent_detail 获取节点详细功能介绍。
+    工具调用参数：
+    - agent_names: string[]，节点名列表（例如 ["order_agent", "product_agent"]，也支持 ["all"]）
+    - include_tool_parameters: bool，是否返回该节点可用工具和工具参数说明（默认 true）
+    - include_coordination_guide: bool，是否返回该节点协同建议（默认 true）
+    - include_plan_examples: bool，是否返回该节点计划片段示例（默认 false）
+    建议按需查询，不要一次性拉取全部节点细节，以节省上下文。
+
     注意：
     - chat_agent 由 gateway_router 处理，禁止出现在 plan 中。
     - 你必须输出新格式，不允许旧的分阶段嵌套数组结构。
-    
+
     输出 JSON 格式（仅输出 JSON，不要额外文本）：
     {
       "plan": [
@@ -52,7 +62,7 @@ _system_prompt = """
         }
       ]
     }
-    
+
     严格规则：
     1. 顶层只允许一个键：plan，且 plan 必须是对象数组。
     2. 每个步骤必须包含：step_id/node_name/task_description/depends_on/read_from/include_user_input/include_chat_history/final_output。
@@ -120,8 +130,7 @@ def coordinator(state: AgentState) -> dict[str, Any]:
             messages.append(HumanMessage(content=build_retry_feedback(last_reason)))
 
         try:
-            response = llm.invoke(messages)
-            payload = json.loads(str(response.content))
+            payload = _invoke_coordinator_payload(llm, messages)
         except Exception:
             last_reason = "模型返回内容不是有效 JSON。"
             continue
@@ -136,3 +145,19 @@ def coordinator(state: AgentState) -> dict[str, Any]:
         "routing": routing,
         "plan": reviewed_plan,
     }
+
+
+def _invoke_coordinator_payload(llm: Any, messages: list[Any]) -> dict[str, Any]:
+    """
+    调用 coordinator 模型并解析 JSON 结果。
+
+    优先使用工具模式（支持 bind_tools 的模型），让模型可按需调用 get_agent_detail；
+    若模型不支持工具绑定，则回退为普通 invoke 调用。
+    """
+    bind_tools = getattr(llm, "bind_tools", None)
+    if callable(bind_tools):
+        content = invoke(llm, messages, tools=[get_agent_detail])
+        return json.loads(str(content))
+
+    response = llm.invoke(messages)
+    return json.loads(str(response.content))

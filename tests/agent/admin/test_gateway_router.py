@@ -4,6 +4,7 @@ import pytest
 
 import app.agent.admin.dag_rules as dag_rules_module
 import app.agent.admin.node.coordinator_node as coordinator_module
+import app.agent.tools.coordinator_tools as coordinator_tools_module
 import app.agent.admin.workflow as workflow_module
 
 
@@ -126,6 +127,35 @@ def _valid_plan() -> list[dict]:
     ]
 
 
+def test_get_agent_detail_returns_selected_agent_details():
+    result = coordinator_tools_module.get_agent_detail.invoke(
+        {
+            "agent_names": ["order_agent", "product_agent"],
+            "include_tool_parameters": True,
+            "include_coordination_guide": True,
+            "include_plan_examples": True,
+        }
+    )
+    assert result["ok"] is True
+    assert result["resolved_agents"] == ["order_agent", "product_agent"]
+    assert "order_agent" in result["agent_details"]
+    assert "available_tools" in result["agent_details"]["order_agent"]
+    assert "coordination_guide" in result["agent_details"]["product_agent"]
+    assert "plan_example" in result["agent_details"]["order_agent"]
+    assert "tool_parameters_supported" in result
+
+
+def test_get_agent_detail_returns_error_when_agent_not_supported():
+    result = coordinator_tools_module.get_agent_detail.invoke(
+        {
+            "agent_names": ["unknown_agent"],
+        }
+    )
+    assert result["ok"] is False
+    assert "unknown_agent" in result["unsupported_agents"]
+    assert "supported_agents" in result
+
+
 def test_review_plan_accepts_valid_dag():
     is_valid, normalized, reason = dag_rules_module.review_plan(_valid_plan(), "medium")
     assert is_valid is True
@@ -243,6 +273,34 @@ def test_coordinator_retries_when_plan_review_fails(monkeypatch: pytest.MonkeyPa
     result = coordinator_module.coordinator(_build_initial_state("先查后总结"))
 
     assert call_count["value"] == 2
+    assert len(result["plan"]) == 2
+    assert result["plan"][1]["final_output"] is True
+
+
+def test_coordinator_uses_tool_mode_when_model_supports_bind_tools(
+        monkeypatch: pytest.MonkeyPatch,
+):
+    class _ToolCapableResponse:
+        def __init__(self, content: str):
+            self.content = content
+            self.tool_calls = []
+
+    class _ToolCapableModel:
+        def __init__(self):
+            self.bind_tools_called = False
+
+        def bind_tools(self, _tools):
+            self.bind_tools_called = True
+            return self
+
+        def invoke(self, _messages):
+            return _ToolCapableResponse(json.dumps({"plan": _valid_plan()}))
+
+    model = _ToolCapableModel()
+    monkeypatch.setattr(coordinator_module, "create_chat_model", lambda *args, **kwargs: model)
+
+    result = coordinator_module.coordinator(_build_initial_state("先查订单后汇总"))
+    assert model.bind_tools_called is True
     assert len(result["plan"]) == 2
     assert result["plan"][1]["final_output"] is True
 
