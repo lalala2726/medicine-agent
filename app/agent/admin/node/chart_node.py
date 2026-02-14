@@ -6,6 +6,10 @@ from typing import Any
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.agent.admin.agent_state import AgentState
+from app.agent.admin.node.runtime_context import (
+    build_step_output_update,
+    build_step_runtime,
+)
 from app.agent.tools.chart_tools import CHART_TOOLS
 from app.core.assistant_status import status_node
 from app.core.langsmith import traceable
@@ -49,24 +53,29 @@ _CHART_SYSTEM_PROMPT = (
 )
 
 
-def _build_chart_input(state: AgentState) -> dict[str, Any]:
-    routing = state.get("routing") or {}
-    current_step_map = routing.get("current_step_map") or {}
-    step = (
-        current_step_map.get("chart_agent")
-        if isinstance(current_step_map, dict)
-        else {}
-    )
-    task_description = (step or {}).get("task_description") or "根据已有数据生成图表"
-
-    return {
-        "task_description": task_description,
-        "user_input": state.get("user_input") or "",
-        "order_context": state.get("order_context") or {},
-        "excel_context": state.get("excel_context") or {},
-        "results": state.get("results") or {},
+def _build_chart_input(state: AgentState, runtime: dict[str, Any]) -> dict[str, Any]:
+    # coordinator 模式下默认只给“任务描述 + 显式 read_from 的上游输出 + 错误信息”。
+    # 这样可以显著收敛上下文，减少无关信息进入模型。
+    payload: dict[str, Any] = {
+        "task_description": runtime.get("task_description") or "根据已有数据生成图表",
+        "upstream_outputs": runtime.get("upstream_outputs") or {},
+        "read_from": runtime.get("read_from") or [],
         "errors": state.get("errors") or [],
     }
+    user_input = runtime.get("user_input")
+    if isinstance(user_input, str) and user_input:
+        payload["user_input"] = user_input
+
+    history_messages = runtime.get("history_messages")
+    if isinstance(history_messages, list) and history_messages:
+        payload["history_messages"] = history_messages
+
+    if not runtime.get("coordinator_mode"):
+        # 直连模式保持旧行为，继续透传历史上下文字段，避免行为突变。
+        payload["order_context"] = state.get("order_context") or {}
+        payload["excel_context"] = state.get("excel_context") or {}
+        payload["results"] = state.get("results") or {}
+    return payload
 
 
 @status_node(
@@ -76,8 +85,15 @@ def _build_chart_input(state: AgentState) -> dict[str, Any]:
 )
 @traceable(name="Chart Agent Node", run_type="chain")
 def chart_agent(state: AgentState) -> dict:
-    chart_input = _build_chart_input(state)
+    # 读取当前步骤配置（read_from、final_output、上下文开关）。
+    runtime = build_step_runtime(
+        state,
+        "chart_agent",
+        default_task_description="根据已有数据生成图表",
+    )
+    chart_input = _build_chart_input(state, runtime)
     final_output = is_final_node(state, "chart_agent")
+    failed_error: str | None = None
 
     try:
         llm = create_chat_model(model="qwen-plus", temperature=0.1)
@@ -86,12 +102,28 @@ def chart_agent(state: AgentState) -> dict:
             HumanMessage(content=json.dumps(chart_input, ensure_ascii=False)),
         ]
         content = invoke(llm, messages, tools=CHART_TOOLS)
+        step_status = "completed"
     except Exception:
         content = "图表服务暂时不可用，请稍后重试。"
+        step_status = "failed"
+        failed_error = "chart_agent 执行失败"
 
     results = dict(state.get("results") or {})
     results["chart"] = {
         "content": content,
         "is_end": final_output,
     }
-    return {"results": results}
+
+    # chart 节点将“文本 + 结构化图表对象”同步写入 step_outputs。
+    result: dict[str, Any] = {"results": results}
+    result.update(
+        build_step_output_update(
+            runtime,
+            node_name="chart_agent",
+            status=step_status,
+            text=content,
+            output={"chart": results["chart"]},
+            error=failed_error,
+        )
+    )
+    return result

@@ -1,6 +1,11 @@
 from langchain_core.prompts import SystemMessagePromptTemplate
 
 from app.agent.admin.agent_state import AgentState
+from app.agent.admin.node.runtime_context import (
+    build_instruction_text,
+    build_step_output_update,
+    build_step_runtime,
+)
 from app.agent.tools.admin_tools import get_orders_detail, get_order_list
 from app.core.assistant_status import status_node
 from app.core.langsmith import traceable
@@ -43,12 +48,17 @@ system_prompt = (
 )
 @traceable(name="Order Agent Node", run_type="chain")
 def order_agent(state: AgentState) -> dict:
-    routing = state.get("routing") or {}
-    current_step_map = routing.get("current_step_map") or {}
-    step = current_step_map.get("order_agent")
-    instruction = (
-            step.get("task_description") if isinstance(step, dict) else None
-    ) or state.get("user_input") or "请处理订单相关任务"
+    # 统一读取当前步骤运行时信息：
+    # - task_description
+    # - read_from 对应的上游输出
+    # - include_user_input / include_chat_history 开关
+    runtime = build_step_runtime(
+        state,
+        "order_agent",
+        default_task_description="请处理订单相关任务",
+    )
+    # 生成给模型的 instruction 文本，避免各节点重复拼接。
+    instruction = build_instruction_text(runtime)
 
     llm = create_chat_model(model="qwen3-max")
     messages = SystemMessagePromptTemplate.from_template(
@@ -56,15 +66,24 @@ def order_agent(state: AgentState) -> dict:
     ).format_messages(instruction=instruction)
 
     tools = [get_orders_detail, get_order_list]
-
+    # final_output=true 时允许节点内部 stream（用于最终对用户输出的节点）。
     final_output = is_final_node(state, "order_agent")
-    content, stream_chunks = invoke_with_optional_stream(
-        llm,
-        messages,
-        tools=tools,
-        enable_stream=final_output,
-    )
+    failed_error: str | None = None
+    try:
+        content, stream_chunks = invoke_with_optional_stream(
+            llm,
+            messages,
+            tools=tools,
+            enable_stream=final_output,
+        )
+        step_status = "completed"
+    except Exception as exc:
+        content = "订单服务暂时不可用，请稍后重试。"
+        stream_chunks = []
+        step_status = "failed"
+        failed_error = f"order_agent 执行失败: {exc}"
 
+    # 保留原有 order_context 结构，避免影响现有调用方。
     order_context = dict(state.get("order_context") or {})
     order_context["result"] = {
         "content": content,
@@ -74,6 +93,18 @@ def order_agent(state: AgentState) -> dict:
         order_context["stream_chunks"] = stream_chunks
     else:
         order_context.pop("stream_chunks", None)
-    order_context["status"] = "COMPLETED"
+    order_context["status"] = "COMPLETED" if step_status == "completed" else "FAILED"
 
-    return {"order_context": order_context}
+    # 额外写入标准化 step_outputs，供 planner 下一轮调度使用。
+    result = {"order_context": order_context}
+    result.update(
+        build_step_output_update(
+            runtime,
+            node_name="order_agent",
+            status=step_status,
+            text=content,
+            output={"result": order_context["result"]},
+            error=failed_error,
+        )
+    )
+    return result

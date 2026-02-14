@@ -482,6 +482,36 @@ def test_assistant_requires_question():
     assert body["message"] == "问题不能为空"
 
 
+def test_assistant_accepts_history_messages_and_injects_initial_state(monkeypatch):
+    captured_state: dict = {}
+
+    class _CaptureGraph:
+        def invoke(self, state: dict, config: dict | None = None) -> dict:
+            captured_state.update(state)
+            return {"results": {"chat": {"content": "ok"}}}
+
+    monkeypatch.setattr(assistant_module, "ADMIN_WORKFLOW", _CaptureGraph())
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/admin/assistant/chat",
+        json={
+            "question": "你好",
+            "history_messages": [
+                {"role": "user", "content": "上一轮用户消息"},
+                {"role": "assistant", "content": "上一轮助手消息"},
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured_state["history_messages"] == [
+        {"role": "user", "content": "上一轮用户消息"},
+        {"role": "assistant", "content": "上一轮助手消息"},
+    ]
+    assert captured_state["step_outputs"] == {}
+
+
 def test_invoke_admin_workflow_passes_langsmith_config(monkeypatch):
     graph = _DummyGraph(final_state={"results": {"chat": {"content": "ok"}}})
     monkeypatch.setattr(assistant_module, "ADMIN_WORKFLOW", graph)

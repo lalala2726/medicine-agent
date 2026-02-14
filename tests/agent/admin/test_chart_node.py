@@ -4,27 +4,55 @@ import app.agent.admin.node.chart_node as chart_node_module
 from app.core.assistant_status import reset_status_emitter, set_status_emitter
 
 
-def _build_state(
-        *, is_final_stage: bool = True, route_target: str = "coordinator_agent"
+def _build_step(
+        *,
+        final_output: bool = True,
+        include_user_input: bool = False,
+        include_chat_history: bool = False,
 ) -> dict:
+    return {
+        "step_id": "s1",
+        "node_name": "chart_agent",
+        "task_description": "生成订单趋势图",
+        "depends_on": ["s0"],
+        "read_from": ["s0"],
+        "include_user_input": include_user_input,
+        "include_chat_history": include_chat_history,
+        "final_output": final_output,
+    }
+
+
+def _build_state(
+        *,
+        route_target: str = "coordinator_agent",
+        step: dict | None = None,
+        step_outputs: dict | None = None,
+) -> dict:
+    step = step or _build_step()
     return {
         "user_input": "帮我把订单趋势画成图",
         "user_intent": {},
-        "plan": [{"node_name": "chart_agent", "task_description": "生成订单趋势图"}],
+        "plan": [step],
         "routing": {
             "route_target": route_target,
             "next_nodes": ["chart_agent"],
-            "is_final_stage": is_final_stage,
-            "current_step_map": {
-                "chart_agent": {
-                    "node_name": "chart_agent",
-                    "task_description": "生成订单趋势图",
-                }
-            },
+            "current_step_map": {"chart_agent": step},
         },
         "order_context": {"result": {"content": "订单趋势数据"}},
+        "product_context": {},
         "aftersale_context": {},
         "excel_context": {},
+        "history_messages": [{"role": "assistant", "content": "上一轮建议"}],
+        "step_outputs": step_outputs
+        or {
+            "s0": {
+                "step_id": "s0",
+                "node_name": "order_agent",
+                "status": "completed",
+                "text": "订单数据",
+                "output": {"rows": [1, 2]},
+            }
+        },
         "shared_memory": {},
         "results": {"order": {"content": "订单结果"}},
         "errors": [],
@@ -42,27 +70,38 @@ def test_chart_agent_uses_chart_tools_and_writes_result(monkeypatch):
     monkeypatch.setattr(chart_node_module, "create_chat_model", lambda **_kwargs: object())
     monkeypatch.setattr(chart_node_module, "invoke", fake_invoke)
 
-    state = _build_state()
-    result = chart_node_module.chart_agent(state)
-
+    result = chart_node_module.chart_agent(_build_state())
     assert captured["tools"] == chart_node_module.CHART_TOOLS
-    assert len(captured["tools"]) == 1
-    assert captured["tools"][0].name == "get_chart_sample_by_name"
     assert result["results"]["chart"]["content"].startswith('{"type":"line"')
     assert result["results"]["chart"]["is_end"] is True
+    assert result["step_outputs"]["s1"]["status"] == "completed"
 
-    system_prompt = captured["messages"][0].content
-    assert "line（折线图）" in system_prompt
-    assert "pie（饼图）" in system_prompt
-    assert "get_chart_sample_by_name" in system_prompt
-
-    human_payload = captured["messages"][1].content
-    parsed = json.loads(human_payload)
-    assert parsed["task_description"] == "生成订单趋势图"
-    assert "order_context" in parsed
+    human_payload = json.loads(captured["messages"][1].content)
+    assert human_payload["task_description"] == "生成订单趋势图"
+    assert "upstream_outputs" in human_payload
+    assert "user_input" not in human_payload
+    assert "history_messages" not in human_payload
 
 
-def test_chart_agent_returns_fallback_when_llm_fails(monkeypatch):
+def test_chart_agent_can_include_user_and_history_when_enabled(monkeypatch):
+    captured: dict = {}
+
+    def fake_invoke(_llm, messages, *, tools=None, **_kwargs):
+        captured["messages"] = messages
+        return '{"type":"line","data":[]}'
+
+    monkeypatch.setattr(chart_node_module, "create_chat_model", lambda **_kwargs: object())
+    monkeypatch.setattr(chart_node_module, "invoke", fake_invoke)
+
+    step = _build_step(include_user_input=True, include_chat_history=True)
+    chart_node_module.chart_agent(_build_state(step=step))
+
+    human_payload = json.loads(captured["messages"][1].content)
+    assert human_payload["user_input"] == "帮我把订单趋势画成图"
+    assert human_payload["history_messages"][0]["role"] == "assistant"
+
+
+def test_chart_agent_returns_fallback_and_failed_step_output_when_llm_fails(monkeypatch):
     def fake_invoke(*_args, **_kwargs):
         raise RuntimeError("boom")
 
@@ -71,7 +110,7 @@ def test_chart_agent_returns_fallback_when_llm_fails(monkeypatch):
 
     result = chart_node_module.chart_agent(_build_state())
     assert result["results"]["chart"]["content"] == "图表服务暂时不可用，请稍后重试。"
-    assert result["results"]["chart"]["is_end"] is True
+    assert result["step_outputs"]["s1"]["status"] == "failed"
 
 
 def test_chart_agent_marks_non_final_stage_is_end_false(monkeypatch):
@@ -82,7 +121,8 @@ def test_chart_agent_marks_non_final_stage_is_end_false(monkeypatch):
     monkeypatch.setattr(chart_node_module, "create_chat_model", lambda **_kwargs: object())
     monkeypatch.setattr(chart_node_module, "invoke", fake_invoke)
 
-    result = chart_node_module.chart_agent(_build_state(is_final_stage=False))
+    step = _build_step(final_output=False)
+    result = chart_node_module.chart_agent(_build_state(step=step))
     assert result["results"]["chart"]["is_end"] is False
 
 

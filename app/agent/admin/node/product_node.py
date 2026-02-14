@@ -1,6 +1,11 @@
 from langchain_core.prompts import SystemMessagePromptTemplate
 
 from app.agent.admin.agent_state import AgentState
+from app.agent.admin.node.runtime_context import (
+    build_instruction_text,
+    build_step_output_update,
+    build_step_runtime,
+)
 from app.agent.tools.admin_tools import get_product_list, get_product_info
 from app.core.assistant_status import status_node
 from app.core.langsmith import traceable
@@ -36,12 +41,14 @@ system_prompt = (
 )
 @traceable(name="Product Agent Node", run_type="chain")
 def product_agent(state: AgentState) -> dict:
-    routing = state.get("routing") or {}
-    current_step_map = routing.get("current_step_map") or {}
-    step = current_step_map.get("product_agent")
-    instruction = (
-            step.get("task_description") if isinstance(step, dict) else None
-    ) or state.get("user_input") or "请处理商品相关任务"
+    # 从 planner 当前步骤中读取运行时配置与上游可读输出。
+    runtime = build_step_runtime(
+        state,
+        "product_agent",
+        default_task_description="请处理商品相关任务",
+    )
+    # 将任务描述 + 上游输出 + 可选对话上下文整合为 instruction。
+    instruction = build_instruction_text(runtime)
 
     llm = create_chat_model(model="qwen3-max")
     messages = SystemMessagePromptTemplate.from_template(
@@ -49,14 +56,24 @@ def product_agent(state: AgentState) -> dict:
     ).format_messages(instruction=instruction)
 
     tools = [get_product_list, get_product_info]
+    # 只有最终输出步骤才开启 stream 分支。
     final_output = is_final_node(state, "product_agent")
-    content, stream_chunks = invoke_with_optional_stream(
-        llm,
-        messages,
-        tools=tools,
-        enable_stream=final_output,
-    )
+    failed_error: str | None = None
+    try:
+        content, stream_chunks = invoke_with_optional_stream(
+            llm,
+            messages,
+            tools=tools,
+            enable_stream=final_output,
+        )
+        step_status = "completed"
+    except Exception as exc:
+        content = "商品服务暂时不可用，请稍后重试。"
+        stream_chunks = []
+        step_status = "failed"
+        failed_error = f"product_agent 执行失败: {exc}"
 
+    # 兼容保留原 product_context 输出结构。
     product_context = dict(state.get("product_context") or {})
     product_context["result"] = {
         "content": content,
@@ -66,5 +83,18 @@ def product_agent(state: AgentState) -> dict:
         product_context["stream_chunks"] = stream_chunks
     else:
         product_context.pop("stream_chunks", None)
-    product_context["status"] = "COMPLETED"
-    return {"product_context": product_context}
+    product_context["status"] = "COMPLETED" if step_status == "completed" else "FAILED"
+
+    # 写入 step_outputs，驱动 DAG 调度与故障传播。
+    result = {"product_context": product_context}
+    result.update(
+        build_step_output_update(
+            runtime,
+            node_name="product_agent",
+            status=step_status,
+            text=content,
+            output={"result": product_context["result"]},
+            error=failed_error,
+        )
+    )
+    return result

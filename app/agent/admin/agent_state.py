@@ -1,4 +1,40 @@
-from typing import TypedDict, List, Dict, Any, Union
+from __future__ import annotations
+
+from typing import Annotated, Any, Dict, List, Literal, TypedDict
+
+
+class HistoryMessage(TypedDict):
+    """
+    对话历史消息。
+    """
+
+    role: Literal["user", "assistant"]
+    content: str
+
+
+class StepOutput(TypedDict, total=False):
+    """
+    DAG 步骤执行输出。
+    """
+
+    step_id: str
+    node_name: str
+    status: Literal["completed", "failed", "skipped"]
+    text: str
+    output: Dict[str, Any]
+    error: str
+
+
+def _merge_step_outputs(
+        left: dict[str, StepOutput] | None,
+        right: dict[str, StepOutput] | None,
+) -> dict[str, StepOutput]:
+    """
+    合并并行节点写入的 step_outputs。
+    """
+    merged = dict(left or {})
+    merged.update(right or {})
+    return merged
 
 
 class OrderContext(TypedDict, total=False):
@@ -66,14 +102,29 @@ class PlanStep(TypedDict, total=False):
     单个执行步骤
     """
 
+    # 步骤唯一 ID
+    step_id: str
+
     # 执行节点名称
     node_name: str
 
-    # 上层节点名称
-    last_node: list[str]
+    # 依赖步骤 ID
+    depends_on: list[str]
+
+    # 读取的上游步骤 ID
+    read_from: list[str]
 
     # 任务描述
     task_description: str
+
+    # 是否允许读取 user_input
+    include_user_input: bool
+
+    # 是否允许读取 history_messages
+    include_chat_history: bool
+
+    # 是否为最终输出步骤（全局必须唯一）
+    final_output: bool
 
 
 class RoutingState(TypedDict, total=False):
@@ -81,7 +132,7 @@ class RoutingState(TypedDict, total=False):
     路由状态（供 workflow/router 与各 agent 共享）
     """
 
-    # 当前执行到第几个阶段（并行编排使用）
+    # 当前执行到第几个阶段（兼容旧字段）
     stage_index: int
 
     # router 计算出的下一批可执行节点（单节点或并行多节点）
@@ -99,6 +150,18 @@ class RoutingState(TypedDict, total=False):
     # 当前阶段节点到步骤定义的映射
     current_step_map: Dict[str, PlanStep]
 
+    # 当前调度批次步骤 ID 列表
+    current_step_ids: list[str]
+
+    # 下一批可执行步骤 ID 列表
+    next_step_ids: list[str]
+
+    # 已完成步骤 ID 列表
+    completed_step_ids: list[str]
+
+    # 被阻断/跳过步骤 ID 列表
+    blocked_step_ids: list[str]
+
 
 class AgentState(TypedDict):
     """
@@ -112,7 +175,7 @@ class AgentState(TypedDict):
     user_intent: Dict[str, Any]
 
     # 执行计划
-    plan: list[Union[PlanStep, list[PlanStep]]]
+    plan: list[PlanStep]
 
     # 当前执行状态
     routing: RoutingState
@@ -128,6 +191,12 @@ class AgentState(TypedDict):
 
     # 商品 Agent 上下文
     product_context: ProductContext
+
+    # 历史消息（用户与助手）
+    history_messages: List[HistoryMessage]
+
+    # DAG 步骤产出（并发安全聚合）
+    step_outputs: Annotated[dict[str, StepOutput], _merge_step_outputs]
 
     # 共享信息
     shared_memory: Dict[str, Any]

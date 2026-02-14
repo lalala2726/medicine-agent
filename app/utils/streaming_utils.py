@@ -72,9 +72,10 @@ def is_final_node(state: AgentState | dict[str, Any], node_name: str) -> bool:
     """
     判断当前节点是否为最终输出节点。
 
-    判断条件：
-    1. gateway_router 直达该节点且无 plan
-    2. planner 标记为最后阶段，且 next_nodes 仅包含该节点
+    判断条件（按优先级）：
+    1. 当前 step 显式标记 final_output=true
+    2. gateway_router 直达该节点且无 plan
+    3. 兼容旧逻辑：planner 标记为最后阶段，且 next_nodes 仅包含该节点
 
     Args:
         state: Agent 状态字典
@@ -84,6 +85,13 @@ def is_final_node(state: AgentState | dict[str, Any], node_name: str) -> bool:
         bool: 是最终节点返回 True
     """
     routing = state.get("routing") or {}
+
+    current_step_map = routing.get("current_step_map") or {}
+    if isinstance(current_step_map, dict):
+        step = current_step_map.get(node_name)
+        if isinstance(step, dict) and bool(step.get("final_output")):
+            return True
+
     route_target = routing.get("route_target")
     if route_target == node_name and not has_plan(state):
         return True
