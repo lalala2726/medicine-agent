@@ -14,7 +14,11 @@ def _safe_draw_mermaid_png(compiled_graph) -> bytes:
         return f"mermaid render skipped: {exc}".encode("utf-8")
 
 
-def _build_initial_state(plan: list[dict], routing: dict | None = None) -> dict:
+def _build_initial_state(
+        plan: list[dict],
+        routing: dict | None = None,
+        step_outputs: dict | None = None,
+) -> dict:
     return {
         "user_input": "fake user request",
         "user_intent": {"type": "fake"},
@@ -25,7 +29,7 @@ def _build_initial_state(plan: list[dict], routing: dict | None = None) -> dict:
         "aftersale_context": {},
         "excel_context": {},
         "history_messages": [],
-        "step_outputs": {},
+        "step_outputs": step_outputs or {},
         "shared_memory": {},
         "results": {},
         "errors": [],
@@ -92,6 +96,7 @@ def _make_step(
         node_name: str,
         *,
         depends_on: list[str] | None = None,
+        optional_depends_on: list[str] | None = None,
         read_from: list[str] | None = None,
         final_output: bool = False,
 ) -> dict:
@@ -99,7 +104,8 @@ def _make_step(
         "step_id": step_id,
         "node_name": node_name,
         "task_description": f"task for {step_id}",
-        "depends_on": depends_on or [],
+        "required_depends_on": depends_on or [],
+        "optional_depends_on": optional_depends_on or [],
         "read_from": read_from or [],
         "include_user_input": False,
         "include_chat_history": False,
@@ -251,7 +257,62 @@ def test_workflow_blocks_downstream_on_failure(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(workflow_module, "coordinator", fake_coordinator)
     monkeypatch.setattr(workflow_module, "order_agent", fail_order)
     monkeypatch.setattr(workflow_module, "summary_agent", lambda _state: {})
+    monkeypatch.setattr(workflow_module, "chat_agent", lambda _state: {"results": {"chat": {"content": "fallback"}}})
 
     result = workflow_module.build_graph().invoke(_build_initial_state(plan=plan))
     assert result["step_outputs"]["s2"]["status"] == "skipped"
     assert "阻断" in result["step_outputs"]["s2"]["error"]
+    assert result["routing"]["next_nodes"] == ["chat_agent"] or "fallback_context" in result["routing"]
+
+
+def test_planner_waits_optional_dependencies_until_terminal():
+    plan = [
+        _make_step("s1", "order_agent"),
+        _make_step("s2", "product_agent"),
+        _make_step(
+            "s3",
+            "summary_agent",
+            depends_on=["s2"],
+            optional_depends_on=["s1"],
+            read_from=["s1", "s2"],
+            final_output=True,
+        ),
+    ]
+    first = workflow_module.planner(_build_initial_state(plan=plan, routing={}))["routing"]
+    assert set(first["next_nodes"]) == {"order_agent", "product_agent"}
+
+    # 仅 s2 完成时，s3 还不能执行（s1 optional 还未终态），此时会继续调度 s1。
+    second = workflow_module.planner(
+        _build_initial_state(
+            plan=plan,
+            routing=first,
+            step_outputs={"s2": {"status": "completed"}},
+        )
+    )["routing"]
+    assert second["next_nodes"] == ["order_agent"]
+
+    # s1 失败后进入终态，s3 可执行
+    third = workflow_module.planner(
+        _build_initial_state(
+            plan=plan,
+            routing=second,
+            step_outputs={"s2": {"status": "completed"}, "s1": {"status": "failed"}},
+        )
+    )["routing"]
+    assert third["next_nodes"] == ["summary_agent"]
+
+
+def test_planner_routes_to_chat_when_final_step_unreachable():
+    plan = [
+        _make_step("s1", "order_agent"),
+        _make_step("s2", "summary_agent", depends_on=["s1"], final_output=True),
+    ]
+    result = workflow_module.planner(
+        _build_initial_state(
+            plan=plan,
+            step_outputs={"s1": {"status": "failed", "error": "boom"}},
+        )
+    )
+    routing = result["routing"]
+    assert routing["next_nodes"] == ["chat_agent"]
+    assert routing["fallback_context"]["trigger"] == "final_output_unreachable"

@@ -9,13 +9,14 @@ from app.agent.admin.agent_state import AgentState
 from app.agent.admin.node.runtime_context import (
     build_step_output_update,
     build_step_runtime,
+    evaluate_failure_by_policy,
 )
 from app.agent.tools.chart_tools import CHART_TOOLS
 from app.core.assistant_status import status_node
 from app.core.langsmith import traceable
 from app.core.llm import create_chat_model
 from app.schemas.prompt import base_prompt
-from app.utils.streaming_utils import invoke, is_final_node
+from app.utils.streaming_utils import invoke_with_policy, is_final_node
 
 _CHART_SYSTEM_PROMPT = (
         """
@@ -75,6 +76,12 @@ def _build_chart_input(state: AgentState, runtime: dict[str, Any]) -> dict[str, 
         payload["order_context"] = state.get("order_context") or {}
         payload["excel_context"] = state.get("excel_context") or {}
         payload["results"] = state.get("results") or {}
+
+    failure_policy = runtime.get("failure_policy") or {}
+    if failure_policy.get("strict_data_quality", True):
+        payload["failure_policy_hint"] = (
+            "当工具调用连续失败或数据不可信/不完整时，必须以 '__ERROR__:' 前缀输出错误原因。"
+        )
     return payload
 
 
@@ -92,17 +99,32 @@ def chart_agent(state: AgentState) -> dict:
         default_task_description="根据已有数据生成图表",
     )
     chart_input = _build_chart_input(state, runtime)
+    failure_policy = runtime.get("failure_policy") or {}
     final_output = is_final_node(state, "chart_agent")
-    failed_error: str | None = None
-
     try:
         llm = create_chat_model(model="qwen-plus", temperature=0.1)
         messages = [
             SystemMessage(content=_CHART_SYSTEM_PROMPT),
             HumanMessage(content=json.dumps(chart_input, ensure_ascii=False)),
         ]
-        content = invoke(llm, messages, tools=CHART_TOOLS)
-        step_status = "completed"
+        content, diagnostics = invoke_with_policy(
+            llm,
+            messages,
+            tools=CHART_TOOLS,
+            enable_stream=final_output,
+            error_marker_prefix=str(
+                failure_policy.get("error_marker_prefix") or "__ERROR__:"
+            ),
+            tool_error_counting=str(
+                failure_policy.get("tool_error_counting") or "consecutive"
+            ),
+            max_tool_errors=int(failure_policy.get("max_tool_errors") or 2),
+        )
+        step_status, failed_error, content = evaluate_failure_by_policy(
+            content,
+            diagnostics,
+            failure_policy,
+        )
     except Exception:
         content = "图表服务暂时不可用，请稍后重试。"
         step_status = "failed"

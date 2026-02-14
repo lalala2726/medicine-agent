@@ -37,7 +37,8 @@ def _build_step(final_output: bool) -> dict:
         "step_id": "s1",
         "node_name": "product_agent",
         "task_description": "处理商品",
-        "depends_on": [],
+        "required_depends_on": [],
+        "optional_depends_on": [],
         "read_from": [],
         "include_user_input": False,
         "include_chat_history": False,
@@ -168,3 +169,55 @@ def test_product_agent_status_visible_when_route_is_coordinator(monkeypatch):
             "content": {"node": "product", "state": "end"},
         },
     ]
+
+
+def test_product_agent_marks_failed_when_model_returns_error_marker(monkeypatch):
+    monkeypatch.setattr(product_module, "create_chat_model", lambda *args, **kwargs: object())
+    monkeypatch.setattr(
+        product_module,
+        "invoke_with_policy",
+        lambda *_args, **_kwargs: ("__ERROR__: 商品数据不可信", {"stream_chunks": []}),
+    )
+
+    step = _build_step(final_output=False)
+    state = _build_state(
+        routing={
+            "route_target": "coordinator_agent",
+            "next_nodes": ["product_agent"],
+            "current_step_map": {"product_agent": step},
+        },
+        plan=[step],
+    )
+    result = product_module.product_agent(state)
+    assert result["step_outputs"]["s1"]["status"] == "failed"
+    assert result["step_outputs"]["s1"]["error"] == "商品数据不可信"
+    assert result["product_context"]["result"]["content"] == "商品数据不可信"
+
+
+def test_product_agent_marks_failed_when_tool_threshold_hit(monkeypatch):
+    monkeypatch.setattr(product_module, "create_chat_model", lambda *args, **kwargs: object())
+    monkeypatch.setattr(
+        product_module,
+        "invoke_with_policy",
+        lambda *_args, **_kwargs: (
+            "工具失败达到阈值",
+            {
+                "stream_chunks": [],
+                "threshold_hit": True,
+                "threshold_reason": "工具失败达到阈值",
+            },
+        ),
+    )
+
+    step = _build_step(final_output=False)
+    state = _build_state(
+        routing={
+            "route_target": "coordinator_agent",
+            "next_nodes": ["product_agent"],
+            "current_step_map": {"product_agent": step},
+        },
+        plan=[step],
+    )
+    result = product_module.product_agent(state)
+    assert result["step_outputs"]["s1"]["status"] == "failed"
+    assert result["step_outputs"]["s1"]["error"] == "工具失败达到阈值"

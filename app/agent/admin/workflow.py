@@ -38,6 +38,7 @@ PLANNER_ROUTE_MAP = {
     "chart_agent": "chart_agent",
     "summary_agent": "summary_agent",
     "product_agent": "product_agent",
+    "chat_agent": "chat_agent",
     END: END,
 }
 
@@ -254,7 +255,8 @@ def _route_to_next_node(state: AgentState) -> str | list[str]:
     if not isinstance(raw_next_nodes, list):
         raw_next_nodes = []
 
-    next_nodes = [node for node in raw_next_nodes if node in EXECUTION_NODES]
+    allowed_nodes = set(EXECUTION_NODES) | {"chat_agent"}
+    next_nodes = [node for node in raw_next_nodes if node in allowed_nodes]
     if not next_nodes:
         return END
     if len(next_nodes) == 1:

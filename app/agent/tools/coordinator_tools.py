@@ -37,11 +37,25 @@ _COMMON_STEP_PARAMETERS = {
     "step_id": "步骤唯一标识，字符串，必须全局唯一。",
     "node_name": "节点名称，必须是可执行节点之一。",
     "task_description": "该步骤执行任务描述，建议写可执行动词和目标。",
-    "depends_on": "依赖步骤 step_id 数组；仅当依赖全部 completed 才会执行。",
+    "required_depends_on": "必选依赖步骤 step_id 数组；仅当依赖全部 completed 才会执行。",
+    "optional_depends_on": "可选依赖步骤 step_id 数组；允许失败/跳过，但需先进入终态后当前步骤才能执行。",
     "read_from": "读取上游输出的 step_id 数组；必须是当前步骤可达上游。",
     "include_user_input": "是否注入原始用户输入（默认 false）。",
     "include_chat_history": "是否注入历史 user/assistant 消息（默认 false）。",
     "final_output": "是否作为最终输出步骤（全计划必须且仅能一个 true）。",
+    "failure_policy": (
+        "步骤级失败策略（可选）。推荐："
+        "{mode: hybrid, error_marker_prefix: '__ERROR__:', "
+        "tool_error_counting: consecutive, max_tool_errors: 2, strict_data_quality: true}。"
+    ),
+}
+
+_DEFAULT_FAILURE_POLICY = {
+    "mode": "hybrid",
+    "error_marker_prefix": "__ERROR__:",
+    "tool_error_counting": "consecutive",
+    "max_tool_errors": 2,
+    "strict_data_quality": True,
 }
 
 _AGENT_DETAIL_CATALOG: dict[str, dict[str, Any]] = {
@@ -80,7 +94,7 @@ _AGENT_DETAIL_CATALOG: dict[str, dict[str, Any]] = {
             "recommended_downstream": ["product_agent", "chart_agent", "summary_agent"],
             "recommended_read_from": [],
             "notes": [
-                "通常作为数据起点步骤（depends_on=[]）。",
+                "通常作为数据起点步骤（required_depends_on=[]）。",
                 "若下游需要基于订单商品ID查商品，建议 product_agent read_from 当前步骤。",
             ],
         },
@@ -162,7 +176,7 @@ _AGENT_DETAIL_CATALOG: dict[str, dict[str, Any]] = {
             "recommended_read_from": ["order_agent", "product_agent", "chart_agent", "excel_agent"],
             "notes": [
                 "通常设置 final_output=true。",
-                "建议作为终点步骤，不再被其他步骤 depends_on。",
+                "建议作为终点步骤，不再被其他步骤 required/optional 依赖。",
             ],
         },
     },
@@ -188,51 +202,61 @@ _PLAN_EXAMPLES_BY_AGENT: dict[str, dict[str, Any]] = {
         "step_id": "s_order",
         "node_name": "order_agent",
         "task_description": "查询订单并提取关键字段",
-        "depends_on": [],
+        "required_depends_on": [],
+        "optional_depends_on": [],
         "read_from": [],
         "include_user_input": False,
         "include_chat_history": False,
         "final_output": False,
+        "failure_policy": _DEFAULT_FAILURE_POLICY,
     },
     "product_agent": {
         "step_id": "s_product",
         "node_name": "product_agent",
         "task_description": "基于订单中的商品ID查询商品详情",
-        "depends_on": ["s_order"],
+        "required_depends_on": ["s_order"],
+        "optional_depends_on": [],
         "read_from": ["s_order"],
         "include_user_input": False,
         "include_chat_history": False,
         "final_output": False,
+        "failure_policy": _DEFAULT_FAILURE_POLICY,
     },
     "chart_agent": {
         "step_id": "s_chart",
         "node_name": "chart_agent",
         "task_description": "根据订单与商品数据生成趋势图",
-        "depends_on": ["s_order", "s_product"],
+        "required_depends_on": ["s_product"],
+        "optional_depends_on": ["s_order"],
         "read_from": ["s_order", "s_product"],
         "include_user_input": False,
         "include_chat_history": False,
         "final_output": False,
+        "failure_policy": _DEFAULT_FAILURE_POLICY,
     },
     "summary_agent": {
         "step_id": "s_summary",
         "node_name": "summary_agent",
         "task_description": "汇总上游节点结果并输出最终结论",
-        "depends_on": ["s_product", "s_chart"],
+        "required_depends_on": ["s_product", "s_chart"],
+        "optional_depends_on": ["s_order"],
         "read_from": ["s_order", "s_product", "s_chart"],
         "include_user_input": False,
         "include_chat_history": False,
         "final_output": True,
+        "failure_policy": _DEFAULT_FAILURE_POLICY,
     },
     "excel_agent": {
         "step_id": "s_excel",
         "node_name": "excel_agent",
         "task_description": "导出上游数据为表格（占位示例）",
-        "depends_on": ["s_order"],
+        "required_depends_on": ["s_order"],
+        "optional_depends_on": [],
         "read_from": ["s_order"],
         "include_user_input": False,
         "include_chat_history": False,
         "final_output": False,
+        "failure_policy": _DEFAULT_FAILURE_POLICY,
     },
 }
 

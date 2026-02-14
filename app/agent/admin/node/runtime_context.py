@@ -3,7 +3,21 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from app.agent.admin.agent_state import AgentState, PlanStep, StepOutput
+from app.agent.admin.agent_state import AgentState, PlanStep, StepFailurePolicy, StepOutput
+
+_DEFAULT_FAILURE_POLICY: StepFailurePolicy = {
+    "mode": "hybrid",
+    "error_marker_prefix": "__ERROR__:",
+    "tool_error_counting": "consecutive",
+    "max_tool_errors": 2,
+    "strict_data_quality": True,
+}
+
+_STRICT_DATA_QUALITY_INSTRUCTION = (
+    "\n\n失败策略要求："
+    "\n- 当工具调用连续失败或关键数据不可信/不完整时，必须以 '__ERROR__:' 前缀输出错误原因。"
+    "\n- 若能确认数据可靠，再输出正常结果。"
+)
 
 
 def _is_coordinator_mode(state: AgentState | dict[str, Any]) -> bool:
@@ -84,7 +98,100 @@ def build_step_runtime(
         "user_input": user_input,
         "history_messages": history_messages,
         "final_output": bool(step.get("final_output")),
+        "failure_policy": resolve_failure_policy(step),
     }
+
+
+def resolve_failure_policy(step: PlanStep | dict[str, Any] | None) -> StepFailurePolicy:
+    """
+    解析步骤级失败策略，缺失时回退为系统默认值。
+    """
+    raw = (step or {}).get("failure_policy")
+    if not isinstance(raw, dict):
+        return dict(_DEFAULT_FAILURE_POLICY)
+
+    mode = str(raw.get("mode", _DEFAULT_FAILURE_POLICY["mode"])).strip().lower()
+    if mode not in {"hybrid", "marker_only", "tool_only"}:
+        mode = str(_DEFAULT_FAILURE_POLICY["mode"])
+
+    error_marker_prefix = str(
+        raw.get("error_marker_prefix", _DEFAULT_FAILURE_POLICY["error_marker_prefix"])
+    ).strip()
+    if not error_marker_prefix:
+        error_marker_prefix = str(_DEFAULT_FAILURE_POLICY["error_marker_prefix"])
+
+    tool_error_counting = str(
+        raw.get(
+            "tool_error_counting",
+            _DEFAULT_FAILURE_POLICY["tool_error_counting"],
+        )
+    ).strip().lower()
+    if tool_error_counting not in {"consecutive", "total"}:
+        tool_error_counting = str(_DEFAULT_FAILURE_POLICY["tool_error_counting"])
+
+    try:
+        max_tool_errors = int(raw.get("max_tool_errors", _DEFAULT_FAILURE_POLICY["max_tool_errors"]))
+    except (TypeError, ValueError):
+        max_tool_errors = int(_DEFAULT_FAILURE_POLICY["max_tool_errors"])
+    if max_tool_errors < 1 or max_tool_errors > 5:
+        max_tool_errors = int(_DEFAULT_FAILURE_POLICY["max_tool_errors"])
+
+    raw_strict_data_quality = raw.get(
+        "strict_data_quality", _DEFAULT_FAILURE_POLICY["strict_data_quality"]
+    )
+    if isinstance(raw_strict_data_quality, str):
+        strict_data_quality = raw_strict_data_quality.strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+    else:
+        strict_data_quality = bool(raw_strict_data_quality)
+
+    return {
+        "mode": mode,  # type: ignore[typeddict-item]
+        "error_marker_prefix": error_marker_prefix,
+        "tool_error_counting": tool_error_counting,  # type: ignore[typeddict-item]
+        "max_tool_errors": max_tool_errors,
+        "strict_data_quality": strict_data_quality,
+    }
+
+
+def evaluate_failure_by_policy(
+        content: str,
+        diagnostics: dict[str, Any] | None,
+        policy: StepFailurePolicy | dict[str, Any] | None,
+) -> tuple[str, str | None, str]:
+    """
+    根据策略判定步骤成功/失败，并返回标准化展示文本。
+
+    Returns:
+        (status, error_reason, normalized_text)
+    """
+    resolved = resolve_failure_policy(policy or {})
+    mode = str(resolved.get("mode") or "hybrid")
+    marker_prefix = str(resolved.get("error_marker_prefix") or "__ERROR__:")
+
+    normalized_text = str(content or "").strip()
+    marker_hit = bool(marker_prefix) and normalized_text.startswith(marker_prefix)
+    if marker_hit:
+        marker_reason = normalized_text[len(marker_prefix):].strip() or "模型返回错误标记。"
+        normalized_text = marker_reason
+        if mode in {"hybrid", "marker_only"}:
+            return "failed", marker_reason, normalized_text
+
+    diagnostics = diagnostics or {}
+    threshold_hit = bool(diagnostics.get("threshold_hit"))
+    if threshold_hit and mode in {"hybrid", "tool_only"}:
+        reason = str(diagnostics.get("threshold_reason") or "").strip()
+        if not reason:
+            reason = "工具失败次数达到阈值。"
+        if not normalized_text:
+            normalized_text = reason
+        return "failed", reason, normalized_text
+
+    return "completed", None, normalized_text
 
 
 def build_instruction_text(runtime: dict[str, Any]) -> str:
@@ -111,6 +218,21 @@ def build_instruction_text(runtime: dict[str, Any]) -> str:
         )
 
     return "\n\n".join(sections)
+
+
+def build_instruction_with_failure_policy(runtime: dict[str, Any]) -> str:
+    """
+    构建包含失败策略提示的 instruction 文本。
+
+    规则：
+    - 基础内容沿用 `build_instruction_text`（任务描述、上下文、上游输出）
+    - 当 strict_data_quality=true 时，追加统一失败策略提示
+    """
+    instruction = build_instruction_text(runtime)
+    failure_policy = runtime.get("failure_policy") or {}
+    if bool(failure_policy.get("strict_data_quality", True)):
+        instruction += _STRICT_DATA_QUALITY_INSTRUCTION
+    return instruction
 
 
 def build_step_output_update(

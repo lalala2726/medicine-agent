@@ -2,7 +2,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.agent.admin.agent_state import AgentState, PlanStep
+from app.agent.admin.agent_state import (
+    AgentState,
+    FallbackContext,
+    PlanStep,
+    StepFailurePolicy,
+)
 
 # coordinator 计划生成时按难度选择模型。
 _COORDINATOR_MODEL_BY_DIFFICULTY = {
@@ -25,6 +30,14 @@ _MAX_PLAN_STEPS_BY_DIFFICULTY = {
     "complex": 6,
 }
 
+_STEP_FAILURE_POLICY_DEFAULT: StepFailurePolicy = {
+    "mode": "hybrid",
+    "error_marker_prefix": "__ERROR__:",
+    "tool_error_counting": "consecutive",
+    "max_tool_errors": 2,
+    "strict_data_quality": True,
+}
+
 # planner 调度时允许下发执行的节点。
 EXECUTION_NODES = (
     "order_agent",
@@ -33,6 +46,77 @@ EXECUTION_NODES = (
     "summary_agent",
     "product_agent",
 )
+
+
+def _normalize_failure_policy(raw: Any) -> tuple[StepFailurePolicy, str]:
+    """
+    归一化并校验步骤级失败策略。
+
+    Args:
+        raw: 原始 failure_policy 输入。
+
+    Returns:
+        二元组 `(policy, reason)`：
+        - policy: 归一化后的策略（失败时为空字典）
+        - reason: 校验结果，`ok` 表示通过，否则为错误原因。
+    """
+    if raw is None:
+        return dict(_STEP_FAILURE_POLICY_DEFAULT), "ok"
+    if not isinstance(raw, dict):
+        return {}, "failure_policy 必须是对象。"
+
+    mode = str(raw.get("mode", _STEP_FAILURE_POLICY_DEFAULT["mode"])).strip().lower()
+    if mode not in {"hybrid", "marker_only", "tool_only"}:
+        return {}, f"failure_policy.mode 非法: {mode}。"
+
+    error_marker_prefix = str(
+        raw.get(
+            "error_marker_prefix",
+            _STEP_FAILURE_POLICY_DEFAULT["error_marker_prefix"],
+        )
+    ).strip()
+    if not error_marker_prefix:
+        return {}, "failure_policy.error_marker_prefix 不能为空。"
+
+    tool_error_counting = str(
+        raw.get(
+            "tool_error_counting",
+            _STEP_FAILURE_POLICY_DEFAULT["tool_error_counting"],
+        )
+    ).strip().lower()
+    if tool_error_counting not in {"consecutive", "total"}:
+        return {}, (
+            f"failure_policy.tool_error_counting 非法: {tool_error_counting}。"
+        )
+
+    raw_max_tool_errors = raw.get(
+        "max_tool_errors", _STEP_FAILURE_POLICY_DEFAULT["max_tool_errors"]
+    )
+    try:
+        max_tool_errors = int(raw_max_tool_errors)
+    except (TypeError, ValueError):
+        return {}, "failure_policy.max_tool_errors 必须是整数。"
+    if max_tool_errors < 1 or max_tool_errors > 5:
+        return {}, "failure_policy.max_tool_errors 必须在 1..5 范围内。"
+
+    strict_data_quality = _normalize_bool(
+        raw.get(
+            "strict_data_quality",
+            _STEP_FAILURE_POLICY_DEFAULT["strict_data_quality"],
+        ),
+        default=bool(_STEP_FAILURE_POLICY_DEFAULT["strict_data_quality"]),
+    )
+
+    return (
+        {
+            "mode": mode,  # type: ignore[typeddict-item]
+            "error_marker_prefix": error_marker_prefix,
+            "tool_error_counting": tool_error_counting,  # type: ignore[typeddict-item]
+            "max_tool_errors": max_tool_errors,
+            "strict_data_quality": strict_data_quality,
+        },
+        "ok",
+    )
 
 
 def select_model_by_difficulty(difficulty: str) -> str:
@@ -176,7 +260,7 @@ def _collect_ancestors(
 
     Args:
         node_id: 目标步骤 ID。
-        graph: 依赖图（step_id -> depends_on 列表）。
+        graph: 依赖图（step_id -> 依赖列表）。
         memo: 记忆化缓存，key 为 step_id，value 为其祖先集合。
 
     Returns:
@@ -201,9 +285,10 @@ def review_plan(plan: Any, difficulty: str) -> tuple[bool, list[PlanStep], str]:
     - 步骤结构与必填字段完整性
     - step_id 唯一性
     - 节点白名单
-    - depends_on/read_from 引用合法性
-    - DAG 无环
+    - required/optional 依赖引用合法性
+    - DAG 无环（required ∪ optional）
     - read_from 仅可读取可达上游
+    - failure_policy 字段合法性与默认补全
     - final_output 唯一且为终点
     - 步骤数不超过复杂度上限
 
@@ -234,6 +319,25 @@ def review_plan(plan: Any, difficulty: str) -> tuple[bool, list[PlanStep], str]:
     final_output_step_ids: list[str] = []
 
     for index, raw_step in enumerate(normalized_items, start=1):
+        required_keys = {
+            "step_id",
+            "node_name",
+            "task_description",
+            "required_depends_on",
+            "optional_depends_on",
+            "read_from",
+            "include_user_input",
+            "include_chat_history",
+            "final_output",
+        }
+        missing_keys = [key for key in required_keys if key not in raw_step]
+        if missing_keys:
+            return (
+                False,
+                [],
+                f"第{index}个步骤缺少必要字段: {missing_keys}。",
+            )
+
         step_id = str(raw_step.get("step_id") or "").strip()
         if not step_id:
             return False, [], f"第{index}个步骤缺少有效 step_id。"
@@ -253,12 +357,22 @@ def review_plan(plan: Any, difficulty: str) -> tuple[bool, list[PlanStep], str]:
         if not task_description:
             return False, [], f"步骤 {step_id} 缺少有效 task_description。"
 
-        depends_on = _normalize_str_list(raw_step.get("depends_on"))
+        required_depends_on = _normalize_str_list(raw_step.get("required_depends_on"))
+        optional_depends_on = _normalize_str_list(raw_step.get("optional_depends_on"))
         read_from = _normalize_str_list(raw_step.get("read_from"))
-        if step_id in depends_on:
-            return False, [], f"步骤 {step_id} 不能依赖自身。"
+        if step_id in required_depends_on:
+            return False, [], f"步骤 {step_id} 不能在 required_depends_on 中依赖自身。"
+        if step_id in optional_depends_on:
+            return False, [], f"步骤 {step_id} 不能在 optional_depends_on 中依赖自身。"
         if step_id in read_from:
             return False, [], f"步骤 {step_id} 不能读取自身。"
+        overlap = set(required_depends_on) & set(optional_depends_on)
+        if overlap:
+            return (
+                False,
+                [],
+                f"步骤 {step_id} 的 required_depends_on 与 optional_depends_on 存在重复依赖: {sorted(overlap)}。",
+            )
 
         include_user_input = _normalize_bool(
             raw_step.get("include_user_input"), default=False
@@ -269,17 +383,24 @@ def review_plan(plan: Any, difficulty: str) -> tuple[bool, list[PlanStep], str]:
         final_output = _normalize_bool(raw_step.get("final_output"), default=False)
         if final_output:
             final_output_step_ids.append(step_id)
+        failure_policy, policy_reason = _normalize_failure_policy(
+            raw_step.get("failure_policy")
+        )
+        if policy_reason != "ok":
+            return False, [], f"步骤 {step_id} 的 {policy_reason}"
 
         normalized_plan.append(
             {
                 "step_id": step_id,
                 "node_name": node_name,
                 "task_description": task_description,
-                "depends_on": depends_on,
+                "required_depends_on": required_depends_on,
+                "optional_depends_on": optional_depends_on,
                 "read_from": read_from,
                 "include_user_input": include_user_input,
                 "include_chat_history": include_chat_history,
                 "final_output": final_output,
+                "failure_policy": failure_policy,
             }
         )
 
@@ -290,17 +411,29 @@ def review_plan(plan: Any, difficulty: str) -> tuple[bool, list[PlanStep], str]:
     dependency_graph: dict[str, list[str]] = {}
     for step in normalized_plan:
         step_id = str(step["step_id"])
-        depends_on = list(step.get("depends_on") or [])
+        required_depends_on = list(step.get("required_depends_on") or [])
+        optional_depends_on = list(step.get("optional_depends_on") or [])
         read_from = list(step.get("read_from") or [])
 
-        for dependency_id in depends_on:
+        for dependency_id in required_depends_on:
             if dependency_id not in step_id_set:
-                return False, [], f"步骤 {step_id} 的 depends_on 引用了不存在的步骤 {dependency_id}。"
+                return (
+                    False,
+                    [],
+                    f"步骤 {step_id} 的 required_depends_on 引用了不存在的步骤 {dependency_id}。",
+                )
+        for dependency_id in optional_depends_on:
+            if dependency_id not in step_id_set:
+                return (
+                    False,
+                    [],
+                    f"步骤 {step_id} 的 optional_depends_on 引用了不存在的步骤 {dependency_id}。",
+                )
         for read_id in read_from:
             if read_id not in step_id_set:
                 return False, [], f"步骤 {step_id} 的 read_from 引用了不存在的步骤 {read_id}。"
 
-        dependency_graph[step_id] = depends_on
+        dependency_graph[step_id] = required_depends_on + optional_depends_on
 
     if _has_cycle(dependency_graph):
         return False, [], "plan 存在循环依赖。"
@@ -319,7 +452,9 @@ def review_plan(plan: Any, difficulty: str) -> tuple[bool, list[PlanStep], str]:
 
     final_step_id = final_output_step_ids[0]
     for step in normalized_plan:
-        if final_step_id in (step.get("depends_on") or []):
+        if final_step_id in (step.get("required_depends_on") or []) or final_step_id in (
+                step.get("optional_depends_on") or []
+        ):
             return (
                 False,
                 [],
@@ -345,7 +480,9 @@ def build_retry_feedback(reason: str) -> str:
         "上一次生成的 plan 未通过系统校验，原因："
         f"{reason}。\n"
         "请重新生成完整 JSON（仅包含 plan），并严格遵守新 DAG 字段："
-        "step_id/depends_on/read_from/include_user_input/include_chat_history/final_output。"
+        "step_id/required_depends_on/optional_depends_on/read_from/"
+        "include_user_input/include_chat_history/final_output/"
+        "failure_policy。"
     )
 
 
@@ -422,6 +559,81 @@ def _build_skipped_step_output(
     }
 
 
+def _build_terminated_step_output(step: PlanStep, *, reason: str) -> dict[str, Any]:
+    """
+    构造 fallback 终止时的 skipped 输出。
+    """
+    step_id = str(step.get("step_id") or "")
+    node_name = str(step.get("node_name") or "")
+    message = f"步骤 {step_id} 未执行：{reason}"
+    return {
+        "step_id": step_id,
+        "node_name": node_name,
+        "status": "skipped",
+        "text": message,
+        "output": {},
+        "error": message,
+    }
+
+
+def _build_fallback_context(
+        *,
+        ordered_step_ids: list[str],
+        step_by_id: dict[str, PlanStep],
+        status_by_id: dict[str, str],
+        step_outputs: dict[str, Any],
+        final_step_id: str,
+) -> FallbackContext:
+    """
+    构造 planner -> chat 兜底输出所需上下文。
+    """
+    failed_steps: list[dict[str, Any]] = []
+    partial_results: list[dict[str, Any]] = []
+    for step_id in ordered_step_ids:
+        status = status_by_id.get(step_id)
+        if not status:
+            continue
+        payload = step_outputs.get(step_id) or {}
+        step = step_by_id.get(step_id) or {}
+        node_name = str(payload.get("node_name") or step.get("node_name") or "")
+        if status in {"failed", "skipped"}:
+            error = str(payload.get("error") or payload.get("text") or "").strip()
+            failed_steps.append(
+                {
+                    "step_id": step_id,
+                    "node_name": node_name,
+                    "status": status,
+                    "error": error,
+                }
+            )
+        elif status == "completed":
+            text = str(payload.get("text") or "").strip()
+            if text:
+                partial_results.append(
+                    {
+                        "step_id": step_id,
+                        "node_name": node_name,
+                        "text": text,
+                    }
+                )
+
+    final_status = status_by_id.get(final_step_id)
+    if final_status == "failed":
+        reason_text = f"最终步骤 {final_step_id} 执行失败。"
+    elif final_status == "skipped":
+        reason_text = f"最终步骤 {final_step_id} 因必选依赖失败不可达。"
+    else:
+        reason_text = f"最终步骤 {final_step_id} 不可达。"
+
+    return {
+        "trigger": "final_output_unreachable",
+        "final_step_id": final_step_id,
+        "failed_steps": failed_steps,
+        "partial_results": partial_results,
+        "reason_text": reason_text,
+    }
+
+
 def compute_planner_update(state: AgentState) -> dict[str, Any]:
     """
     计算 planner 每一轮的路由更新结果（纯规则函数，无图执行副作用）。
@@ -454,15 +666,19 @@ def compute_planner_update(state: AgentState) -> dict[str, Any]:
         routing["current_step_ids"] = []
         routing["current_step_map"] = {}
         routing["is_final_stage"] = False
+        routing.pop("fallback_context", None)
         return {"routing": routing}
 
     step_by_id: dict[str, PlanStep] = {}
     ordered_step_ids: list[str] = []
+    final_step_id = ""
     for step in plan_steps:
         step_id = str(step.get("step_id") or "").strip()
         if step_id and step_id not in step_by_id:
             step_by_id[step_id] = step
             ordered_step_ids.append(step_id)
+            if not final_step_id and bool(step.get("final_output")):
+                final_step_id = step_id
 
     raw_step_outputs = state.get("step_outputs") or {}
     step_outputs = raw_step_outputs if isinstance(raw_step_outputs, dict) else {}
@@ -477,7 +693,7 @@ def compute_planner_update(state: AgentState) -> dict[str, Any]:
     blocked_ids: set[str] = set()
     blocked_reasons: dict[str, list[str]] = {}
     changed = True
-    # 传播阻断直到收敛：A 失败导致 B 阻断，B 阻断继续导致 C 阻断。
+    # 传播阻断仅沿 required_depends_on：必选依赖失败才会阻断下游。
     while changed:
         changed = False
         failed_pool = failed_or_skipped_ids | blocked_ids
@@ -485,10 +701,10 @@ def compute_planner_update(state: AgentState) -> dict[str, Any]:
             if step_id in terminal_ids or step_id in blocked_ids:
                 continue
             step = step_by_id.get(step_id) or {}
-            depends_on = [
-                dep for dep in (step.get("depends_on") or []) if isinstance(dep, str)
+            required_deps = [
+                dep for dep in (step.get("required_depends_on") or []) if isinstance(dep, str)
             ]
-            failed_dependencies = [dep for dep in depends_on if dep in failed_pool]
+            failed_dependencies = [dep for dep in required_deps if dep in failed_pool]
             if failed_dependencies:
                 blocked_ids.add(step_id)
                 blocked_reasons[step_id] = failed_dependencies
@@ -504,20 +720,86 @@ def compute_planner_update(state: AgentState) -> dict[str, Any]:
             failed_dependencies=blocked_reasons.get(blocked_step_id, []),
         )
 
+    # 合并本轮新阻断后的状态，供 optional 终态等待和 fallback 判定。
+    status_after_block = dict(status_by_id)
+    for blocked_step_id in blocked_updates:
+        status_after_block[blocked_step_id] = "skipped"
+    completed_after_block = {
+        sid for sid, status in status_after_block.items() if status == "completed"
+    }
+    terminal_after_block = set(status_after_block.keys())
+
+    # final 不可达/失败时，立即切换到 chat fallback。
+    final_status = status_after_block.get(final_step_id) if final_step_id else None
+    should_fallback = final_status in {"failed", "skipped"}
+    fallback_reason = "已进入兜底回答流程，当前步骤不再执行。"
+
+    fallback_updates: dict[str, Any] = {}
+    if should_fallback:
+        for step_id in ordered_step_ids:
+            if step_id in terminal_after_block:
+                continue
+            step = step_by_id.get(step_id) or {}
+            fallback_updates[step_id] = _build_terminated_step_output(
+                step,
+                reason=fallback_reason,
+            )
+        step_outputs_for_fallback = dict(step_outputs)
+        step_outputs_for_fallback.update(blocked_updates)
+        step_outputs_for_fallback.update(fallback_updates)
+        status_for_fallback = _extract_status(step_outputs_for_fallback)
+        routing["fallback_context"] = _build_fallback_context(
+            ordered_step_ids=ordered_step_ids,
+            step_by_id=step_by_id,
+            status_by_id=status_for_fallback,
+            step_outputs=step_outputs_for_fallback,
+            final_step_id=final_step_id,
+        )
+        routing["next_nodes"] = ["chat_agent"]
+        routing["next_step_ids"] = []
+        routing["current_step_ids"] = []
+        routing["current_step_map"] = {}
+        routing["completed_step_ids"] = [
+            sid for sid in ordered_step_ids if status_for_fallback.get(sid) == "completed"
+        ]
+        routing["blocked_step_ids"] = [
+            sid for sid in ordered_step_ids if status_for_fallback.get(sid) == "skipped"
+        ]
+        routing["is_final_stage"] = False
+        try:
+            stage_index = int(routing.get("stage_index", 0))
+        except (TypeError, ValueError):
+            stage_index = 0
+        routing["stage_index"] = stage_index + 1
+
+        merged_updates = dict(blocked_updates)
+        merged_updates.update(fallback_updates)
+        result: dict[str, Any] = {"routing": routing}
+        if merged_updates:
+            result["step_outputs"] = merged_updates
+        return result
+
     ready_steps: list[PlanStep] = []
     used_nodes: set[str] = set()
-    terminal_or_blocked = terminal_ids | blocked_ids
     # 按计划顺序挑选 ready 步骤，保证执行顺序稳定可预测。
     for step_id in ordered_step_ids:
-        if step_id in terminal_or_blocked:
+        if step_id in terminal_after_block:
             continue
         step = step_by_id.get(step_id) or {}
         node_name = str(step.get("node_name") or "").strip()
         if node_name not in EXECUTION_NODES:
             continue
 
-        depends_on = [dep for dep in (step.get("depends_on") or []) if isinstance(dep, str)]
-        if not all(dep in completed_ids for dep in depends_on):
+        required_deps = [
+            dep for dep in (step.get("required_depends_on") or []) if isinstance(dep, str)
+        ]
+        optional_deps = [
+            dep for dep in (step.get("optional_depends_on") or []) if isinstance(dep, str)
+        ]
+        if not all(dep in completed_after_block for dep in required_deps):
+            continue
+        # optional 依赖失败可继续，但必须进入终态后才能执行当前步骤。
+        if not all(dep in terminal_after_block for dep in optional_deps):
             continue
         if node_name in used_nodes:
             continue
@@ -535,12 +817,13 @@ def compute_planner_update(state: AgentState) -> dict[str, Any]:
     blocked_step_ids = [
         step_id
         for step_id in ordered_step_ids
-        if status_by_id.get(step_id) == "skipped" or step_id in blocked_ids
+        if status_after_block.get(step_id) == "skipped"
     ]
     completed_step_ids = [
-        step_id for step_id in ordered_step_ids if status_by_id.get(step_id) == "completed"
+        step_id for step_id in ordered_step_ids if status_after_block.get(step_id) == "completed"
     ]
 
+    routing.pop("fallback_context", None)
     routing["next_nodes"] = next_nodes
     routing["next_step_ids"] = next_step_ids
     routing["current_step_ids"] = next_step_ids
@@ -555,7 +838,7 @@ def compute_planner_update(state: AgentState) -> dict[str, Any]:
         stage_index = 0
     routing["stage_index"] = stage_index + 1
 
-    result: dict[str, Any] = {"routing": routing}
+    result = {"routing": routing}
     if blocked_updates:
         result["step_outputs"] = blocked_updates
     return result

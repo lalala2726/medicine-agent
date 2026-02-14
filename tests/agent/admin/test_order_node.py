@@ -37,7 +37,8 @@ def _build_step(final_output: bool) -> dict:
         "step_id": "s1",
         "node_name": "order_agent",
         "task_description": "处理订单",
-        "depends_on": [],
+        "required_depends_on": [],
+        "optional_depends_on": [],
         "read_from": [],
         "include_user_input": False,
         "include_chat_history": False,
@@ -168,3 +169,55 @@ def test_order_agent_status_visible_when_route_is_coordinator(monkeypatch):
             "content": {"node": "order", "state": "end"},
         },
     ]
+
+
+def test_order_agent_marks_failed_when_model_returns_error_marker(monkeypatch):
+    monkeypatch.setattr(order_module, "create_chat_model", lambda *args, **kwargs: object())
+    monkeypatch.setattr(
+        order_module,
+        "invoke_with_policy",
+        lambda *_args, **_kwargs: ("__ERROR__: 订单数据不可信", {"stream_chunks": []}),
+    )
+
+    step = _build_step(final_output=False)
+    state = _build_state(
+        routing={
+            "route_target": "coordinator_agent",
+            "next_nodes": ["order_agent"],
+            "current_step_map": {"order_agent": step},
+        },
+        plan=[step],
+    )
+    result = order_module.order_agent(state)
+    assert result["step_outputs"]["s1"]["status"] == "failed"
+    assert result["step_outputs"]["s1"]["error"] == "订单数据不可信"
+    assert result["order_context"]["result"]["content"] == "订单数据不可信"
+
+
+def test_order_agent_marks_failed_when_tool_threshold_hit(monkeypatch):
+    monkeypatch.setattr(order_module, "create_chat_model", lambda *args, **kwargs: object())
+    monkeypatch.setattr(
+        order_module,
+        "invoke_with_policy",
+        lambda *_args, **_kwargs: (
+            "工具失败达到阈值",
+            {
+                "stream_chunks": [],
+                "threshold_hit": True,
+                "threshold_reason": "工具失败达到阈值",
+            },
+        ),
+    )
+
+    step = _build_step(final_output=False)
+    state = _build_state(
+        routing={
+            "route_target": "coordinator_agent",
+            "next_nodes": ["order_agent"],
+            "current_step_map": {"order_agent": step},
+        },
+        plan=[step],
+    )
+    result = order_module.order_agent(state)
+    assert result["step_outputs"]["s1"]["status"] == "failed"
+    assert result["step_outputs"]["s1"]["error"] == "工具失败达到阈值"

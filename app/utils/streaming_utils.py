@@ -43,6 +43,21 @@ from app.core.assistant_status import emit_function_call, resolve_tool_call_mess
 MAX_TOOL_ROUNDS = 5
 
 
+def _empty_policy_diagnostics() -> dict[str, Any]:
+    """
+    返回失败策略判定使用的空诊断结构。
+    """
+    return {
+        "tool_calls": 0,
+        "tool_errors_total": 0,
+        "tool_errors_consecutive_peak": 0,
+        "threshold_hit": False,
+        "threshold_reason": "",
+        "tool_error_messages": [],
+        "stream_chunks": [],
+    }
+
+
 def _is_tool_log_enabled() -> bool:
     """
     检查是否启用工具调用日志。
@@ -200,6 +215,55 @@ def invoke_with_optional_stream(
     return content, stream_chunks
 
 
+def invoke_with_policy(
+        llm: Any,
+        messages: list[Any],
+        *,
+        tools: Optional[Sequence[Any]] = None,
+        enable_stream: bool = False,
+        max_tool_rounds: int = MAX_TOOL_ROUNDS,
+        error_marker_prefix: str = "__ERROR__:",
+        tool_error_counting: str = "consecutive",
+        max_tool_errors: int = 2,
+) -> tuple[str, dict[str, Any]]:
+    """
+    带失败策略诊断的统一调用入口。
+
+    说明：
+    - 保持对旧接口 `invoke`/`invoke_with_optional_stream` 的兼容；
+    - 新增诊断输出，供节点按步骤失败策略判定 `completed/failed`。
+
+    Returns:
+        二元组 `(content, diagnostics)`。
+    """
+    diagnostics = _empty_policy_diagnostics()
+    if enable_stream:
+        stream_chunks: list[str] = []
+        llm_for_stream = llm.bind_tools(tools) if tools else llm
+        stream_fn = getattr(llm_for_stream, "stream", None)
+        if callable(stream_fn):
+            for chunk in stream_fn(messages):
+                text = extract_text(chunk)
+                if text:
+                    stream_chunks.append(text)
+        if stream_chunks:
+            diagnostics["stream_chunks"] = stream_chunks
+            return "".join(stream_chunks), diagnostics
+
+    if tools:
+        return _invoke_with_tools_with_diagnostics(
+            llm,
+            messages,
+            tools,
+            max_tool_rounds,
+            error_marker_prefix=error_marker_prefix,
+            tool_error_counting=tool_error_counting,
+            max_tool_errors=max_tool_errors,
+        )
+
+    return invoke(llm, messages, tools=None, max_tool_rounds=max_tool_rounds), diagnostics
+
+
 def _invoke_with_tools(
         llm: Any,
         messages: list[Any],
@@ -224,9 +288,39 @@ def _invoke_with_tools(
     Returns:
         str: LLM 最终生成的文本
     """
+    content, _ = _invoke_with_tools_with_diagnostics(
+        llm,
+        messages,
+        tools,
+        max_rounds,
+    )
+    return content
+
+
+def _invoke_with_tools_with_diagnostics(
+        llm: Any,
+        messages: list[Any],
+        tools: Sequence[Any],
+        max_rounds: int,
+        *,
+        error_marker_prefix: str = "__ERROR__:",
+        tool_error_counting: str = "consecutive",
+        max_tool_errors: int = 2,
+) -> tuple[str, dict[str, Any]]:
+    """
+    带工具诊断信息的同步 Agent 执行。
+    """
     llm_with_tools = llm.bind_tools(tools)
     tool_map = {t.name: t for t in tools}
     log_enabled = _is_tool_log_enabled()
+
+    diagnostics = _empty_policy_diagnostics()
+    tool_errors_consecutive = 0
+
+    def _threshold_reached() -> bool:
+        if tool_error_counting == "total":
+            return int(diagnostics["tool_errors_total"]) >= max_tool_errors
+        return tool_errors_consecutive >= max_tool_errors
 
     for round_idx in range(max_rounds):
         # 同步调用 — 保持 LangGraph 上下文，支持 token 流式拦截
@@ -237,7 +331,7 @@ def _invoke_with_tools(
         if not tool_calls:
             if log_enabled:
                 logger.info("第 {} 轮无工具调用，返回最终结果", round_idx + 1)
-            return extract_text(response)
+            return extract_text(response), diagnostics
 
         if log_enabled:
             logger.info(
@@ -245,13 +339,34 @@ def _invoke_with_tools(
             )
 
         for tc in tool_calls:
-            result = _exec_tool(tc, tool_map, log_enabled)
+            diagnostics["tool_calls"] = int(diagnostics["tool_calls"]) + 1
+            result, is_error, error_message = _exec_tool_with_meta(tc, tool_map, log_enabled)
             messages.append(ToolMessage(content=result, tool_call_id=tc["id"]))
+            if is_error:
+                diagnostics["tool_errors_total"] = int(diagnostics["tool_errors_total"]) + 1
+                tool_errors_consecutive += 1
+                diagnostics["tool_errors_consecutive_peak"] = max(
+                    int(diagnostics["tool_errors_consecutive_peak"]),
+                    tool_errors_consecutive,
+                )
+                if error_message:
+                    diagnostics["tool_error_messages"].append(error_message)
+            else:
+                tool_errors_consecutive = 0
+
+            if _threshold_reached():
+                diagnostics["threshold_hit"] = True
+                reason = (
+                    f"工具失败达到阈值（counting={tool_error_counting}, "
+                    f"max_tool_errors={max_tool_errors}）。"
+                )
+                diagnostics["threshold_reason"] = reason
+                return f"{error_marker_prefix} {reason}", diagnostics
 
     if log_enabled:
         logger.warning("达到最大工具调用轮次 ({})，生成最终响应", max_rounds)
     final = llm_with_tools.invoke(messages)
-    return extract_text(final)
+    return extract_text(final), diagnostics
 
 
 def _run_async(coro: Any) -> Any:
@@ -300,6 +415,21 @@ def _exec_tool(
     Returns:
         str: JSON 格式的执行结果或错误信息
     """
+    result, _, _ = _exec_tool_with_meta(tool_call, tool_map, log_enabled)
+    return result
+
+
+def _exec_tool_with_meta(
+        tool_call: dict,
+        tool_map: dict[str, Any],
+        log_enabled: bool | None = None,
+) -> tuple[str, bool, str]:
+    """
+    执行单个工具调用并返回执行诊断元信息。
+
+    Returns:
+        (result_text, is_error, error_message)
+    """
     name = tool_call["name"]
     args = tool_call.get("args", {})
     tool_fn = tool_map.get(name)
@@ -324,7 +454,7 @@ def _exec_tool(
         )
         if log_enabled:
             logger.warning("未知工具: {}", name)
-        return json.dumps({"error": unknown_message}, ensure_ascii=False)
+        return json.dumps({"error": unknown_message}, ensure_ascii=False), True, unknown_message
 
     if log_enabled:
         logger.info("工具调用: name={} args={}", name, args)
@@ -337,12 +467,16 @@ def _exec_tool(
                 name,
                 json.dumps(result, ensure_ascii=False, default=str)[:500],
             )
-        return (
+        result_text = (
             json.dumps(result, ensure_ascii=False, default=str)
             if isinstance(result, (dict, list))
             else str(result)
         )
+        is_error = isinstance(result, dict) and "error" in result
+        error_message = str(result.get("error") or "").strip() if isinstance(result, dict) else ""
+        return result_text, is_error, error_message
     except Exception as exc:
         if log_enabled:
             logger.error("工具执行失败: name={} error={}", name, exc)
-        return json.dumps({"error": f"工具执行失败: {name}, {exc}"}, ensure_ascii=False)
+        message = f"工具执行失败: {name}, {exc}"
+        return json.dumps({"error": message}, ensure_ascii=False), True, message

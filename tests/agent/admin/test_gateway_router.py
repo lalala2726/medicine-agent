@@ -108,7 +108,8 @@ def _valid_plan() -> list[dict]:
             "step_id": "s1",
             "node_name": "order_agent",
             "task_description": "查询订单",
-            "depends_on": [],
+            "required_depends_on": [],
+            "optional_depends_on": [],
             "read_from": [],
             "include_user_input": False,
             "include_chat_history": False,
@@ -118,7 +119,8 @@ def _valid_plan() -> list[dict]:
             "step_id": "s2",
             "node_name": "summary_agent",
             "task_description": "输出结论",
-            "depends_on": ["s1"],
+            "required_depends_on": ["s1"],
+            "optional_depends_on": [],
             "read_from": ["s1"],
             "include_user_input": False,
             "include_chat_history": False,
@@ -162,6 +164,8 @@ def test_review_plan_accepts_valid_dag():
     assert reason == "ok"
     assert len(normalized) == 2
     assert normalized[1]["final_output"] is True
+    assert normalized[0]["failure_policy"]["mode"] == "hybrid"
+    assert normalized[0]["failure_policy"]["error_marker_prefix"] == "__ERROR__:"
 
 
 def test_review_plan_rejects_coordinator_node_name():
@@ -175,7 +179,7 @@ def test_review_plan_rejects_coordinator_node_name():
 
 def test_review_plan_rejects_cycle():
     bad = _valid_plan()
-    bad[0]["depends_on"] = ["s2"]
+    bad[0]["required_depends_on"] = ["s2"]
     is_valid, _, reason = dag_rules_module.review_plan(bad, "medium")
     assert is_valid is False
     assert "循环依赖" in reason
@@ -183,10 +187,36 @@ def test_review_plan_rejects_cycle():
 
 def test_review_plan_rejects_missing_dependency():
     bad = _valid_plan()
-    bad[1]["depends_on"] = ["missing"]
+    bad[1]["required_depends_on"] = ["missing"]
     is_valid, _, reason = dag_rules_module.review_plan(bad, "medium")
     assert is_valid is False
     assert "不存在" in reason
+
+
+def test_review_plan_rejects_old_depends_on_schema():
+    bad = _valid_plan()
+    bad[1].pop("required_depends_on", None)
+    bad[1].pop("optional_depends_on", None)
+    bad[1]["depends_on"] = ["s1"]
+    is_valid, _, reason = dag_rules_module.review_plan(bad, "medium")
+    assert is_valid is False
+    assert "required_depends_on" in reason
+
+
+def test_review_plan_rejects_overlap_between_required_and_optional():
+    bad = _valid_plan()
+    bad[1]["optional_depends_on"] = ["s1"]
+    is_valid, _, reason = dag_rules_module.review_plan(bad, "medium")
+    assert is_valid is False
+    assert "存在重复依赖" in reason
+
+
+def test_review_plan_rejects_missing_optional_dependency():
+    bad = _valid_plan()
+    bad[1]["optional_depends_on"] = ["missing"]
+    is_valid, _, reason = dag_rules_module.review_plan(bad, "medium")
+    assert is_valid is False
+    assert "optional_depends_on 引用了不存在的步骤" in reason
 
 
 def test_review_plan_rejects_illegal_read_from():
@@ -195,7 +225,8 @@ def test_review_plan_rejects_illegal_read_from():
             "step_id": "s1",
             "node_name": "order_agent",
             "task_description": "查询订单",
-            "depends_on": [],
+            "required_depends_on": [],
+            "optional_depends_on": [],
             "read_from": [],
             "include_user_input": False,
             "include_chat_history": False,
@@ -205,7 +236,8 @@ def test_review_plan_rejects_illegal_read_from():
             "step_id": "s2",
             "node_name": "product_agent",
             "task_description": "查商品",
-            "depends_on": [],
+            "required_depends_on": [],
+            "optional_depends_on": [],
             "read_from": ["s1"],
             "include_user_input": False,
             "include_chat_history": False,
@@ -232,7 +264,8 @@ def test_review_plan_rejects_final_output_as_dependency():
             "step_id": "s3",
             "node_name": "chart_agent",
             "task_description": "画图",
-            "depends_on": ["s2"],
+            "required_depends_on": ["s2"],
+            "optional_depends_on": [],
             "read_from": ["s2"],
             "include_user_input": False,
             "include_chat_history": False,
@@ -244,6 +277,47 @@ def test_review_plan_rejects_final_output_as_dependency():
     assert "不能被其他步骤依赖" in reason
 
 
+def test_review_plan_accepts_valid_failure_policy_override():
+    plan = _valid_plan()
+    plan[0]["failure_policy"] = {
+        "mode": "tool_only",
+        "error_marker_prefix": "__ERROR__:",
+        "tool_error_counting": "total",
+        "max_tool_errors": 3,
+        "strict_data_quality": False,
+    }
+    is_valid, normalized, reason = dag_rules_module.review_plan(plan, "medium")
+    assert is_valid is True
+    assert reason == "ok"
+    assert normalized[0]["failure_policy"]["mode"] == "tool_only"
+    assert normalized[0]["failure_policy"]["tool_error_counting"] == "total"
+    assert normalized[0]["failure_policy"]["max_tool_errors"] == 3
+
+
+def test_review_plan_rejects_invalid_failure_policy_mode():
+    plan = _valid_plan()
+    plan[0]["failure_policy"] = {"mode": "bad_mode"}
+    is_valid, _, reason = dag_rules_module.review_plan(plan, "medium")
+    assert is_valid is False
+    assert "failure_policy.mode 非法" in reason
+
+
+def test_review_plan_rejects_invalid_failure_policy_counting():
+    plan = _valid_plan()
+    plan[0]["failure_policy"] = {"tool_error_counting": "bad_count"}
+    is_valid, _, reason = dag_rules_module.review_plan(plan, "medium")
+    assert is_valid is False
+    assert "failure_policy.tool_error_counting 非法" in reason
+
+
+def test_review_plan_rejects_invalid_failure_policy_threshold():
+    plan = _valid_plan()
+    plan[0]["failure_policy"] = {"max_tool_errors": 0}
+    is_valid, _, reason = dag_rules_module.review_plan(plan, "medium")
+    assert is_valid is False
+    assert "max_tool_errors 必须在 1..5" in reason
+
+
 def test_coordinator_retries_when_plan_review_fails(monkeypatch: pytest.MonkeyPatch):
     call_count = {"value": 0}
     invalid_payload = json.dumps(
@@ -253,7 +327,8 @@ def test_coordinator_retries_when_plan_review_fails(monkeypatch: pytest.MonkeyPa
                     "step_id": "s1",
                     "node_name": "coordinator_agent",
                     "task_description": "bad",
-                    "depends_on": [],
+                    "required_depends_on": [],
+                    "optional_depends_on": [],
                     "read_from": [],
                     "include_user_input": False,
                     "include_chat_history": False,
@@ -311,7 +386,8 @@ def test_planner_returns_ready_nodes_with_parallel_support():
             "step_id": "s1",
             "node_name": "order_agent",
             "task_description": "查订单",
-            "depends_on": [],
+            "required_depends_on": [],
+            "optional_depends_on": [],
             "read_from": [],
             "include_user_input": False,
             "include_chat_history": False,
@@ -321,7 +397,8 @@ def test_planner_returns_ready_nodes_with_parallel_support():
             "step_id": "s2",
             "node_name": "product_agent",
             "task_description": "查商品",
-            "depends_on": [],
+            "required_depends_on": [],
+            "optional_depends_on": [],
             "read_from": [],
             "include_user_input": False,
             "include_chat_history": False,
@@ -331,7 +408,8 @@ def test_planner_returns_ready_nodes_with_parallel_support():
             "step_id": "s3",
             "node_name": "summary_agent",
             "task_description": "汇总",
-            "depends_on": ["s1", "s2"],
+            "required_depends_on": ["s1", "s2"],
+            "optional_depends_on": [],
             "read_from": ["s1", "s2"],
             "include_user_input": False,
             "include_chat_history": False,
@@ -364,7 +442,8 @@ def test_planner_blocks_downstream_when_dependency_failed():
             "step_id": "s1",
             "node_name": "order_agent",
             "task_description": "查订单",
-            "depends_on": [],
+            "required_depends_on": [],
+            "optional_depends_on": [],
             "read_from": [],
             "include_user_input": False,
             "include_chat_history": False,
@@ -374,7 +453,8 @@ def test_planner_blocks_downstream_when_dependency_failed():
             "step_id": "s2",
             "node_name": "summary_agent",
             "task_description": "汇总",
-            "depends_on": ["s1"],
+            "required_depends_on": ["s1"],
+            "optional_depends_on": [],
             "read_from": ["s1"],
             "include_user_input": False,
             "include_chat_history": False,
@@ -389,6 +469,7 @@ def test_planner_blocks_downstream_when_dependency_failed():
         )
     )
     routing = result["routing"]
-    assert routing["next_nodes"] == []
+    assert routing["next_nodes"] == ["chat_agent"]
+    assert routing["fallback_context"]["trigger"] == "final_output_unreachable"
     assert "s2" in routing["blocked_step_ids"]
     assert result["step_outputs"]["s2"]["status"] == "skipped"

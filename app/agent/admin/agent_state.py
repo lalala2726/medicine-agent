@@ -25,6 +25,39 @@ class StepOutput(TypedDict, total=False):
     error: str
 
 
+class FallbackFailedStep(TypedDict, total=False):
+    """
+    fallback 场景下的失败步骤信息。
+    """
+
+    step_id: str
+    node_name: str
+    status: Literal["failed", "skipped"]
+    error: str
+
+
+class FallbackPartialResult(TypedDict, total=False):
+    """
+    fallback 场景下可用于对用户展示的部分成功结果。
+    """
+
+    step_id: str
+    node_name: str
+    text: str
+
+
+class FallbackContext(TypedDict, total=False):
+    """
+    planner 触发兜底 chat 时写入的上下文。
+    """
+
+    trigger: Literal["final_output_unreachable"]
+    final_step_id: str
+    failed_steps: List[FallbackFailedStep]
+    partial_results: List[FallbackPartialResult]
+    reason_text: str
+
+
 def _merge_step_outputs(
         left: dict[str, StepOutput] | None,
         right: dict[str, StepOutput] | None,
@@ -97,6 +130,32 @@ class ProductContext(TypedDict, total=False):
     status: str
 
 
+class StepFailurePolicy(TypedDict, total=False):
+    """
+    单步骤失败判定策略。
+    """
+
+    # 失败判定模式：
+    # - hybrid: 哨兵与工具阈值任一命中即失败
+    # - marker_only: 仅哨兵命中失败
+    # - tool_only: 仅工具阈值命中失败
+    mode: Literal["hybrid", "marker_only", "tool_only"]
+
+    # 模型错误哨兵前缀（命中即判定失败）
+    error_marker_prefix: str
+
+    # 工具失败计数方式：
+    # - consecutive: 连续失败计数
+    # - total: 累计失败计数
+    tool_error_counting: Literal["consecutive", "total"]
+
+    # 工具失败阈值，达到即判失败（范围由规则层校验）
+    max_tool_errors: int
+
+    # 是否启用严格数据质量要求（用于提示词约束）
+    strict_data_quality: bool
+
+
 class PlanStep(TypedDict, total=False):
     """
     单个执行步骤
@@ -108,8 +167,11 @@ class PlanStep(TypedDict, total=False):
     # 执行节点名称
     node_name: str
 
-    # 依赖步骤 ID
-    depends_on: list[str]
+    # 必选依赖步骤 ID（必须 completed）
+    required_depends_on: list[str]
+
+    # 可选依赖步骤 ID（允许 failed/skipped，但需先进入终态）
+    optional_depends_on: list[str]
 
     # 读取的上游步骤 ID
     read_from: list[str]
@@ -125,6 +187,9 @@ class PlanStep(TypedDict, total=False):
 
     # 是否为最终输出步骤（全局必须唯一）
     final_output: bool
+
+    # 步骤级失败策略（可选，缺省由系统默认值补齐）
+    failure_policy: StepFailurePolicy
 
 
 class RoutingState(TypedDict, total=False):
@@ -161,6 +226,9 @@ class RoutingState(TypedDict, total=False):
 
     # 被阻断/跳过步骤 ID 列表
     blocked_step_ids: list[str]
+
+    # fallback 到 chat 节点时的上下文
+    fallback_context: FallbackContext
 
 
 class AgentState(TypedDict):
