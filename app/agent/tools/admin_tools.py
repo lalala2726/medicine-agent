@@ -36,6 +36,25 @@ class MallOrderListRequest(BaseModel):
 
 # --- 工具定义 ---
 
+
+def _normalize_multi_ids(raw_ids: str, *, field_name: str) -> str:
+    """
+    归一化多 ID 路径参数，支持单个 ID 或逗号分隔的多个 ID。
+
+    支持输入示例：
+    - `1001`
+    - `1001,1002,1003`
+    - `1001，1002，1003`（中文逗号）
+
+    Returns:
+        适合拼接到 REST 路径中的 `a,b,c` 形式字符串。
+    """
+    text = str(raw_ids or "").strip().replace("，", ",")
+    parts = [item.strip() for item in text.split(",") if item.strip()]
+    if not parts:
+        raise ValueError(f"{field_name} 不能为空，需传单个ID或逗号分隔ID列表。")
+    return ",".join(parts)
+
 @tool
 @tool_call_status(tool_name="获取用户信息")
 async def get_user_info() -> dict:
@@ -82,13 +101,18 @@ async def get_product_list(
 @tool
 @tool_call_status(tool_name="获取商品详情")
 async def get_product_info(
-        product_id: Annotated[str, "商品的唯一ID，例如 '1001'"]
+        product_id: Annotated[
+            str,
+            "商品ID，支持单个或多个（逗号分隔），例如 '1001' 或 '1001,1002,1003'",
+        ]
 ) -> dict:
     """
-    根据商品ID获取详细的商品信息，包括描述、库存和规格。
+    根据商品ID获取详细信息，支持批量查询。
+    后端路径格式：`/agent/products/{ids}`，例如 `/agent/products/1001,1002`。
     """
+    normalized_ids = _normalize_multi_ids(product_id, field_name="product_id")
     async with HttpClient() as client:
-        response = await client.get(url=f"/agent/products/{product_id}")
+        response = await client.get(url=f"/agent/products/{normalized_ids}")
         return HttpResponse.parse_data(response)
 
 
@@ -125,13 +149,18 @@ async def get_order_list(
 @tool
 @tool_call_status(tool_name="获取订单详情")
 async def get_orders_detail(
-        order_id: Annotated[str, "订单的唯一编号"]
+        order_id: Annotated[
+            str,
+            "订单ID，支持单个或多个（逗号分隔），例如 '1' 或 '1,2,3,4,5'",
+        ]
 ) -> dict:
     """
-    获取单个订单的详细信息，包括物流状态和商品明细。
+    获取订单详情，支持批量查询。
+    后端路径格式：`/agent/tools/orders/{ids}`，例如 `/agent/tools/orders/1,2,3`。
     """
+    normalized_ids = _normalize_multi_ids(order_id, field_name="order_id")
     async with HttpClient() as client:
-        response = await client.get(url=f"/agent/tools/orders/{order_id}")
+        response = await client.get(url=f"/agent/tools/orders/{normalized_ids}")
         return HttpResponse.parse_data(response)
 
 

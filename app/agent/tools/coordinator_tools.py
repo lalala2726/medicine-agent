@@ -69,8 +69,10 @@ _AGENT_DETAIL_CATALOG: dict[str, dict[str, Any]] = {
             },
             {
                 "name": "get_orders_detail",
-                "purpose": "根据订单唯一编号获取订单详情。",
-                "parameters": {"order_id": "订单唯一编号（必填）"},
+                "purpose": "根据订单ID获取订单详情，支持批量查询。",
+                "parameters": {
+                    "order_id": "订单ID（必填），支持单个或多个，多个用逗号分隔，如 1,2,3,4,5",
+                },
             },
         ],
         "coordination_guide": {
@@ -107,8 +109,10 @@ _AGENT_DETAIL_CATALOG: dict[str, dict[str, Any]] = {
             },
             {
                 "name": "get_product_info",
-                "purpose": "根据商品 ID 查询商品详情。",
-                "parameters": {"product_id": "商品唯一 ID（必填）"},
+                "purpose": "根据商品ID查询商品详情，支持批量查询。",
+                "parameters": {
+                    "product_id": "商品ID（必填），支持单个或多个，多个用逗号分隔，如 1001,1002,1003",
+                },
             },
         ],
         "coordination_guide": {
