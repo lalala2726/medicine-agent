@@ -2,6 +2,7 @@ import json
 
 import pytest
 
+import app.agent.admin.dag_rules as dag_rules_module
 import app.agent.admin.node.coordinator_node as coordinator_module
 import app.agent.admin.workflow as workflow_module
 
@@ -126,7 +127,7 @@ def _valid_plan() -> list[dict]:
 
 
 def test_review_plan_accepts_valid_dag():
-    is_valid, normalized, reason = coordinator_module.review_plan(_valid_plan(), "medium")
+    is_valid, normalized, reason = dag_rules_module.review_plan(_valid_plan(), "medium")
     assert is_valid is True
     assert reason == "ok"
     assert len(normalized) == 2
@@ -136,7 +137,7 @@ def test_review_plan_accepts_valid_dag():
 def test_review_plan_rejects_coordinator_node_name():
     bad = _valid_plan()
     bad[0]["node_name"] = "coordinator_agent"
-    is_valid, normalized, reason = coordinator_module.review_plan(bad, "medium")
+    is_valid, normalized, reason = dag_rules_module.review_plan(bad, "medium")
     assert is_valid is False
     assert normalized == []
     assert "coordinator_agent" in reason
@@ -145,7 +146,7 @@ def test_review_plan_rejects_coordinator_node_name():
 def test_review_plan_rejects_cycle():
     bad = _valid_plan()
     bad[0]["depends_on"] = ["s2"]
-    is_valid, _, reason = coordinator_module.review_plan(bad, "medium")
+    is_valid, _, reason = dag_rules_module.review_plan(bad, "medium")
     assert is_valid is False
     assert "循环依赖" in reason
 
@@ -153,7 +154,7 @@ def test_review_plan_rejects_cycle():
 def test_review_plan_rejects_missing_dependency():
     bad = _valid_plan()
     bad[1]["depends_on"] = ["missing"]
-    is_valid, _, reason = coordinator_module.review_plan(bad, "medium")
+    is_valid, _, reason = dag_rules_module.review_plan(bad, "medium")
     assert is_valid is False
     assert "不存在" in reason
 
@@ -181,7 +182,7 @@ def test_review_plan_rejects_illegal_read_from():
             "final_output": True,
         },
     ]
-    is_valid, _, reason = coordinator_module.review_plan(plan, "medium")
+    is_valid, _, reason = dag_rules_module.review_plan(plan, "medium")
     assert is_valid is False
     assert "不可达上游" in reason
 
@@ -189,7 +190,7 @@ def test_review_plan_rejects_illegal_read_from():
 def test_review_plan_requires_single_final_output():
     bad = _valid_plan()
     bad[0]["final_output"] = True
-    is_valid, _, reason = coordinator_module.review_plan(bad, "medium")
+    is_valid, _, reason = dag_rules_module.review_plan(bad, "medium")
     assert is_valid is False
     assert "仅能出现一次" in reason
 
@@ -208,7 +209,7 @@ def test_review_plan_rejects_final_output_as_dependency():
             "final_output": False,
         }
     )
-    is_valid, _, reason = coordinator_module.review_plan(bad, "complex")
+    is_valid, _, reason = dag_rules_module.review_plan(bad, "complex")
     assert is_valid is False
     assert "不能被其他步骤依赖" in reason
 
