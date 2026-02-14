@@ -66,6 +66,144 @@ def test_status_node_emits_error_end_on_exception():
     ]
 
 
+def test_status_node_after_coordinator_emits_when_route_is_coordinator():
+    events: list[dict] = []
+    token = set_status_emitter(events.append)
+
+    @status_node(
+        node="order",
+        start_message="正在处理订单问题",
+        display_when="after_coordinator",
+    )
+    def _node(state: dict) -> str:
+        return "ok"
+
+    state = {"routing": {"route_target": "coordinator_agent"}}
+    assert _node(state) == "ok"
+    reset_status_emitter(token)
+
+    assert events == [
+        {
+            "type": "status",
+            "content": {"node": "order", "state": "start", "message": "正在处理订单问题"},
+        },
+        {
+            "type": "status",
+            "content": {"node": "order", "state": "end"},
+        },
+    ]
+
+
+def test_status_node_after_coordinator_does_not_emit_when_route_is_not_coordinator():
+    events: list[dict] = []
+    token = set_status_emitter(events.append)
+
+    @status_node(
+        node="order",
+        start_message="正在处理订单问题",
+        display_when="after_coordinator",
+    )
+    def _node(state: dict) -> str:
+        return "ok"
+
+    state = {"routing": {"route_target": "order_agent"}}
+    assert _node(state) == "ok"
+    reset_status_emitter(token)
+
+    assert events == []
+
+
+def test_status_node_after_coordinator_does_not_emit_when_route_target_missing():
+    events: list[dict] = []
+    token = set_status_emitter(events.append)
+
+    @status_node(
+        node="order",
+        start_message="正在处理订单问题",
+        display_when="after_coordinator",
+    )
+    def _node(state: dict) -> str:
+        return "ok"
+
+    state = {"routing": {}}
+    assert _node(state) == "ok"
+    reset_status_emitter(token)
+
+    assert events == []
+
+
+def test_status_node_never_does_not_emit_events():
+    events: list[dict] = []
+    token = set_status_emitter(events.append)
+
+    @status_node(
+        node="order",
+        start_message="正在处理订单问题",
+        display_when="never",
+    )
+    def _node() -> str:
+        return "ok"
+
+    assert _node() == "ok"
+    reset_status_emitter(token)
+
+    assert events == []
+
+
+def test_status_node_after_coordinator_exception_emits_error_when_enabled():
+    events: list[dict] = []
+    token = set_status_emitter(events.append)
+
+    @status_node(
+        node="order",
+        start_message="正在处理订单问题",
+        error_message="订单节点处理失败",
+        display_when="after_coordinator",
+    )
+    def _node(state: dict) -> None:
+        raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError):
+        _node({"routing": {"route_target": "coordinator_agent"}})
+    reset_status_emitter(token)
+
+    assert events == [
+        {
+            "type": "status",
+            "content": {"node": "order", "state": "start", "message": "正在处理订单问题"},
+        },
+        {
+            "type": "status",
+            "content": {
+                "node": "order",
+                "state": "end",
+                "result": "error",
+                "message": "订单节点处理失败",
+            },
+        },
+    ]
+
+
+def test_status_node_after_coordinator_exception_does_not_emit_when_disabled():
+    events: list[dict] = []
+    token = set_status_emitter(events.append)
+
+    @status_node(
+        node="order",
+        start_message="正在处理订单问题",
+        error_message="订单节点处理失败",
+        display_when="after_coordinator",
+    )
+    def _node(state: dict) -> None:
+        raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError):
+        _node({"routing": {"route_target": "order_agent"}})
+    reset_status_emitter(token)
+
+    assert events == []
+
+
 def test_tool_call_status_emits_start_and_end():
     events: list[dict] = []
     token = set_status_emitter(events.append)

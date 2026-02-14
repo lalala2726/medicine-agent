@@ -7,7 +7,6 @@ from langchain_core.tools import tool
 
 from app.core.assistant_status import tool_call_status
 
-
 _CHART_TEMPLATES: list[dict[str, Any]] = [
     {
         "name": "折线图",
@@ -361,8 +360,8 @@ def _find_template(name_or_type: str) -> dict[str, Any] | None:
 @tool
 @tool_call_status(tool_name="获取图表模板")
 def get_chart_sample_by_name(
-    explanation: Annotated[str, "说明调用原因，例如：根据趋势数据准备生成折线图"],
-    name_or_type: Annotated[str, "图表名称或类型，例如 line、折线图、pie"],
+        explanation: Annotated[str, "说明调用原因，例如：根据趋势数据准备生成折线图"],
+        name_or_type: Annotated[str, "图表名称或类型，例如 line、折线图、pie"],
 ) -> dict[str, Any]:
     """
     根据图表名称或类型获取标准模板。

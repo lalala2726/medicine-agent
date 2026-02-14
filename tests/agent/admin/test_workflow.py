@@ -1,5 +1,5 @@
-from pathlib import Path
 import operator
+from pathlib import Path
 from typing import Annotated, TypedDict
 
 import pytest
@@ -130,7 +130,7 @@ def _assert_execution_trace_by_stages(execution_trace: list[str], expected_stage
     offset = 0
     for expected_stage in expected_stages:
         stage_size = len(expected_stage)
-        actual_stage = execution_trace[offset : offset + stage_size]
+        actual_stage = execution_trace[offset: offset + stage_size]
         assert len(actual_stage) == stage_size
         assert set(actual_stage) == set(expected_stage)
         offset += stage_size
@@ -208,39 +208,39 @@ def test_chat_node_streams_when_model_supports_stream(monkeypatch: pytest.Monkey
     ("case_name", "plan", "expected_stages"),
     [
         (
-            "order_excel_chart",
-            _build_fake_plan("order_agent", "excel_agent", "chart_agent"),
-            [["order_agent"], ["excel_agent"], ["chart_agent"]],
+                "order_excel_chart",
+                _build_fake_plan("order_agent", "excel_agent", "chart_agent"),
+                [["order_agent"], ["excel_agent"], ["chart_agent"]],
         ),
         (
-            "order_chart",
-            _build_fake_plan("order_agent", "chart_agent"),
-            [["order_agent"], ["chart_agent"]],
+                "order_chart",
+                _build_fake_plan("order_agent", "chart_agent"),
+                [["order_agent"], ["chart_agent"]],
         ),
         (
-            "order_skip_unknown_chart",
-            _build_fake_plan("order_agent", "unknown_agent", "chart_agent"),
-            [["order_agent"], ["chart_agent"]],
+                "order_skip_unknown_chart",
+                _build_fake_plan("order_agent", "unknown_agent", "chart_agent"),
+                [["order_agent"], ["chart_agent"]],
         ),
         (
-            "order_and_excel_then_chart",
-            [
-                _build_fake_plan("order_agent", "excel_agent"),
-                {
-                    "node_name": "chart_agent",
-                    "task_description": "final chart step",
-                    "last_node": ["order_agent", "excel_agent"],
-                },
-            ],
-            [["order_agent", "excel_agent"], ["chart_agent"]],
+                "order_and_excel_then_chart",
+                [
+                    _build_fake_plan("order_agent", "excel_agent"),
+                    {
+                        "node_name": "chart_agent",
+                        "task_description": "final chart step",
+                        "last_node": ["order_agent", "excel_agent"],
+                    },
+                ],
+                [["order_agent", "excel_agent"], ["chart_agent"]],
         ),
     ],
 )
 def test_workflow_dynamic_plan_sequence_and_export_path_image(
-    monkeypatch: pytest.MonkeyPatch,
-    case_name: str,
-    plan: list[dict | list[dict]],
-    expected_stages: list[list[str]],
+        monkeypatch: pytest.MonkeyPatch,
+        case_name: str,
+        plan: list[dict | list[dict]],
+        expected_stages: list[list[str]],
 ):
     execution_trace: list[str] = []
 

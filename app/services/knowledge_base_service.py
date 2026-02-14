@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from loguru import logger
+
 from app.core.chunking import ChunkStrategyType, SplitConfig, split_file
 from app.core.codes import ResponseCode
 from app.core.exceptions import ServiceException
@@ -11,7 +13,6 @@ from app.core.file_loader.base import (
 from app.core.file_loader.factory import FileLoaderFactory
 from app.services import vector_service
 from app.utils.file_utils import FileUtils
-from loguru import logger
 
 DEFAULT_CHUNK_SIZE = 500  # 默认切片长度（字符）
 DEFAULT_TOKEN_SIZE = 100  # 默认 token 切片长度
@@ -275,12 +276,14 @@ def cleanup_import_assets(filename: str) -> dict:
     """
     return cleanup_temp_assets(filename)
 
+
 def delete_document(knowledge_name: str, document_id: int) -> None:
     vector_service.ensure_collection_exists(knowledge_name)
     vector_service.delete_document(
         knowledge_name=knowledge_name,
         document_id=document_id,
     )
+
 
 def list_knowledge_chunks(
         knowledge_name: str,

@@ -90,10 +90,10 @@ def is_final_node(state: AgentState | dict[str, Any], node_name: str) -> bool:
 
     next_nodes = routing.get("next_nodes")
     return (
-        bool(routing.get("is_final_stage"))
-        and isinstance(next_nodes, list)
-        and len(next_nodes) == 1
-        and next_nodes[0] == node_name
+            bool(routing.get("is_final_stage"))
+            and isinstance(next_nodes, list)
+            and len(next_nodes) == 1
+            and next_nodes[0] == node_name
     )
 
 
@@ -122,11 +122,11 @@ def extract_text(message: Any) -> str:
 
 
 def invoke(
-    llm: Any,
-    messages: list[Any],
-    *,
-    tools: Optional[Sequence[Any]] = None,
-    max_tool_rounds: int = MAX_TOOL_ROUNDS,
+        llm: Any,
+        messages: list[Any],
+        *,
+        tools: Optional[Sequence[Any]] = None,
+        max_tool_rounds: int = MAX_TOOL_ROUNDS,
 ) -> str:
     """
     统一的 LLM 调用入口。
@@ -150,10 +150,10 @@ def invoke(
 
 
 def _invoke_with_tools(
-    llm: Any,
-    messages: list[Any],
-    tools: Sequence[Any],
-    max_rounds: int,
+        llm: Any,
+        messages: list[Any],
+        tools: Sequence[Any],
+        max_rounds: int,
 ) -> str:
     """
     带工具调用的同步 Agent 模式。
@@ -233,7 +233,7 @@ def _run_async(coro: Any) -> Any:
 
 
 def _exec_tool(
-    tool_call: dict, tool_map: dict[str, Any], log_enabled: bool = None
+        tool_call: dict, tool_map: dict[str, Any], log_enabled: bool = None
 ) -> str:
     """
     执行单个工具调用。

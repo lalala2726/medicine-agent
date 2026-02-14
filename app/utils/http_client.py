@@ -25,11 +25,11 @@ class HttpClient:
     _dotenv_checked = False
 
     def __init__(
-        self,
-        *,
-        base_url: Optional[str] = None,
-        headers: Optional[Mapping[str, str]] = None,
-        timeout: Optional[float] = 30.0,
+            self,
+            *,
+            base_url: Optional[str] = None,
+            headers: Optional[Mapping[str, str]] = None,
+            timeout: Optional[float] = 30.0,
     ) -> None:
         self._ensure_env_loaded()
         if base_url is None:
@@ -125,16 +125,16 @@ class HttpClient:
         await self.close()
 
     async def request(
-        self,
-        method: str,
-        url: str,
-        *,
-        headers: Optional[Mapping[str, str]] = None,
-        params: Optional[Mapping[str, Any]] = None,
-        json: Optional[Any] = None,
-        data: Optional[Mapping[str, Any]] = None,
-        content: Optional[bytes] = None,
-        timeout: Optional[float] = None,
+            self,
+            method: str,
+            url: str,
+            *,
+            headers: Optional[Mapping[str, str]] = None,
+            params: Optional[Mapping[str, Any]] = None,
+            json: Optional[Any] = None,
+            data: Optional[Mapping[str, Any]] = None,
+            content: Optional[bytes] = None,
+            timeout: Optional[float] = None,
     ) -> httpx.Response:
         """
         统一请求入口。
@@ -229,12 +229,12 @@ class HttpClient:
         return response
 
     async def get(
-        self,
-        url: str,
-        *,
-        headers: Optional[Mapping[str, str]] = None,
-        params: Optional[Mapping[str, Any]] = None,
-        timeout: Optional[float] = None,
+            self,
+            url: str,
+            *,
+            headers: Optional[Mapping[str, str]] = None,
+            params: Optional[Mapping[str, Any]] = None,
+            timeout: Optional[float] = None,
     ) -> httpx.Response:
         """发送 GET 请求。"""
         return await self.request(
@@ -246,15 +246,15 @@ class HttpClient:
         )
 
     async def post(
-        self,
-        url: str,
-        *,
-        headers: Optional[Mapping[str, str]] = None,
-        params: Optional[Mapping[str, Any]] = None,
-        json: Optional[Any] = None,
-        data: Optional[Mapping[str, Any]] = None,
-        content: Optional[bytes] = None,
-        timeout: Optional[float] = None,
+            self,
+            url: str,
+            *,
+            headers: Optional[Mapping[str, str]] = None,
+            params: Optional[Mapping[str, Any]] = None,
+            json: Optional[Any] = None,
+            data: Optional[Mapping[str, Any]] = None,
+            content: Optional[bytes] = None,
+            timeout: Optional[float] = None,
     ) -> httpx.Response:
         """发送 POST 请求。"""
         return await self.request(
@@ -269,15 +269,15 @@ class HttpClient:
         )
 
     async def put(
-        self,
-        url: str,
-        *,
-        headers: Optional[Mapping[str, str]] = None,
-        params: Optional[Mapping[str, Any]] = None,
-        json: Optional[Any] = None,
-        data: Optional[Mapping[str, Any]] = None,
-        content: Optional[bytes] = None,
-        timeout: Optional[float] = None,
+            self,
+            url: str,
+            *,
+            headers: Optional[Mapping[str, str]] = None,
+            params: Optional[Mapping[str, Any]] = None,
+            json: Optional[Any] = None,
+            data: Optional[Mapping[str, Any]] = None,
+            content: Optional[bytes] = None,
+            timeout: Optional[float] = None,
     ) -> httpx.Response:
         """发送 PUT 请求。"""
         return await self.request(
@@ -292,15 +292,15 @@ class HttpClient:
         )
 
     async def delete(
-        self,
-        url: str,
-        *,
-        headers: Optional[Mapping[str, str]] = None,
-        params: Optional[Mapping[str, Any]] = None,
-        json: Optional[Any] = None,
-        data: Optional[Mapping[str, Any]] = None,
-        content: Optional[bytes] = None,
-        timeout: Optional[float] = None,
+            self,
+            url: str,
+            *,
+            headers: Optional[Mapping[str, str]] = None,
+            params: Optional[Mapping[str, Any]] = None,
+            json: Optional[Any] = None,
+            data: Optional[Mapping[str, Any]] = None,
+            content: Optional[bytes] = None,
+            timeout: Optional[float] = None,
     ) -> httpx.Response:
         """发送 DELETE 请求。"""
         return await self.request(

@@ -7,25 +7,28 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.constants import END, START
 from langgraph.graph import StateGraph
 
-from app.agent.admin.chat_node import chat_agent
 from app.agent.admin.agent_state import AgentState, PlanStep
-from app.agent.admin.chart_node import chart_agent
-from app.agent.admin.excel_node import excel_agent
-from app.agent.admin.order_node import order_agent
-from app.agent.admin.coordinator_node import coordinator
-from app.agent.admin.summary_node import summary_agent
-from app.core.assistant_status import status_node
+from app.agent.admin.node import (
+    chat_agent,
+    chart_agent,
+    coordinator,
+    excel_agent,
+    order_agent,
+    summary_agent,
+)
+from app.agent.admin.node.product_node import product_agent
 from app.core.langsmith import traceable
-from app.core.llm import DEFAULT_CHAT_MODEL, create_chat_model
+from app.core.llm import create_chat_model
 
 # 当前图中允许被执行的业务节点
-EXECUTION_NODES = ("order_agent", "excel_agent", "chart_agent", "summary_agent")
+EXECUTION_NODES = ("order_agent", "excel_agent", "chart_agent", "summary_agent", "product_agent")
 GATEWAY_ROUTE_NODES = (*EXECUTION_NODES, "chat_agent", "coordinator_agent")
 GATEWAY_ROUTE_MAP = {
     "order_agent": "order_agent",
     "excel_agent": "excel_agent",
     "chart_agent": "chart_agent",
     "summary_agent": "summary_agent",
+    "product_agent": "product_agent",
     "chat_agent": "chat_agent",
     "coordinator_agent": "coordinator_agent",
     END: END,
@@ -35,33 +38,39 @@ PLANNER_ROUTE_MAP = {
     "excel_agent": "excel_agent",
     "chart_agent": "chart_agent",
     "summary_agent": "summary_agent",
+    "product_agent": "product_agent",
     END: END,
 }
 
 GATEWAY_ROUTER_PROMPT = """
-你是药品商城后台的网关路由节点（gateway_router）。
-你的任务是根据用户请求，决定是直接交给单个业务节点，还是交给 coordinator_agent 协调多节点执行。
-
-可用节点与业务范围：
-1. order_agent
-   - 订单域任务：订单查询、订单状态判断、订单信息核验、订单明细检索。
-2. excel_agent
-   - 表格域任务：Excel 文件解析、结构化导出、表格数据整理。
-3. chart_agent
-   - 图表域任务：根据已有结构化数据生成图表、统计可视化结果说明。
-4. summary_agent
-   - 汇总域任务：汇总多个节点结果，输出最终结论。
-5. chat_agent
-    - 普通对话：非业务相关问题、咨询、闲聊。
-7. coordinator_agent
-   - 协调域任务：多节点任务拆解、并行/串行编排、跨节点结果整合。
-   - 当请求涉及两个及以上业务域，或依赖关系复杂时，必须路由到该节点。
-
-请严格输出 JSON 对象，且只输出 JSON，不要包含其他文字：
-{
-  "route_target": "order_agent | excel_agent | chart_agent | summary_agent | chat_agent | coordinator_agent",
-  "difficulty": "simple | medium | complex"
-}
+    你是药品商城后台的网关路由节点（gateway_router）。
+    你的任务是根据用户请求，决定是直接交给单个业务节点，还是交给 coordinator_agent 协调多节点执行。
+    
+    可用节点与业务范围：
+    1. order_agent
+       - 订单域任务：订单查询、订单状态判断、订单信息核验、订单明细检索。
+    2. excel_agent
+       - 表格域任务：支持将系统数据按照条件导出为excel表格并生成下载链接让用户下载
+       - 支持如下:用户数据导出、订单数据导出、商品数据导出
+       - 如果用户想要导出的数据不在以上范围内，你应该直接调用 chat_agent 并且告诉用户原因
+       - 请注意！此Agent不接受导出数据范围以外的请求，并且这个agent有自己获取数据的能力不要为了数据调用其他的Agent
+    3. chart_agent
+       - 图表域任务：根据已有结构化数据生成图表、统计可视化结果说明。
+    4. summary_agent
+       - 汇总域任务：汇总多个节点结果，输出最终结论。
+    5. chat_agent
+        - 普通对话：非业务相关问题、咨询、闲聊。
+    7. coordinator_agent
+       - 协调域任务：多节点任务拆解、并行/串行编排、跨节点结果整合。
+       - 当请求涉及两个及以上业务域，或依赖关系复杂时，必须路由到该节点。
+    8. product_agent
+       - 商品域任务：商品信息查询、商品信息核验
+    
+    请严格输出 JSON 对象，且只输出 JSON，不要包含其他文字：
+    {
+      "route_target": "order_agent | excel_agent | chart_agent | summary_agent | chat_agent | coordinator_agent | product_agent",
+      "difficulty": "simple | medium | complex"
+    }
     
     路由规则：
     1. 如果单个业务节点即可完成，且不需要跨节点协作：
@@ -70,7 +79,7 @@ GATEWAY_ROUTER_PROMPT = """
     2. 如果任务涉及多个业务域、需要拆解并行/串行步骤、或存在明显依赖关系：
        - route_target = coordinator_agent
        - difficulty 按复杂度设置为 medium 或 complex
-    3. 如果意图不清晰，默认 route_target = coordinator_agent, difficulty = medium。
+    3. 如果意图不清晰，默认 route_target = chat_agent, difficulty = simple。
 """
 
 
@@ -85,6 +94,7 @@ def build_graph():
     graph.add_node("order_agent", order_agent)
     graph.add_node("excel_agent", excel_agent)
     graph.add_node("chart_agent", chart_agent)
+    graph.add_node("product_agent", product_agent)
 
     graph.add_edge(START, "gateway_router")
     graph.add_conditional_edges(
@@ -143,7 +153,6 @@ def _stage_has_executable_node(stage: list[PlanStep]) -> bool:
     return False
 
 
-@status_node(node="router", start_message="正在分析问题")
 @traceable(name="Gateway Router Node", run_type="chain")
 def gateway_router(state: AgentState) -> dict[str, Any]:
     """

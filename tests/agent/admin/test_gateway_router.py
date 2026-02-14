@@ -110,9 +110,9 @@ def test_planner_keeps_difficulty_in_valid_range(difficulty: str):
     ],
 )
 def test_coordinator_switches_model_by_difficulty(
-    monkeypatch: pytest.MonkeyPatch,
-    difficulty: str,
-    expected_model: str,
+        monkeypatch: pytest.MonkeyPatch,
+        difficulty: str,
+        expected_model: str,
 ):
     captured: dict[str, str] = {}
 

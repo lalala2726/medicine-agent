@@ -1,6 +1,4 @@
-from typing import TypedDict, List, Dict, Any, Optional, Union
-
-from pydantic import BaseModel, Field
+from typing import TypedDict, List, Dict, Any, Union
 
 
 class OrderContext(TypedDict, total=False):
@@ -49,6 +47,17 @@ class ExcelContext(TypedDict, total=False):
     url: str
 
     # Excel Agent 当前状态
+    status: str
+
+
+class ProductContext(TypedDict, total=False):
+    """
+    商品 Agent 使用的上下文
+    """
+    # 结果
+    result: Dict[str, Any]
+
+    # 商品 Agent 当前状态
     status: str
 
 
@@ -116,6 +125,9 @@ class AgentState(TypedDict):
 
     # Excel Agent 上下文
     excel_context: ExcelContext
+
+    # 商品 Agent 上下文
+    product_context: ProductContext
 
     # 共享信息
     shared_memory: Dict[str, Any]

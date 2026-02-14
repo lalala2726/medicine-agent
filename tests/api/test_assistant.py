@@ -80,6 +80,22 @@ def test_assistant_streaming_response_from_order_context(monkeypatch):
     assert payloads[1]["is_end"] is True
 
 
+def test_assistant_streaming_response_from_product_context(monkeypatch):
+    monkeypatch.setattr(
+        assistant_module,
+        "ADMIN_WORKFLOW",
+        _DummyGraph(final_state={"product_context": {"result": {"content": "product done"}}}),
+    )
+    client = TestClient(app)
+
+    response = client.post("/api/admin/assistant/chat", json={"question": "查商品"})
+
+    assert response.status_code == 200
+    payloads = _extract_payloads(response.text)
+    assert _answer_text(payloads[0]) == "product done"
+    assert payloads[1]["is_end"] is True
+
+
 def test_assistant_streaming_response_from_order_context_chunks_with_invoke_fallback(monkeypatch):
     monkeypatch.setattr(
         assistant_module,
@@ -135,6 +151,40 @@ def test_assistant_streaming_response_from_astream_order_tokens(monkeypatch):
     payloads = _extract_payloads(response.text)
     assert _answer_text(payloads[0]) == "订"
     assert _answer_text(payloads[1]) == "单"
+    assert _answer_text(payloads[2]) == ""
+    assert payloads[2]["is_end"] is True
+
+
+def test_assistant_streaming_response_from_astream_product_tokens(monkeypatch):
+    graph = _DummyAsyncGraph(
+        events=[
+            (
+                "values",
+                {"routing": {"route_target": "product_agent"}, "plan": []},
+            ),
+            (
+                "messages",
+                (_DummyMessageChunk("商"), {"langgraph_node": "product_agent"}),
+            ),
+            (
+                "messages",
+                (_DummyMessageChunk("品"), {"langgraph_node": "product_agent"}),
+            ),
+            (
+                "values",
+                {"product_context": {"result": {"content": "商品"}}},
+            ),
+        ]
+    )
+    monkeypatch.setattr(assistant_module, "ADMIN_WORKFLOW", graph)
+    client = TestClient(app)
+
+    response = client.post("/api/admin/assistant/chat", json={"question": "查商品"})
+
+    assert response.status_code == 200
+    payloads = _extract_payloads(response.text)
+    assert _answer_text(payloads[0]) == "商"
+    assert _answer_text(payloads[1]) == "品"
     assert _answer_text(payloads[2]) == ""
     assert payloads[2]["is_end"] is True
 
@@ -325,6 +375,7 @@ def test_assistant_streaming_status_events(monkeypatch):
     assert {"state": "end"} in function_call_contents
     assert all("node" not in item for item in function_call_contents)
 
+
 def test_assistant_streaming_function_call_timely_events(monkeypatch):
     class _TimelyAsyncGraph:
         async def astream(self, _state: dict, **_kwargs):
@@ -361,30 +412,30 @@ def test_assistant_route_delegates_to_stream_service(monkeypatch):
 
         async def _stream():
             yield (
-                "data: "
-                + json.dumps(
-                    {
-                        "content": {"text": "delegated"},
-                        "type": "answer",
-                        "is_end": False,
-                        "timestamp": 1,
-                    },
-                    ensure_ascii=False,
-                )
-                + "\n\n"
+                    "data: "
+                    + json.dumps(
+                {
+                    "content": {"text": "delegated"},
+                    "type": "answer",
+                    "is_end": False,
+                    "timestamp": 1,
+                },
+                ensure_ascii=False,
+            )
+                    + "\n\n"
             )
             yield (
-                "data: "
-                + json.dumps(
-                    {
-                        "content": {"text": ""},
-                        "type": "answer",
-                        "is_end": True,
-                        "timestamp": 2,
-                    },
-                    ensure_ascii=False,
-                )
-                + "\n\n"
+                    "data: "
+                    + json.dumps(
+                {
+                    "content": {"text": ""},
+                    "type": "answer",
+                    "is_end": True,
+                    "timestamp": 2,
+                },
+                ensure_ascii=False,
+            )
+                    + "\n\n"
             )
 
         from fastapi.responses import StreamingResponse
@@ -411,8 +462,8 @@ def test_assistant_route_delegates_to_stream_service(monkeypatch):
     assert stream_config.workflow is assistant_module.ADMIN_WORKFLOW
     assert stream_config.build_initial_state("x")["user_input"] == "x"
     assert (
-        stream_config.extract_final_content({"results": {"chat": {"content": "ok"}}})
-        == "ok"
+            stream_config.extract_final_content({"results": {"chat": {"content": "ok"}}})
+            == "ok"
     )
     assert stream_config.should_stream_token("chat_agent", {"routing": {}, "plan": []}) is True
     assert stream_config.should_stream_token("router", {"routing": {}, "plan": []}) is False

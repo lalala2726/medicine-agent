@@ -64,11 +64,11 @@ def _stream_with_config(config: AssistantStreamConfig) -> list[dict]:
 
 
 def _build_config(
-    workflow: Any,
-    *,
-    should_stream_token: Callable[[str | None, dict[str, Any]], bool] | None = None,
-    extract_final_content: Callable[[dict[str, Any]], str] | None = None,
-    map_exception: Callable[[Exception], str] | None = None,
+        workflow: Any,
+        *,
+        should_stream_token: Callable[[str | None, dict[str, Any]], bool] | None = None,
+        extract_final_content: Callable[[dict[str, Any]], str] | None = None,
+        map_exception: Callable[[Exception], str] | None = None,
 ) -> AssistantStreamConfig:
     return AssistantStreamConfig(
         workflow=workflow,
