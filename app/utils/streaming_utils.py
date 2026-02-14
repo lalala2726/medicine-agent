@@ -149,6 +149,49 @@ def invoke(
     return extract_text(response)
 
 
+def invoke_with_optional_stream(
+        llm: Any,
+        messages: list[Any],
+        *,
+        tools: Optional[Sequence[Any]] = None,
+        enable_stream: bool = False,
+        max_tool_rounds: int = MAX_TOOL_ROUNDS,
+) -> tuple[str, list[str]]:
+    """
+    在允许时优先使用 stream 收集文本，否则回退到 invoke。
+
+    Args:
+        llm: LangChain ChatModel 实例
+        messages: 消息列表
+        tools: 工具列表；stream 与 invoke 都会复用该工具集合
+        enable_stream: 是否启用 stream 分支
+        max_tool_rounds: invoke 工具调用最大轮次
+
+    Returns:
+        tuple[str, list[str]]: (最终文本, 流式分片列表)
+    """
+    stream_chunks: list[str] = []
+    if enable_stream:
+        llm_for_stream = llm.bind_tools(tools) if tools else llm
+        stream_fn = getattr(llm_for_stream, "stream", None)
+        if callable(stream_fn):
+            for chunk in stream_fn(messages):
+                text = extract_text(chunk)
+                if text:
+                    stream_chunks.append(text)
+
+    if stream_chunks:
+        return "".join(stream_chunks), stream_chunks
+
+    content = invoke(
+        llm,
+        messages,
+        tools=tools,
+        max_tool_rounds=max_tool_rounds,
+    )
+    return content, stream_chunks
+
+
 def _invoke_with_tools(
         llm: Any,
         messages: list[Any],

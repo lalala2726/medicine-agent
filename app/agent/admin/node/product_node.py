@@ -6,7 +6,7 @@ from app.core.assistant_status import status_node
 from app.core.langsmith import traceable
 from app.core.llm import create_chat_model
 from app.schemas.prompt import base_prompt
-from app.utils.streaming_utils import extract_text, invoke, is_final_node
+from app.utils.streaming_utils import invoke_with_optional_stream, is_final_node
 
 system_prompt = (
         """
@@ -50,20 +50,12 @@ def product_agent(state: AgentState) -> dict:
 
     tools = [get_product_list, get_product_info]
     final_output = is_final_node(state, "product_agent")
-    stream_chunks: list[str] = []
-
-    if final_output:
-        llm_with_tools = llm.bind_tools(tools)
-        if hasattr(llm_with_tools, "stream") and callable(getattr(llm_with_tools, "stream")):
-            for chunk in llm_with_tools.stream(messages):
-                text = extract_text(chunk)
-                if text:
-                    stream_chunks.append(text)
-
-    if stream_chunks:
-        content = "".join(stream_chunks)
-    else:
-        content = invoke(llm, messages, tools=tools)
+    content, stream_chunks = invoke_with_optional_stream(
+        llm,
+        messages,
+        tools=tools,
+        enable_stream=final_output,
+    )
 
     product_context = dict(state.get("product_context") or {})
     product_context["result"] = {
