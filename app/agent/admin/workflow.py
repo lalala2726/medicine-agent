@@ -16,18 +16,19 @@ from app.agent.admin.node import (
     order_agent,
     summary_agent,
 )
-from app.core.assistant_status import status_node
+from app.agent.admin.node.product_node import product_agent
 from app.core.langsmith import traceable
 from app.core.llm import create_chat_model
 
 # 当前图中允许被执行的业务节点
-EXECUTION_NODES = ("order_agent", "excel_agent", "chart_agent", "summary_agent")
+EXECUTION_NODES = ("order_agent", "excel_agent", "chart_agent", "summary_agent", "product_agent")
 GATEWAY_ROUTE_NODES = (*EXECUTION_NODES, "chat_agent", "coordinator_agent")
 GATEWAY_ROUTE_MAP = {
     "order_agent": "order_agent",
     "excel_agent": "excel_agent",
     "chart_agent": "chart_agent",
     "summary_agent": "summary_agent",
+    "product_agent": "product_agent",
     "chat_agent": "chat_agent",
     "coordinator_agent": "coordinator_agent",
     END: END,
@@ -37,6 +38,7 @@ PLANNER_ROUTE_MAP = {
     "excel_agent": "excel_agent",
     "chart_agent": "chart_agent",
     "summary_agent": "summary_agent",
+    "product_agent": "product_agent",
     END: END,
 }
 
@@ -61,10 +63,12 @@ GATEWAY_ROUTER_PROMPT = """
     7. coordinator_agent
        - 协调域任务：多节点任务拆解、并行/串行编排、跨节点结果整合。
        - 当请求涉及两个及以上业务域，或依赖关系复杂时，必须路由到该节点。
+    8. product_agent
+       - 商品域任务：商品信息查询、商品信息核验
     
     请严格输出 JSON 对象，且只输出 JSON，不要包含其他文字：
     {
-      "route_target": "order_agent | excel_agent | chart_agent | summary_agent | chat_agent | coordinator_agent",
+      "route_target": "order_agent | excel_agent | chart_agent | summary_agent | chat_agent | coordinator_agent | product_agent",
       "difficulty": "simple | medium | complex"
     }
     
@@ -90,6 +94,7 @@ def build_graph():
     graph.add_node("order_agent", order_agent)
     graph.add_node("excel_agent", excel_agent)
     graph.add_node("chart_agent", chart_agent)
+    graph.add_node("product_agent", product_agent)
 
     graph.add_edge(START, "gateway_router")
     graph.add_conditional_edges(

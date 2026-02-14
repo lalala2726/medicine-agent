@@ -80,6 +80,22 @@ def test_assistant_streaming_response_from_order_context(monkeypatch):
     assert payloads[1]["is_end"] is True
 
 
+def test_assistant_streaming_response_from_product_context(monkeypatch):
+    monkeypatch.setattr(
+        assistant_module,
+        "ADMIN_WORKFLOW",
+        _DummyGraph(final_state={"product_context": {"result": {"content": "product done"}}}),
+    )
+    client = TestClient(app)
+
+    response = client.post("/api/admin/assistant/chat", json={"question": "查商品"})
+
+    assert response.status_code == 200
+    payloads = _extract_payloads(response.text)
+    assert _answer_text(payloads[0]) == "product done"
+    assert payloads[1]["is_end"] is True
+
+
 def test_assistant_streaming_response_from_order_context_chunks_with_invoke_fallback(monkeypatch):
     monkeypatch.setattr(
         assistant_module,
@@ -135,6 +151,40 @@ def test_assistant_streaming_response_from_astream_order_tokens(monkeypatch):
     payloads = _extract_payloads(response.text)
     assert _answer_text(payloads[0]) == "订"
     assert _answer_text(payloads[1]) == "单"
+    assert _answer_text(payloads[2]) == ""
+    assert payloads[2]["is_end"] is True
+
+
+def test_assistant_streaming_response_from_astream_product_tokens(monkeypatch):
+    graph = _DummyAsyncGraph(
+        events=[
+            (
+                "values",
+                {"routing": {"route_target": "product_agent"}, "plan": []},
+            ),
+            (
+                "messages",
+                (_DummyMessageChunk("商"), {"langgraph_node": "product_agent"}),
+            ),
+            (
+                "messages",
+                (_DummyMessageChunk("品"), {"langgraph_node": "product_agent"}),
+            ),
+            (
+                "values",
+                {"product_context": {"result": {"content": "商品"}}},
+            ),
+        ]
+    )
+    monkeypatch.setattr(assistant_module, "ADMIN_WORKFLOW", graph)
+    client = TestClient(app)
+
+    response = client.post("/api/admin/assistant/chat", json={"question": "查商品"})
+
+    assert response.status_code == 200
+    payloads = _extract_payloads(response.text)
+    assert _answer_text(payloads[0]) == "商"
+    assert _answer_text(payloads[1]) == "品"
     assert _answer_text(payloads[2]) == ""
     assert payloads[2]["is_end"] is True
 

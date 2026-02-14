@@ -17,7 +17,13 @@ from app.utils.streaming_utils import is_final_node
 
 router = APIRouter(prefix="/admin/assistant", tags=["管理助手"])
 ADMIN_WORKFLOW = build_graph()
-STREAM_OUTPUT_NODES = {"order_agent", "chat_agent", "summary_agent", "chart_agent"}
+STREAM_OUTPUT_NODES = {
+    "order_agent",
+    "product_agent",
+    "chat_agent",
+    "summary_agent",
+    "chart_agent",
+}
 
 
 class AssistantRequest(BaseModel):
@@ -70,6 +76,7 @@ def _build_initial_state(question: str) -> dict[str, Any]:
         "plan": [],
         "routing": {},
         "order_context": {},
+        "product_context": {},
         "aftersale_context": {},
         "excel_context": {},
         "shared_memory": {},
@@ -106,6 +113,12 @@ def _extract_content(final_state: dict[str, Any]) -> str:
     order_content = order_result.get("content")
     if isinstance(order_content, str) and order_content:
         return order_content
+
+    product_context = final_state.get("product_context") or {}
+    product_result = product_context.get("result") or {}
+    product_content = product_result.get("content")
+    if isinstance(product_content, str) and product_content:
+        return product_content
 
     errors = final_state.get("errors") or []
     if errors:

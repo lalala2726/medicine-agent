@@ -20,6 +20,7 @@ _system_prompt = """
 - excel_agent: 表格解析、表格整理、Excel 导出。
 - chart_agent: 基于已有结构化数据生成图表或统计说明。
 - summary_agent: 对多个节点结果做汇总并输出最终结论。
+- product_agent: 商品查询、商品详情查询
 
 注意：
 - chat_agent 由 gateway_router 处理，不要出现在 plan 中。
@@ -66,7 +67,7 @@ _COORDINATOR_MODEL_BY_DIFFICULTY = {
     "complex": "qwen-max",
 }
 
-_PLAN_ALLOWED_NODES = {"order_agent", "excel_agent", "chart_agent", "summary_agent"}
+_PLAN_ALLOWED_NODES = {"order_agent", "excel_agent", "chart_agent", "summary_agent", "product_agent"}
 _MAX_PLAN_STEPS_BY_DIFFICULTY = {
     "simple": 1,
     "medium": 3,

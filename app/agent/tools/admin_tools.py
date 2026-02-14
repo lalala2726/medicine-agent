@@ -88,7 +88,7 @@ async def get_product_info(
     根据商品ID获取详细的商品信息，包括描述、库存和规格。
     """
     async with HttpClient() as client:
-        response = await client.get(url=f"/products/{product_id}")
+        response = await client.get(url=f"/agent/products/{product_id}")
         return HttpResponse.parse_data(response)
 
 
