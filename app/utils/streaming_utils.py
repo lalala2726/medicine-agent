@@ -40,7 +40,7 @@ from app.agent.admin.agent_state import AgentState
 from app.core.assistant_status import emit_function_call, resolve_tool_call_messages
 
 # 工具调用最大轮次，防止无限循环
-MAX_TOOL_ROUNDS = 5
+MAX_TOOL_ROUNDS = 20
 
 
 def _empty_policy_diagnostics() -> dict[str, Any]:

@@ -85,7 +85,7 @@ _AGENT_DETAIL_CATALOG: dict[str, dict[str, Any]] = {
                 "name": "get_orders_detail",
                 "purpose": "根据订单ID获取订单详情，支持批量查询。",
                 "parameters": {
-                    "order_id": "订单ID（必填），支持单个或多个，多个用逗号分隔，如 1,2,3,4,5",
+                    "order_id": "订单ID（必填），支持单个或多个",
                 },
             },
         ],
@@ -100,10 +100,11 @@ _AGENT_DETAIL_CATALOG: dict[str, dict[str, Any]] = {
         },
     },
     "product_agent": {
-        "summary": "处理商品列表查询、商品详情查询和商品信息核验。",
+        "summary": "处理商品列表查询、商品详情查询、药品详情查询和商品信息核验。",
         "typical_tasks": [
             "按商品名、分类、状态、价格区间查询商品列表",
             "根据商品 ID 拉取商品详情",
+            "根据药品商品 ID 拉取药品详细信息（说明书、适应症、用法用量等）",
             "核验商品状态、库存或价格信息",
         ],
         "available_tools": [
@@ -125,7 +126,14 @@ _AGENT_DETAIL_CATALOG: dict[str, dict[str, Any]] = {
                 "name": "get_product_info",
                 "purpose": "根据商品ID查询商品详情，支持批量查询。",
                 "parameters": {
-                    "product_id": "商品ID（必填），支持单个或多个，多个用逗号分隔，如 1001,1002,1003",
+                    "product_id": "商品ID（必填），支持单个或多个",
+                },
+            },
+            {
+                "name": "get_drug_detail",
+                "purpose": "根据药品商品ID查询药品详细信息，包括说明书、适应症、用法用量等，支持批量查询。",
+                "parameters": {
+                    "product_id": "药品商品ID列表（必填），传入字符串列表形式，如 ['1001'] 或 ['1001', '1002']",
                 },
             },
         ],

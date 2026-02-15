@@ -7,7 +7,7 @@ from app.agent.admin.node.runtime_context import (
     build_step_runtime,
     evaluate_failure_by_policy,
 )
-from app.agent.tools.admin_tools import get_product_list, get_product_info
+from app.agent.tools.admin_tools import get_product_list, get_product_detail
 from app.core.assistant_status import status_node
 from app.core.langsmith import traceable
 from app.core.llm import create_chat_model
@@ -25,7 +25,11 @@ system_prompt = (
         - 商品详情查询
         - 商品状态与价格相关核验
         大部分情况下你在调用商品列表商品列表给你返回的信息就可以获取大部分信息，除非用户的需求商品列表无法满足你可以调用商品详情获取更加详细的信息
-        并且你一次只能调用一次工具你必须拿的到结果根据结果进行下一步操作
+        
+        # 工具使用
+        - 商品列表查询：调用 get_product_list 工具，根据商品名称、分类、价格区间、品牌等条件进行商品列表查询。
+        - 商品详情查询：调用 get_product_detail 工具，根据商品 ID 获取商品详情信息。当你需要查询多个商品详情时，这边优先一次性传递多个商品 ID 进行批量查询。
+            应该尽量避免一次传递1个商品 ID，优先一次性传递多个商品 ID 进行批量查询。
 
         # 数据约束
         - 只能使用真实返回数据，不得编造
@@ -59,7 +63,7 @@ def product_agent(state: AgentState) -> dict:
         template=system_prompt
     ).format_messages(instruction=instruction)
 
-    tools = [get_product_list, get_product_info]
+    tools = [get_product_list, get_product_detail]
     # 只有最终输出步骤才开启 stream 分支。
     final_output = is_final_node(state, "product_agent")
     try:

@@ -34,12 +34,14 @@ _system_prompt = """
     
     节点协调原则（必须严格遵守，以避免冗余和低效）：
     - 分析用户意图，拆解任务时，确保上游节点仅输出下游节点所需的精确数据。例如：
-      - 如果用户请求订单的商品详情（重点在商品信息），则 DAG 应为 order_agent -> product_agent。其中，order_agent 的 task_description 必须指定仅输出商品 ID 列表（不输出其他订单细节，如金额、状态等），然后 product_agent 使用这些 ID 查询并输出商品详情。
+      - 如果用户请求订单的商品详情（重点在商品信息），则 DAG 应为 order_agent -> product_agent。其中，order_agent 的 task_description 
+      必须指定仅输出商品 ID 列表（不输出其他订单细节，如金额、状态等）为了让下游知道你输出的是什么你应该在最前面描述一下你输出的是订单号还是商品ID，然后 product_agent 使用这些 ID 查询并输出商品详情。
       - 避免在上游节点输出完整细节，导致下游节点重复或冗余处理。使用 get_agent_detail 确认每个节点的输入要求和输出格式。
       - 对于多订单或多商品场景，确保每个节点的输出结构化（如列表或 ID 数组），便于下游读取。
       - 如果涉及汇总，使用 summary_agent 仅在末尾整合结果。
     - 始终优先最小化输出：上游节点 task_description 中明确限制输出字段（如 "仅输出商品 ID 列表"），以便下游节点高效处理。
-    - 示例问题：用户说“帮我查询前5个订单，然后给我前5个订单的商品详情每一个订单的详情单独给我”。正确 DAG：order_agent 查询前5订单并仅输出每个订单的商品 ID 列表；product_agent 输入这些 ID 并为每个订单单独输出商品详情；若需最终呈现，使用 summary_agent 汇总。
+    - 示例问题：用户说“帮我查询前5个订单，然后给我前5个订单的商品详情每一个订单的详情单独给我”。正确 DAG：order_agent 查询前5订单并仅输出每个订单的商品 ID 列表；
+    product_agent 输入这些 ID 并为每个订单单独输出商品详情；若需最终呈现，使用 summary_agent 汇总。
     
     注意：
     - chat_agent 由 gateway_router 处理，禁止出现在 plan 中。

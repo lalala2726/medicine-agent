@@ -8,6 +8,19 @@ from app.schemas.http_response import HttpResponse
 from app.utils.http_client import HttpClient
 
 
+def format_ids_to_string(ids: list[str]) -> str:
+    """
+    将 ID 列表转换为逗号分隔的字符串格式。
+
+    Args:
+        ids: ID 列表，如 ['1', '2', '3'] 或 ['26', '11', '15', '17']
+
+    Returns:
+        逗号分隔的字符串，如 '1,2,3' 或 '26,11,15,17'
+    """
+    return ",".join(str(id_) for id_ in ids)
+
+
 class MallProductListQueryRequest(BaseModel):
     """商城商品列表查询请求参数"""
     page_num: Optional[int] = Field(
@@ -82,9 +95,8 @@ class MallOrderListRequest(BaseModel):
 
 class ProductInfoRequest(BaseModel):
     """商品详情查询请求参数"""
-    product_id: str = Field(
+    product_id: list[str] = Field(
         description="商品ID，支持单个或多个批量查询。"
-                    "单个ID示例: '1001'；多个ID用英文逗号分隔: '1001,1002,1003'。"
     )
 
 
@@ -92,15 +104,13 @@ class DrugDetailRequest(BaseModel):
     """药品详情查询请求参数"""
     product_id: list[str] = Field(
         description="药品商品ID列表，支持批量查询。"
-                    "传入字符串列表形式，例如 ['1001'] 或 ['1001', '1002', '1003']。"
     )
 
 
 class OrderDetailRequest(BaseModel):
     """订单详情查询请求参数"""
-    order_id: str = Field(
+    order_id: list[str] = Field(
         description="订单ID，支持单个或多个批量查询。"
-                    "单个ID示例: '1'；多个ID用英文逗号分隔: '1,2,3,4,5'。"
     )
 
 
@@ -118,7 +128,7 @@ async def get_user_info() -> dict:
 
 
 @tool(args_schema=MallProductListQueryRequest, description="搜索商城商品列表，支持按名称、价格区间、分类等条件筛选。"
-                                                           "调用时机：用户需要浏览或搜索商品时。")
+                                                           "调用时机：当用户关注于商城内的商品信息时。")
 @tool_call_status(tool_name="获取商品列表")
 async def get_product_list(
         page_num: int = 1,
@@ -145,20 +155,21 @@ async def get_product_list(
             "minPrice": min_price,
             "maxPrice": max_price,
         }
-        response = await client.get(url="/agent/tools/products/search", params=params)
+        response = await client.get(url="/agent/tools/product/list", params=params)
         return HttpResponse.parse_data(response)
 
 
 @tool(args_schema=ProductInfoRequest, description="根据商品ID获取详细信息，支持批量查询。"
                                                   "调用时机：用户明确询问某个或某些商品的详细信息时。")
 @tool_call_status(tool_name="获取商品详情")
-async def get_product_info(product_id: str) -> dict:
+async def get_product_detail(product_id: list[str]) -> dict:
     """
     根据商品ID获取详细信息，支持批量查询。
     后端路径格式：`/agent/products/{ids}`，例如 `/agent/tools/products/1001,1002`。
     """
+    ids_str = format_ids_to_string(product_id)
     async with HttpClient() as client:
-        response = await client.get(url=f"/agent/tools/product/{product_id}")
+        response = await client.get(url=f"/agent/tools/product/{ids_str}")
         return HttpResponse.parse_data(response)
 
 
@@ -170,8 +181,9 @@ async def get_drug_detail(product_id: list[str]) -> dict:
     根据药品商品ID获取详细药品信息，包括药品说明书、适应症、用法用量等。
     支持批量查询多个药品。
     """
+    ids_str = format_ids_to_string(product_id)
     async with HttpClient() as client:
-        response = await client.get(url=f"/agent/tools/drug/{product_id}")
+        response = await client.get(url=f"/agent/tools/drug/{ids_str}")
         return HttpResponse.parse_data(response)
 
 
@@ -210,13 +222,14 @@ async def get_order_list(
 @tool(args_schema=OrderDetailRequest, description="根据订单ID获取详细信息，包括收货地址、物流信息、商品明细等，支持批量查询。"
                                                   "调用时机：用户询问某个或某些订单的详细信息时，或订单列表信息无法满足用户需求时。")
 @tool_call_status(tool_name="获取订单详情")
-async def get_orders_detail(order_id: str) -> dict:
+async def get_orders_detail(order_id: list[str]) -> dict:
     """
     获取订单详情，支持批量查询。
     后端路径格式：`/agent/tools/orders/{ids}`，例如 `/agent/tools/orders/1,2,3`。
     """
+    ids_str = format_ids_to_string(order_id)
     async with HttpClient() as client:
-        response = await client.get(url=f"/agent/tools/order/{order_id}")
+        response = await client.get(url=f"/agent/tools/order/{ids_str}")
         return HttpResponse.parse_data(response)
 
 
@@ -225,7 +238,7 @@ async def get_orders_detail(order_id: str) -> dict:
 ADMIN_TOOLS = [
     get_user_info,
     get_product_list,
-    get_product_info,
+    get_product_detail,
     get_order_list,
     get_orders_detail,
     get_drug_detail
