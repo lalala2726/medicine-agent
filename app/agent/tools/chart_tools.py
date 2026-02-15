@@ -357,7 +357,9 @@ def _find_template(name_or_type: str) -> dict[str, Any] | None:
     return None
 
 
-@tool
+@tool(
+    description="根据图表名称或类型获取标准模板。返回的结构不可更改，生成图表时仅替换数据值。"
+                "在用户要求生成图表的时候这边必须调用此工具查询图表的模板，并且必须严格遵守返回的结构，否则可能会导致图表生成失败")
 @tool_call_status(tool_name="获取图表模板")
 def get_chart_sample_by_name(
         explanation: Annotated[str, "说明调用原因，例如：根据趋势数据准备生成折线图"],
