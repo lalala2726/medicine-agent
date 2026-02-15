@@ -1,4 +1,7 @@
+import time
+
 from fastapi import Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -8,6 +11,40 @@ from app.schemas.response import ApiResponse
 
 
 class ExceptionHandlers:
+    @staticmethod
+    def _format_validation_errors(exc: RequestValidationError) -> list[dict[str, str]]:
+        formatted_errors: list[dict[str, str]] = []
+        for item in exc.errors():
+            loc = item.get("loc", ())
+            field_parts = [
+                str(part)
+                for part in loc
+                if part not in {"body", "query", "path", "header", "cookie"}
+            ]
+            field = ".".join(field_parts) if field_parts else "body"
+            formatted_errors.append(
+                {
+                    "field": field,
+                    "message": item.get("msg", "Validation error"),
+                    "type": item.get("type", "validation_error"),
+                }
+            )
+        return formatted_errors
+
+    @staticmethod
+    async def request_validation_exception_handler(
+            _: Request, exc: RequestValidationError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=ResponseCode.BAD_REQUEST,
+            content={
+                "code": ResponseCode.BAD_REQUEST,
+                "message": "Validation Failed",
+                "errors": ExceptionHandlers._format_validation_errors(exc),
+                "timestamp": int(time.time() * 1000),
+            },
+        )
+
     @staticmethod
     async def service_exception_handler(_: Request, exc: ServiceException) -> JSONResponse:
         try:

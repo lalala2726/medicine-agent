@@ -14,7 +14,7 @@ from app.core.exceptions import ServiceException
 from app.schemas.response import ApiResponse
 from app.services.image_parse_service import parse_drug_images
 
-router = APIRouter(prefix="/image/parse", tags=["图像解析"])
+router = APIRouter(prefix="/image_parse", tags=["图像解析"])
 
 
 class ImageParseRequest(BaseModel):
