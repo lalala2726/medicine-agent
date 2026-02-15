@@ -30,4 +30,5 @@ dependencies = [
     "langsmith>=0.6.4",
     "pandas>=3.0.0",
     "pandas-stubs>=3.0.0.260204",
+    "pymongo>=4.16.0",
 ]

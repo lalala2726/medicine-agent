@@ -1,3 +1,5 @@
+import json
+
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.agent.admin.agent_state import AgentState
@@ -20,9 +22,25 @@ _CHAT_SYSTEM_PROMPT = (
         + base_prompt
 )
 
+_FALLBACK_CHAT_SYSTEM_PROMPT = (
+        """
+    你是药品商城后台管理助手里的兜底解释节点（chat_agent fallback mode）。
+    你将收到一个调度失败上下文（包含失败步骤与部分成功结果），你的输出目标是：
+    1. 先说明本次未能完整执行的核心原因（简洁、直接，不使用技术术语堆砌）；
+    2. 再给出已成功完成的部分结果摘要；
+    3. 如果失败原因里包含具体步骤和错误信息，要用用户可理解的话转述；
+    4. 不要编造任何不存在的数据。
+    """
+        + base_prompt
+)
+
 
 @traceable(name="Chat Agent Node", run_type="chain")
 def chat_agent(state: AgentState) -> AgentState:
+    routing = state.get("routing") or {}
+    fallback_context = routing.get("fallback_context")
+    is_fallback = isinstance(fallback_context, dict) and bool(fallback_context)
+
     user_input = str(state.get("user_input") or "").strip()
     if not user_input:
         user_input = "你好"
@@ -32,10 +50,17 @@ def chat_agent(state: AgentState) -> AgentState:
             temperature=1.3,
             model="qwen-flash",
         )
-        messages = [
-            SystemMessage(content=_CHAT_SYSTEM_PROMPT),
-            HumanMessage(content=user_input),
-        ]
+        if is_fallback:
+            fallback_input = json.dumps(fallback_context, ensure_ascii=False)
+            messages = [
+                SystemMessage(content=_FALLBACK_CHAT_SYSTEM_PROMPT),
+                HumanMessage(content=fallback_input),
+            ]
+        else:
+            messages = [
+                SystemMessage(content=_CHAT_SYSTEM_PROMPT),
+                HumanMessage(content=user_input),
+            ]
         if hasattr(llm, "stream") and callable(getattr(llm, "stream")):
             streamed_parts: list[str] = []
             for chunk in llm.stream(messages):
@@ -52,7 +77,7 @@ def chat_agent(state: AgentState) -> AgentState:
 
     results = dict(state.get("results") or {})
     results["chat"] = {
-        "mode": "chat",
+        "mode": "fallback" if is_fallback else "chat",
         "content": content,
     }
     return {"results": results}

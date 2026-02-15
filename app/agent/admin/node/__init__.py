@@ -17,6 +17,7 @@ from app.agent.admin.node.chart_node import chart_agent
 from app.agent.admin.node.coordinator_node import coordinator
 from app.agent.admin.node.excel_node import excel_agent
 from app.agent.admin.node.order_node import order_agent
+from app.agent.admin.node.product_node import product_agent
 from app.agent.admin.node.summary_node import summary_agent
 
 __all__ = [
@@ -25,5 +26,6 @@ __all__ = [
     "coordinator",
     "excel_agent",
     "order_agent",
+    "product_agent",
     "summary_agent",
 ]

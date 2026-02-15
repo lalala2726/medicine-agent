@@ -1,5 +1,5 @@
 import json
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
@@ -26,10 +26,19 @@ STREAM_OUTPUT_NODES = {
 }
 
 
+class HistoryMessageRequest(BaseModel):
+    role: Literal["user", "assistant"] = Field(..., description="消息角色")
+    content: str = Field(..., description="消息内容")
+
+
 class AssistantRequest(BaseModel):
     """AI助手请求参数"""
 
     question: str = Field(..., description="问题")
+    history_messages: list[HistoryMessageRequest] = Field(
+        default_factory=list,
+        description="可选历史消息，元素为 {role, content}",
+    )
 
 
 def _invoke_admin_workflow(state: dict) -> dict:
@@ -63,13 +72,18 @@ def _build_stream_config() -> dict | None:
     )
 
 
-def _build_initial_state(question: str) -> dict[str, Any]:
+def _build_initial_state(
+        question: str,
+        history_messages: list[HistoryMessageRequest] | None = None,
+) -> dict[str, Any]:
     """
     构造管理助手的初始状态。
 
     所有节点共享该状态结构，避免执行过程中出现缺失键导致的分支判断复杂化。
     """
 
+    # 初始状态里预置 step_outputs/history_messages，
+    # 让 DAG 节点与 planner 不需要做大量判空分支。
     return {
         "user_input": question,
         "user_intent": {},
@@ -79,6 +93,11 @@ def _build_initial_state(question: str) -> dict[str, Any]:
         "product_context": {},
         "aftersale_context": {},
         "excel_context": {},
+        "history_messages": [
+            {"role": item.role, "content": item.content}
+            for item in (history_messages or [])
+        ],
+        "step_outputs": {},
         "shared_memory": {},
         "results": {},
         "errors": [],
@@ -119,6 +138,18 @@ def _extract_content(final_state: dict[str, Any]) -> str:
     product_content = product_result.get("content")
     if isinstance(product_content, str) and product_content:
         return product_content
+
+    # 当最终节点被依赖阻断时，优先把 skipped 原因返回给前端。
+    step_outputs = final_state.get("step_outputs") or {}
+    if isinstance(step_outputs, dict):
+        skipped_reasons: list[str] = []
+        for item in step_outputs.values():
+            if isinstance(item, dict) and item.get("status") == "skipped":
+                reason = item.get("error")
+                if isinstance(reason, str) and reason:
+                    skipped_reasons.append(reason)
+        if skipped_reasons:
+            return "；".join(skipped_reasons)
 
     errors = final_state.get("errors") or []
     if errors:
@@ -174,7 +205,10 @@ async def assistant(request: AssistantRequest) -> StreamingResponse:
     # 统一把“业务策略”注入流式引擎：状态构造、token 过滤、异常映射、兜底提取。
     stream_config = AssistantStreamConfig(
         workflow=ADMIN_WORKFLOW,
-        build_initial_state=_build_initial_state,
+        build_initial_state=lambda question: _build_initial_state(
+            question,
+            request.history_messages,
+        ),
         extract_final_content=_extract_content,
         should_stream_token=_should_stream_token,
         build_stream_config=_build_stream_config,

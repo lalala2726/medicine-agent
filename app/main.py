@@ -2,6 +2,7 @@ from typing import Awaitable, Callable
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import Response
@@ -22,6 +23,10 @@ app = FastAPI()
 app.add_middleware(CORSMiddleware, **load_cors_config())
 app.include_router(api_router)
 
+app.add_exception_handler(
+    RequestValidationError,
+    ExceptionHandlers.request_validation_exception_handler,
+)
 app.add_exception_handler(ServiceException, ExceptionHandlers.service_exception_handler)
 app.add_exception_handler(StarletteHTTPException, ExceptionHandlers.http_exception_handler)
 app.add_exception_handler(Exception, ExceptionHandlers.unhandled_exception_handler)

@@ -1,140 +1,49 @@
-import operator
 from pathlib import Path
-from typing import Annotated, TypedDict
 
 import pytest
-from langgraph.constants import END, START
-from langgraph.graph import StateGraph
 
-import app.agent.admin.chat_node as chat_module
+import app.agent.admin.node.chat_node as chat_module
 import app.agent.admin.workflow as workflow_module
 from app.agent.admin.workflow import build_graph
 
 
 def _safe_draw_mermaid_png(compiled_graph) -> bytes:
-    """
-    在离线或 DNS 受限环境下安全地获取 Mermaid 图片字节。
-
-    LangGraph 默认会调用 mermaid.ink 在线渲染，
-    当测试环境无法访问外网时，这里返回一个占位字节串，避免测试因网络失败。
-    """
     try:
         return compiled_graph.get_graph().draw_mermaid_png()
     except Exception as exc:
         return f"mermaid render skipped: {exc}".encode("utf-8")
 
 
-def test_build_graph():
-    png_bytes = _safe_draw_mermaid_png(build_graph())
-    assert png_bytes
-
-    try:
-        from IPython import get_ipython
-        from IPython.display import Image, display
-
-        if get_ipython() is not None:
-            display(Image(png_bytes))
-            return
-    except Exception:
-        pass
-
-    output_path = Path("tmp/admin_workflow_graph.png")
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_bytes(png_bytes)
-    assert output_path.exists()
-    print(f"graph image saved to: {output_path.resolve()}")
-
-
-def _build_fake_plan(*node_names: str) -> list[dict]:
-    return [
-        {
-            "node_name": node_name,
-            "task_description": f"fake task for {node_name}",
-            "last_node": ["coordinator_agent"],
-        }
-        for node_name in node_names
-    ]
-
-
-def _build_initial_state(plan: list[dict | list[dict]]) -> dict:
+def _build_initial_state(
+        plan: list[dict],
+        routing: dict | None = None,
+        step_outputs: dict | None = None,
+) -> dict:
     return {
         "user_input": "fake user request",
         "user_intent": {"type": "fake"},
         "plan": plan,
-        "routing": {},
+        "routing": routing or {},
         "order_context": {},
+        "product_context": {},
         "aftersale_context": {},
         "excel_context": {},
+        "history_messages": [],
+        "step_outputs": step_outputs or {},
         "shared_memory": {},
         "results": {},
         "errors": [],
     }
 
 
-class _VisualGraphState(TypedDict):
-    # 并行节点写入时使用 reducer 聚合，避免 INVALID_CONCURRENT_GRAPH_UPDATE
-    trace: Annotated[list[str], operator.add]
+def test_build_graph():
+    png_bytes = _safe_draw_mermaid_png(build_graph())
+    assert png_bytes
 
-
-def _build_stage_visual_graph(stage_node_names: list[list[str]]):
-    """按阶段构造可视化图，支持并行阶段（如 AB -> C）。"""
-    graph = StateGraph(_VisualGraphState)
-
-    def _noop_node(state: _VisualGraphState) -> _VisualGraphState:
-        return {"trace": []}
-
-    all_nodes = {
-        "coordinator_agent",
-        *(node_name for stage in stage_node_names for node_name in stage),
-    }
-    for node_name in all_nodes:
-        graph.add_node(node_name, _noop_node)
-
-    if not stage_node_names:
-        graph.add_edge(START, END)
-        return graph.compile()
-
-    graph.add_edge(START, "coordinator_agent")
-    for first_stage_node in stage_node_names[0]:
-        graph.add_edge("coordinator_agent", first_stage_node)
-
-    for stage_index in range(len(stage_node_names) - 1):
-        current_stage = stage_node_names[stage_index]
-        next_stage = stage_node_names[stage_index + 1]
-
-        for next_stage_node in next_stage:
-            if len(current_stage) == 1:
-                graph.add_edge(current_stage[0], next_stage_node)
-            else:
-                graph.add_edge(current_stage, next_stage_node)
-
-    last_stage = stage_node_names[-1]
-    if len(last_stage) == 1:
-        graph.add_edge(last_stage[0], END)
-    else:
-        graph.add_edge(last_stage, END)
-
-    return graph.compile()
-
-
-def _draw_execution_path_png(stage_nodes: list[list[str]], output_path: Path) -> None:
-    """使用 LangGraph Mermaid 渲染阶段编排图，图片中可直观看到 START/END。"""
-    compiled_graph = _build_stage_visual_graph(stage_nodes)
-    png_bytes = _safe_draw_mermaid_png(compiled_graph)
+    output_path = Path("tmp/admin_workflow_graph.png")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_bytes(png_bytes)
-
-
-def _assert_execution_trace_by_stages(execution_trace: list[str], expected_stages: list[list[str]]) -> None:
-    """断言阶段顺序正确；同一并行阶段内不要求节点顺序。"""
-    offset = 0
-    for expected_stage in expected_stages:
-        stage_size = len(expected_stage)
-        actual_stage = execution_trace[offset: offset + stage_size]
-        assert len(actual_stage) == stage_size
-        assert set(actual_stage) == set(expected_stage)
-        offset += stage_size
-    assert offset == len(execution_trace)
+    assert output_path.exists()
 
 
 def test_chat_node_handles_non_business_chat(monkeypatch: pytest.MonkeyPatch):
@@ -148,20 +57,9 @@ def test_chat_node_handles_non_business_chat(monkeypatch: pytest.MonkeyPatch):
 
     monkeypatch.setattr(chat_module, "create_chat_model", lambda *args, **kwargs: _DummyModel())
 
-    state = {
-        "user_input": "今天天气有点冷，给点保暖建议",
-        "user_intent": {},
-        "plan": [],
-        "routing": {},
-        "order_context": {},
-        "aftersale_context": {},
-        "excel_context": {},
-        "shared_memory": {},
-        "results": {},
-        "errors": [],
-    }
+    state = _build_initial_state(plan=[])
+    state["user_input"] = "今天天气有点冷，给点保暖建议"
     result = chat_module.chat_agent(state)
-    print(result["results"]["chat"]["content"])
     assert result["results"]["chat"]["mode"] == "chat"
     assert result["results"]["chat"]["content"] == "你好，我可以陪你聊聊日常问题。"
 
@@ -186,88 +84,235 @@ def test_chat_node_streams_when_model_supports_stream(monkeypatch: pytest.Monkey
     dummy_model = _DummyModel()
     monkeypatch.setattr(chat_module, "create_chat_model", lambda *args, **kwargs: dummy_model)
 
-    state = {
-        "user_input": "你好",
-        "user_intent": {},
-        "plan": [],
-        "routing": {},
-        "order_context": {},
-        "aftersale_context": {},
-        "excel_context": {},
-        "shared_memory": {},
-        "results": {},
-        "errors": [],
-    }
+    state = _build_initial_state(plan=[])
+    state["user_input"] = "你好"
     result = chat_module.chat_agent(state)
-
     assert dummy_model.invoke_called is False
     assert result["results"]["chat"]["content"] == "你好"
 
 
+def _make_step(
+        step_id: str,
+        node_name: str,
+        *,
+        depends_on: list[str] | None = None,
+        optional_depends_on: list[str] | None = None,
+        read_from: list[str] | None = None,
+        final_output: bool = False,
+) -> dict:
+    return {
+        "step_id": step_id,
+        "node_name": node_name,
+        "task_description": f"task for {step_id}",
+        "required_depends_on": depends_on or [],
+        "optional_depends_on": optional_depends_on or [],
+        "read_from": read_from or [],
+        "include_user_input": False,
+        "include_chat_history": False,
+        "final_output": final_output,
+    }
+
+
 @pytest.mark.parametrize(
-    ("case_name", "plan", "expected_stages"),
+    ("case_name", "plan", "expected_trace"),
     [
         (
-                "order_excel_chart",
-                _build_fake_plan("order_agent", "excel_agent", "chart_agent"),
-                [["order_agent"], ["excel_agent"], ["chart_agent"]],
+            "a_to_b_to_c",
+            [
+                _make_step("s1", "order_agent"),
+                _make_step("s2", "product_agent", depends_on=["s1"], read_from=["s1"]),
+                _make_step(
+                    "s3",
+                    "summary_agent",
+                    depends_on=["s2"],
+                    read_from=["s2"],
+                    final_output=True,
+                ),
+            ],
+            ["order_agent", "product_agent", "summary_agent"],
         ),
         (
-                "order_chart",
-                _build_fake_plan("order_agent", "chart_agent"),
-                [["order_agent"], ["chart_agent"]],
+            "a_parallel_b_then_c",
+            [
+                _make_step("s1", "order_agent"),
+                _make_step("s2", "product_agent"),
+                _make_step(
+                    "s3",
+                    "summary_agent",
+                    depends_on=["s1", "s2"],
+                    read_from=["s1", "s2"],
+                    final_output=True,
+                ),
+            ],
+            ["order_agent", "product_agent", "summary_agent"],
         ),
         (
-                "order_skip_unknown_chart",
-                _build_fake_plan("order_agent", "unknown_agent", "chart_agent"),
-                [["order_agent"], ["chart_agent"]],
-        ),
-        (
-                "order_and_excel_then_chart",
-                [
-                    _build_fake_plan("order_agent", "excel_agent"),
-                    {
-                        "node_name": "chart_agent",
-                        "task_description": "final chart step",
-                        "last_node": ["order_agent", "excel_agent"],
-                    },
-                ],
-                [["order_agent", "excel_agent"], ["chart_agent"]],
+            "same_node_twice_sequential",
+            [
+                _make_step("s1", "product_agent"),
+                _make_step("s2", "product_agent", depends_on=["s1"], read_from=["s1"]),
+                _make_step(
+                    "s3",
+                    "summary_agent",
+                    depends_on=["s2"],
+                    read_from=["s2"],
+                    final_output=True,
+                ),
+            ],
+            ["product_agent", "product_agent", "summary_agent"],
         ),
     ],
 )
-def test_workflow_dynamic_plan_sequence_and_export_path_image(
+def test_workflow_dynamic_dag_sequence(
         monkeypatch: pytest.MonkeyPatch,
         case_name: str,
-        plan: list[dict | list[dict]],
-        expected_stages: list[list[str]],
+        plan: list[dict],
+        expected_trace: list[str],
 ):
     execution_trace: list[str] = []
 
-    def fake_coordinator_agent(state: dict) -> dict:
-        # 这里不改计划，直接进入 router，保证测试关注路由编排行为。
+    def fake_gateway_router(_state: dict) -> dict:
+        return {
+            "routing": {
+                "route_target": "coordinator_agent",
+                "difficulty": "medium",
+                "next_nodes": [],
+            }
+        }
+
+    def fake_coordinator(_state: dict) -> dict:
         return {}
 
     def _fake_node(node_name: str):
         def _runner(state: dict) -> dict:
             execution_trace.append(node_name)
-            # 并行阶段避免同时写入同一个状态 key，测试只验证编排顺序。
-            return {}
+            step = ((state.get("routing") or {}).get("current_step_map") or {}).get(node_name) or {}
+            step_id = step.get("step_id")
+            if not step_id:
+                return {}
+            return {
+                "step_outputs": {
+                    step_id: {
+                        "step_id": step_id,
+                        "node_name": node_name,
+                        "status": "completed",
+                        "text": f"{node_name} done",
+                        "output": {"ok": True},
+                    }
+                }
+            }
 
         return _runner
 
-    monkeypatch.setattr(workflow_module, "coordinator", fake_coordinator_agent)
+    monkeypatch.setattr(workflow_module, "gateway_router", fake_gateway_router)
+    monkeypatch.setattr(workflow_module, "coordinator", fake_coordinator)
     monkeypatch.setattr(workflow_module, "order_agent", _fake_node("order_agent"))
-    monkeypatch.setattr(workflow_module, "excel_agent", _fake_node("excel_agent"))
+    monkeypatch.setattr(workflow_module, "product_agent", _fake_node("product_agent"))
+    monkeypatch.setattr(workflow_module, "summary_agent", _fake_node("summary_agent"))
     monkeypatch.setattr(workflow_module, "chart_agent", _fake_node("chart_agent"))
+    monkeypatch.setattr(workflow_module, "excel_agent", _fake_node("excel_agent"))
 
     graph = workflow_module.build_graph()
-    result = graph.invoke(_build_initial_state(plan))
+    result = graph.invoke(_build_initial_state(plan=plan))
 
-    _assert_execution_trace_by_stages(execution_trace, expected_stages)
-    assert result["routing"]["stage_index"] >= len(expected_stages)
+    assert execution_trace == expected_trace
+    assert result["routing"]["next_nodes"] == []
+    assert all(step_id in result["step_outputs"] for step_id in [step["step_id"] for step in plan])
 
-    # 产出每个场景的编排图片: START -> coordinator_agent -> (并行/串行阶段) -> END
-    output_path = Path(f"tmp/admin_workflow_path_{case_name}.png")
-    _draw_execution_path_png(expected_stages, output_path)
+    output_path = Path(f"tmp/admin_workflow_path_{case_name}.txt")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(",".join(execution_trace), encoding="utf-8")
     assert output_path.exists()
+
+
+def test_workflow_blocks_downstream_on_failure(monkeypatch: pytest.MonkeyPatch):
+    plan = [
+        _make_step("s1", "order_agent"),
+        _make_step("s2", "summary_agent", depends_on=["s1"], read_from=["s1"], final_output=True),
+    ]
+
+    def fake_gateway_router(_state: dict) -> dict:
+        return {"routing": {"route_target": "coordinator_agent", "difficulty": "medium"}}
+
+    def fake_coordinator(_state: dict) -> dict:
+        return {}
+
+    def fail_order(state: dict) -> dict:
+        step = ((state.get("routing") or {}).get("current_step_map") or {}).get("order_agent") or {}
+        step_id = step.get("step_id")
+        return {
+            "step_outputs": {
+                step_id: {
+                    "step_id": step_id,
+                    "node_name": "order_agent",
+                    "status": "failed",
+                    "text": "fail",
+                    "output": {},
+                    "error": "boom",
+                }
+            }
+        }
+
+    monkeypatch.setattr(workflow_module, "gateway_router", fake_gateway_router)
+    monkeypatch.setattr(workflow_module, "coordinator", fake_coordinator)
+    monkeypatch.setattr(workflow_module, "order_agent", fail_order)
+    monkeypatch.setattr(workflow_module, "summary_agent", lambda _state: {})
+    monkeypatch.setattr(workflow_module, "chat_agent", lambda _state: {"results": {"chat": {"content": "fallback"}}})
+
+    result = workflow_module.build_graph().invoke(_build_initial_state(plan=plan))
+    assert result["step_outputs"]["s2"]["status"] == "skipped"
+    assert "阻断" in result["step_outputs"]["s2"]["error"]
+    assert result["routing"]["next_nodes"] == ["chat_agent"] or "fallback_context" in result["routing"]
+
+
+def test_planner_waits_optional_dependencies_until_terminal():
+    plan = [
+        _make_step("s1", "order_agent"),
+        _make_step("s2", "product_agent"),
+        _make_step(
+            "s3",
+            "summary_agent",
+            depends_on=["s2"],
+            optional_depends_on=["s1"],
+            read_from=["s1", "s2"],
+            final_output=True,
+        ),
+    ]
+    first = workflow_module.planner(_build_initial_state(plan=plan, routing={}))["routing"]
+    assert set(first["next_nodes"]) == {"order_agent", "product_agent"}
+
+    # 仅 s2 完成时，s3 还不能执行（s1 optional 还未终态），此时会继续调度 s1。
+    second = workflow_module.planner(
+        _build_initial_state(
+            plan=plan,
+            routing=first,
+            step_outputs={"s2": {"status": "completed"}},
+        )
+    )["routing"]
+    assert second["next_nodes"] == ["order_agent"]
+
+    # s1 失败后进入终态，s3 可执行
+    third = workflow_module.planner(
+        _build_initial_state(
+            plan=plan,
+            routing=second,
+            step_outputs={"s2": {"status": "completed"}, "s1": {"status": "failed"}},
+        )
+    )["routing"]
+    assert third["next_nodes"] == ["summary_agent"]
+
+
+def test_planner_routes_to_chat_when_final_step_unreachable():
+    plan = [
+        _make_step("s1", "order_agent"),
+        _make_step("s2", "summary_agent", depends_on=["s1"], final_output=True),
+    ]
+    result = workflow_module.planner(
+        _build_initial_state(
+            plan=plan,
+            step_outputs={"s1": {"status": "failed", "error": "boom"}},
+        )
+    )
+    routing = result["routing"]
+    assert routing["next_nodes"] == ["chat_agent"]
+    assert routing["fallback_context"]["trigger"] == "final_output_unreachable"

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json as json_lib
 import os
 import time
+import uuid
 from pathlib import Path
 from typing import Any, Mapping, Optional
 
@@ -30,6 +31,7 @@ class HttpClient:
             base_url: Optional[str] = None,
             headers: Optional[Mapping[str, str]] = None,
             timeout: Optional[float] = 30.0,
+            agent_key: Optional[str] = None,
     ) -> None:
         self._ensure_env_loaded()
         if base_url is None:
@@ -37,6 +39,7 @@ class HttpClient:
         self._default_log_enabled = self._parse_bool(
             os.getenv("HTTP_CLIENT_LOG_ENABLED")
         )
+        self._agent_key = agent_key or os.getenv("X_AGENT_KEY", "")
         self._default_headers = dict(headers or {})
         self._client = httpx.AsyncClient(
             base_url=base_url or "",
@@ -77,6 +80,7 @@ class HttpClient:
             "authorization",
             "proxy-authorization",
             "x-api-key",
+            "x-agent-key",
         }
         return {
             key: "***" if key.lower() in sensitive_keys else value
@@ -103,6 +107,7 @@ class HttpClient:
         合并请求头并注入当前请求的 Authorization。
         - 显式传入的 headers 优先
         - 若未显式传入 Authorization，则从请求上下文注入
+        - 自动添加 X-Agent-Key、X-Agent-Timestamp、X-Agent-Nonce
         """
         merged = dict(self._default_headers)
         if headers:
@@ -112,6 +117,13 @@ class HttpClient:
             auth = get_authorization_header()
             if auth:
                 merged["Authorization"] = auth
+
+        # 添加 Agent 相关请求头
+        if self._agent_key:
+            merged["X-Agent-Key"] = self._agent_key
+        merged["X-Agent-Timestamp"] = str(int(time.time()))
+        merged["X-Agent-Nonce"] = str(uuid.uuid4())
+
         return merged
 
     async def close(self) -> None:

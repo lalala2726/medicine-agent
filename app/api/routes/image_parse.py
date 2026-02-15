@@ -14,7 +14,7 @@ from app.core.exceptions import ServiceException
 from app.schemas.response import ApiResponse
 from app.services.image_parse_service import parse_drug_images
 
-router = APIRouter(prefix="/image/parse", tags=["图像解析"])
+router = APIRouter(prefix="/image_parse", tags=["图像解析"])
 
 
 class ImageParseRequest(BaseModel):
@@ -22,8 +22,10 @@ class ImageParseRequest(BaseModel):
 
     image_urls: List[str] = Field(
         ...,
+        min_length=1,
+        max_length=5,
         validation_alias=AliasChoices("image_urls", "images"),
-        description="图片 URL 列表",
+        description="图片 URL 列表，最少1张，最多5张",
     )
 
 
@@ -41,8 +43,6 @@ async def parse_image(request: ImageParseRequest) -> ApiResponse[dict]:
     Raises:
         ServiceException: 图片列表为空时抛出异常
     """
-    if not request.image_urls:
-        raise ServiceException(code=ResponseCode.BAD_REQUEST, message="图片不能为空")
 
     data = parse_drug_images(request.image_urls)
     return ApiResponse.success(data=data, message="解析成功")
