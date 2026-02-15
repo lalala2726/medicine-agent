@@ -24,13 +24,18 @@ class ExceptionHandlers:
         )
 
     @staticmethod
-    async def http_exception_handler(_: Request, exc: StarletteHTTPException) -> JSONResponse:
+    async def http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
         try:
             response_code = ResponseCode(exc.status_code)
         except ValueError:
             response_code = None
         if response_code:
-            content = ApiResponse.error(response_code).model_dump()
+            # 404 错误时包含请求路径信息
+            if exc.status_code == 404:
+                message = f"路由 {request.url.path} 不存在"
+            else:
+                message = None
+            content = ApiResponse.error(response_code, message=message).model_dump()
         else:
             content = ApiResponse(code=exc.status_code, message=str(exc.detail)).model_dump()
         return JSONResponse(
