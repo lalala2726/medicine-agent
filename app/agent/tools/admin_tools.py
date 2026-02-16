@@ -128,7 +128,7 @@ async def get_user_info() -> dict:
     当用户询问“我是谁”、“我的账户信息”或需要用户ID进行后续操作时调用。
     """
     async with HttpClient() as client:
-        response = await client.get(url="/agent/tools/current_user")
+        response = await client.get(url="/agent/info")
         return HttpResponse.parse_data(response)
 
 
@@ -166,7 +166,7 @@ async def get_product_list(
             "minPrice": min_price,
             "maxPrice": max_price,
         }
-        response = await client.get(url="/agent/tools/product/list", params=params)
+        response = await client.get(url="/agent/product/list", params=params)
         return HttpResponse.parse_data(response)
 
 
@@ -181,11 +181,11 @@ async def get_product_list(
 async def get_product_detail(product_id: list[str]) -> dict:
     """
     根据商品ID获取详细信息，支持批量查询。
-    后端路径格式：`/agent/products/{ids}`，例如 `/agent/tools/products/1001,1002`。
+    后端路径格式：`/agent/products/{ids}`，例如 `/agent/products/1001,1002`。
     """
     ids_str = format_ids_to_string(product_id)
     async with HttpClient() as client:
-        response = await client.get(url=f"/agent/tools/product/{ids_str}")
+        response = await client.get(url=f"/agent/product/{ids_str}")
         return HttpResponse.parse_data(response)
 
 
@@ -204,7 +204,7 @@ async def get_drug_detail(product_id: list[str]) -> dict:
     """
     ids_str = format_ids_to_string(product_id)
     async with HttpClient() as client:
-        response = await client.get(url=f"/agent/tools/drug/{ids_str}")
+        response = await client.get(url=f"/agent/drug/{ids_str}")
         return HttpResponse.parse_data(response)
 
 
@@ -241,7 +241,7 @@ async def get_order_list(
             "receiverName": receiver_name,
             "receiverPhone": receiver_phone,
         }
-        response = await client.get(url="/agent/tools/order/list", params=params)
+        response = await client.get(url="/agent/order/list", params=params)
         return HttpResponse.parse_data(response)
 
 
@@ -256,11 +256,11 @@ async def get_order_list(
 async def get_orders_detail(order_id: list[str]) -> dict:
     """
     获取订单详情，支持批量查询。
-    后端路径格式：`/agent/tools/orders/{ids}`，例如 `/agent/tools/orders/1,2,3`。
+    后端路径格式：`/agent/orders/{ids}`，例如 `/agent/orders/1,2,3`。
     """
     ids_str = format_ids_to_string(order_id)
     async with HttpClient() as client:
-        response = await client.get(url=f"/agent/tools/order/{ids_str}")
+        response = await client.get(url=f"/agent/order/{ids_str}")
         return HttpResponse.parse_data(response)
 
 
