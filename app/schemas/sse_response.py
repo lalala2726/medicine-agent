@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 class Content(BaseModel):
     text: str | None = Field(default=None, description="文本")
     node: str | None = Field(default=None, description="节点")
+    parent_node: str | None = Field(default=None, description="所属节点")
     state: str | None = Field(default=None, description="状态")
     message: str | None = Field(default=None, description="消息")
     result: str | None = Field(default=None, description="结果")

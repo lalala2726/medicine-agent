@@ -204,6 +204,90 @@ def test_status_node_after_coordinator_exception_does_not_emit_when_disabled():
     assert events == []
 
 
+def test_tool_call_status_inherits_parent_node_inside_status_node():
+    events: list[dict] = []
+    token = set_status_emitter(events.append)
+
+    @tool_call_status(tool_name="get_order_list")
+    async def _tool() -> dict:
+        return {"ok": True}
+
+    @status_node(node="order", start_message="正在处理订单问题")
+    async def _node() -> dict:
+        return await _tool()
+
+    assert asyncio.run(_node()) == {"ok": True}
+    reset_status_emitter(token)
+
+    assert events == [
+        {
+            "type": "status",
+            "content": {"node": "order", "state": "start", "message": "正在处理订单问题"},
+        },
+        {
+            "type": "function_call",
+            "content": {
+                "node": "tool:get_order_list",
+                "parent_node": "order",
+                "state": "start",
+                "message": "正在查询订单信息",
+            },
+        },
+        {
+            "type": "function_call",
+            "content": {
+                "node": "tool:get_order_list",
+                "parent_node": "order",
+                "state": "end",
+            },
+        },
+        {
+            "type": "status",
+            "content": {"node": "order", "state": "end"},
+        },
+    ]
+
+
+def test_tool_call_status_keeps_parent_node_when_status_hidden():
+    events: list[dict] = []
+    token = set_status_emitter(events.append)
+
+    @tool_call_status(tool_name="get_order_list")
+    async def _tool() -> dict:
+        return {"ok": True}
+
+    @status_node(
+        node="order",
+        start_message="正在处理订单问题",
+        display_when="after_coordinator",
+    )
+    async def _node(state: dict) -> dict:
+        return await _tool()
+
+    assert asyncio.run(_node({"routing": {"route_target": "order_agent"}})) == {"ok": True}
+    reset_status_emitter(token)
+
+    assert events == [
+        {
+            "type": "function_call",
+            "content": {
+                "node": "tool:get_order_list",
+                "parent_node": "order",
+                "state": "start",
+                "message": "正在查询订单信息",
+            },
+        },
+        {
+            "type": "function_call",
+            "content": {
+                "node": "tool:get_order_list",
+                "parent_node": "order",
+                "state": "end",
+            },
+        },
+    ]
+
+
 def test_tool_call_status_emits_start_and_end():
     events: list[dict] = []
     token = set_status_emitter(events.append)

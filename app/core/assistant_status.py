@@ -14,6 +14,10 @@ _status_emitter: ContextVar[EventEmitter | None] = ContextVar(
     "assistant_status_emitter",
     default=None,
 )
+_current_status_node: ContextVar[str | None] = ContextVar(
+    "assistant_current_status_node",
+    default=None,
+)
 
 _TOOL_FUNCTION_CALL_MESSAGES: dict[str, dict[str, str]] = {
     "get_order_list": {
@@ -44,6 +48,7 @@ def _build_event_content(
         *,
         node: str,
         state: str,
+        parent_node: str | None = None,
         message: str | None = None,
         result: str | None = None,
         name: str | None = None,
@@ -53,6 +58,8 @@ def _build_event_content(
         "node": node,
         "state": state,
     }
+    if parent_node is not None:
+        content["parent_node"] = parent_node
     if message is not None:
         content["message"] = message
     if result is not None:
@@ -104,17 +111,22 @@ def emit_function_call(
         *,
         node: str,
         state: str,
+        parent_node: str | None = None,
         message: str | None = None,
         result: str | None = None,
         name: str | None = None,
         arguments: str | None = None,
 ) -> None:
     """发射工具调用事件（type=function_call）。"""
+    resolved_parent_node = (
+        parent_node if parent_node is not None else _current_status_node.get()
+    )
     _emit_event(
         event_type="function_call",
         content=_build_event_content(
             node=node,
             state=state,
+            parent_node=resolved_parent_node,
             message=message,
             result=result,
             name=name,
@@ -194,11 +206,39 @@ def status_node(
 
             @wraps(func)
             async def _async_wrapper(*args, **kwargs):
+                node_token = _current_status_node.set(node)
+                try:
+                    should_emit = _should_emit_status(display_when, args, kwargs)
+                    if should_emit:
+                        emit_status(node=node, state="start", message=start_message)
+                    try:
+                        result = await func(*args, **kwargs)
+                    except Exception as exc:
+                        if should_emit:
+                            emit_status(
+                                node=node,
+                                state="end",
+                                result="error",
+                                message=error_message or str(exc),
+                            )
+                        raise
+                    if should_emit:
+                        emit_status(node=node, state="end")
+                    return result
+                finally:
+                    _current_status_node.reset(node_token)
+
+            return _async_wrapper
+
+        @wraps(func)
+        def _wrapper(*args, **kwargs):
+            node_token = _current_status_node.set(node)
+            try:
                 should_emit = _should_emit_status(display_when, args, kwargs)
                 if should_emit:
                     emit_status(node=node, state="start", message=start_message)
                 try:
-                    result = await func(*args, **kwargs)
+                    result = func(*args, **kwargs)
                 except Exception as exc:
                     if should_emit:
                         emit_status(
@@ -211,28 +251,8 @@ def status_node(
                 if should_emit:
                     emit_status(node=node, state="end")
                 return result
-
-            return _async_wrapper
-
-        @wraps(func)
-        def _wrapper(*args, **kwargs):
-            should_emit = _should_emit_status(display_when, args, kwargs)
-            if should_emit:
-                emit_status(node=node, state="start", message=start_message)
-            try:
-                result = func(*args, **kwargs)
-            except Exception as exc:
-                if should_emit:
-                    emit_status(
-                        node=node,
-                        state="end",
-                        result="error",
-                        message=error_message or str(exc),
-                    )
-                raise
-            if should_emit:
-                emit_status(node=node, state="end")
-            return result
+            finally:
+                _current_status_node.reset(node_token)
 
         return _wrapper
 

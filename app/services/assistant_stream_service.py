@@ -200,6 +200,7 @@ def build_emitted_sse(
         content=Content(
             text=content.get("text"),
             node=node,
+            parent_node=content.get("parent_node"),
             state=content.get("state"),
             message=content.get("message"),
             result=content.get("result"),

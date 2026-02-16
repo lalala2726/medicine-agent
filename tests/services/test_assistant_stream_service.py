@@ -90,8 +90,17 @@ def test_stream_service_hides_node_for_function_call_but_keeps_status_node():
     class _StatusAsyncGraph:
         async def astream(self, _state: dict, **_kwargs):
             emit_status(node="router", state="start", message="开始")
-            emit_function_call(node="tool:get_order_list", state="start", message="调用中")
-            emit_function_call(node="tool:get_order_list", state="end")
+            emit_function_call(
+                node="tool:get_order_list",
+                parent_node="order",
+                state="start",
+                message="调用中",
+            )
+            emit_function_call(
+                node="tool:get_order_list",
+                parent_node="order",
+                state="end",
+            )
             emit_status(node="router", state="end")
             yield ("values", {"final": "done"})
 
@@ -105,10 +114,12 @@ def test_stream_service_hides_node_for_function_call_but_keeps_status_node():
         item["content"] for item in status_payloads
     ]
     assert {"node": "router", "state": "end"} in [item["content"] for item in status_payloads]
-    assert {"state": "start", "message": "调用中"} in [
+    assert {"parent_node": "order", "state": "start", "message": "调用中"} in [
         item["content"] for item in function_call_payloads
     ]
-    assert {"state": "end"} in [item["content"] for item in function_call_payloads]
+    assert {"parent_node": "order", "state": "end"} in [
+        item["content"] for item in function_call_payloads
+    ]
     assert all("node" not in item["content"] for item in function_call_payloads)
 
     assert any(item["content"].get("text") == "done" for item in answer_payloads)
