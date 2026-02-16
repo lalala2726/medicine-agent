@@ -1,4 +1,3 @@
-import json
 from typing import Any, Literal
 
 from fastapi import APIRouter
@@ -104,63 +103,6 @@ def _build_initial_state(
     }
 
 
-def _extract_content(final_state: dict[str, Any]) -> str:
-    """
-    从最终状态提取兜底输出文案。
-
-    当流式过程中没有任何 token 输出时，会按业务优先级选择最终展示内容。
-    """
-
-    results = final_state.get("results") or {}
-    chat_result = results.get("chat") or {}
-    chat_content = chat_result.get("content")
-    if isinstance(chat_content, str) and chat_content:
-        return chat_content
-
-    summary_result = results.get("summary") or {}
-    summary_content = summary_result.get("content")
-    if isinstance(summary_content, str) and summary_content:
-        return summary_content
-
-    chart_result = results.get("chart") or {}
-    chart_content = chart_result.get("content")
-    if isinstance(chart_content, str) and chart_content:
-        return chart_content
-
-    order_context = final_state.get("order_context") or {}
-    order_result = order_context.get("result") or {}
-    order_content = order_result.get("content")
-    if isinstance(order_content, str) and order_content:
-        return order_content
-
-    product_context = final_state.get("product_context") or {}
-    product_result = product_context.get("result") or {}
-    product_content = product_result.get("content")
-    if isinstance(product_content, str) and product_content:
-        return product_content
-
-    # 当最终节点被依赖阻断时，优先把 skipped 原因返回给前端。
-    step_outputs = final_state.get("step_outputs") or {}
-    if isinstance(step_outputs, dict):
-        skipped_reasons: list[str] = []
-        for item in step_outputs.values():
-            if isinstance(item, dict) and item.get("status") == "skipped":
-                reason = item.get("error")
-                if isinstance(reason, str) and reason:
-                    skipped_reasons.append(reason)
-        if skipped_reasons:
-            return "；".join(skipped_reasons)
-
-    errors = final_state.get("errors") or []
-    if errors:
-        return "；".join(str(item) for item in errors)
-
-    if results:
-        return json.dumps(results, ensure_ascii=False)
-
-    return "已完成处理。"
-
-
 def _should_stream_token(stream_node: str | None, latest_state: dict[str, Any]) -> bool:
     """
     判定某个节点 token 是否应该被推送给前端。
@@ -202,14 +144,15 @@ async def assistant(request: AssistantRequest) -> StreamingResponse:
     if not request.question:
         raise ServiceException(code=ResponseCode.BAD_REQUEST, message="问题不能为空")
 
-    # 统一把“业务策略”注入流式引擎：状态构造、token 过滤、异常映射、兜底提取。
+    # 统一把“业务策略”注入流式引擎：状态构造、token 过滤、异常映射。
+    # 管理助手不做 extract_content 兜底：当无最终 token 输出时，不补发 answer 文本。
     stream_config = AssistantStreamConfig(
         workflow=ADMIN_WORKFLOW,
         build_initial_state=lambda question: _build_initial_state(
             question,
             request.history_messages,
         ),
-        extract_final_content=_extract_content,
+        extract_final_content=lambda _state: "",
         should_stream_token=_should_stream_token,
         build_stream_config=_build_stream_config,
         invoke_sync=_invoke_admin_workflow,

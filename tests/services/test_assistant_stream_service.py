@@ -189,6 +189,26 @@ def test_stream_service_invoke_fallback_path():
     assert answer_payloads[-1]["is_end"] is True
 
 
+def test_stream_service_skips_empty_fallback_text():
+    graph = _DummyAsyncGraph(
+        events=[
+            ("values", {"final": ""}),
+        ]
+    )
+    payloads = _stream_with_config(
+        _build_config(
+            graph,
+            extract_final_content=lambda _state: "",
+        )
+    )
+
+    answer_payloads = [item for item in payloads if item["type"] == "answer"]
+    non_end_payloads = [item for item in answer_payloads if not item["is_end"]]
+    assert non_end_payloads == []
+    assert answer_payloads[-1]["is_end"] is True
+    assert answer_payloads[-1]["content"]["text"] == ""
+
+
 def test_drain_pending_events_consumes_tail_events():
     async def _run():
         queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()

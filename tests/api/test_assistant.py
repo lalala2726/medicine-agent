@@ -461,10 +461,7 @@ def test_assistant_route_delegates_to_stream_service(monkeypatch):
     assert isinstance(stream_config, AssistantStreamConfig)
     assert stream_config.workflow is assistant_module.ADMIN_WORKFLOW
     assert stream_config.build_initial_state("x")["user_input"] == "x"
-    assert (
-            stream_config.extract_final_content({"results": {"chat": {"content": "ok"}}})
-            == "ok"
-    )
+    assert stream_config.extract_final_content({"results": {"chat": {"content": "ok"}}}) == ""
     assert stream_config.should_stream_token("chat_agent", {"routing": {}, "plan": []}) is True
     assert stream_config.should_stream_token("router", {"routing": {}, "plan": []}) is False
     assert stream_config.map_exception(RuntimeError("boom")) == "服务暂时不可用，请稍后重试。"

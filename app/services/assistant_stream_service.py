@@ -491,10 +491,12 @@ async def _event_stream(
                     yield drained_item
                 break
 
-        # 当没有 token 输出且没有错误时，回退到业务侧最终内容提取，避免“空响应”。
+        # 当没有 token 输出且没有错误时，回退到业务侧最终内容提取。
+        # 若业务侧返回空字符串，则视为“无兜底内容”，不输出额外 answer 包。
         if not runtime_state.has_emitted_error and not runtime_state.has_streamed_output:
             fallback_text = config.extract_final_content(runtime_state.latest_state)
-            yield build_answer_sse(fallback_text, False)
+            if isinstance(fallback_text, str) and fallback_text:
+                yield build_answer_sse(fallback_text, False)
     finally:
         end_event = await _finalize_stream(emitter_token, producer_task)
         yield end_event
