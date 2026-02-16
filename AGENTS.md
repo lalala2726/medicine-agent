@@ -39,6 +39,11 @@
 - Embedding 配置：`DASHSCOPE_EMBEDDING_MODEL`（向量模型名称，必填）。
 - Milvus configuration (optional): `MILVUS_URI`, `MILVUS_USER`, `MILVUS_PASSWORD`, `MILVUS_TOKEN`, `MILVUS_DB_NAME`,
   `MILVUS_TIMEOUT`.
+- MongoDB configuration (optional): `MONGODB_URI` (defaults to `mongodb://localhost:27017`),
+  `MONGODB_DB_NAME` (defaults to `medicine_ai_agent`), `MONGODB_TIMEOUT_MS` (defaults to `3000`),
+  `MONGODB_CONVERSATIONS_COLLECTION` (defaults to `conversations`), `MONGODB_ADMIN_MESSAGES_COLLECTION`
+  (defaults to `admin_messages`), `MONGODB_STARTUP_PING_ENABLED` (default false, set true to fail fast
+  on startup when MongoDB is unreachable/unauthorized).
 - Redis configuration (optional): `REDIS_URL`, `REDIS_HOST`, `REDIS_PORT`, `REDIS_DB`, `REDIS_PASSWORD`, `REDIS_SSL`.
 - RQ configuration (optional): `RQ_QUEUE_NAME`, `RQ_DEFAULT_TIMEOUT`.
 - HTTP client configuration (optional): `HTTP_BASE_URL` (defaults to `http://localhost:8080`).
