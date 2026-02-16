@@ -132,7 +132,8 @@ async def get_user_info() -> dict:
         return HttpResponse.parse_data(response)
 
 
-@tool(args_schema=MallProductListQueryRequest, description="搜索商城商品列表，支持按名称、价格区间、分类等条件筛选。"
+@tool(args_schema=MallProductListQueryRequest, description="查看商城商品列表，如果不传入任何参数，只传递分页信息的话，这边默认返回最新的前N条数据，"
+                                                           "支持按名称、价格区间、分类等条件筛选。"
                                                            "调用时机：当用户关注于商城内的商品信息时。")
 @tool_call_status(
     tool_name="获取商品列表",
