@@ -56,7 +56,7 @@ def _mock_auth(monkeypatch) -> None:
 
     monkeypatch.setattr(
         main_module,
-        "fetch_current_user_by_authorization",
+        "verify_authorization",
         _fake_fetch_current_user,
     )
 

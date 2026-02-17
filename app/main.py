@@ -17,7 +17,7 @@ from app.core.request_context import (
     set_authorization_header,
     set_current_user,
 )
-from app.services.auth_service import fetch_current_user_by_authorization
+from app.services.auth_service import verify_authorization
 
 # 加载 .env 配置，确保本地开发环境变量生效
 load_dotenv()
@@ -64,7 +64,7 @@ async def authorization_header_middleware(
     try:
         if not _should_skip_authorization(request):
             try:
-                current_user = await fetch_current_user_by_authorization()
+                current_user = await verify_authorization()
             except ServiceException as exc:
                 return await ExceptionHandlers.service_exception_handler(request, exc)
             except Exception as exc:

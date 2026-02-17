@@ -26,7 +26,7 @@ def test_business_route_passes_with_valid_authorization(monkeypatch):
 
     monkeypatch.setattr(
         main_module,
-        "fetch_current_user_by_authorization",
+        "verify_authorization",
         _fake_fetch_current_user,
     )
     client = TestClient(app)
@@ -46,7 +46,7 @@ def test_business_route_returns_503_when_auth_service_unavailable(monkeypatch):
 
     monkeypatch.setattr(
         main_module,
-        "fetch_current_user_by_authorization",
+        "verify_authorization",
         _fake_fetch_current_user,
     )
     client = TestClient(app)
@@ -68,7 +68,7 @@ def test_options_request_skips_authorization(monkeypatch):
 
     monkeypatch.setattr(
         main_module,
-        "fetch_current_user_by_authorization",
+        "verify_authorization",
         _fake_fetch_current_user,
     )
     client = TestClient(app)
@@ -94,7 +94,7 @@ def test_docs_route_skips_authorization(monkeypatch):
 
     monkeypatch.setattr(
         main_module,
-        "fetch_current_user_by_authorization",
+        "verify_authorization",
         _fake_fetch_current_user,
     )
     client = TestClient(app)
@@ -115,7 +115,7 @@ def test_consecutive_requests_do_not_leak_user_context(monkeypatch):
 
     monkeypatch.setattr(
         main_module,
-        "fetch_current_user_by_authorization",
+        "verify_authorization",
         _fake_fetch_current_user,
     )
     client = TestClient(app)

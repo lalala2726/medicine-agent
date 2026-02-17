@@ -24,7 +24,7 @@ def _is_auth_failure_code(code: int) -> bool:
     return code_text.startswith("401") or code_text.startswith("403")
 
 
-async def fetch_current_user_by_authorization() -> AuthUser:
+async def verify_authorization() -> AuthUser:
     """
     使用当前请求 Authorization 调用 Spring `/agent/authorization` 获取用户上下文。
 

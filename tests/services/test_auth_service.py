@@ -14,7 +14,7 @@ def _build_ajax_response(payload: dict) -> httpx.Response:
     return httpx.Response(status_code=200, request=request, json=payload)
 
 
-def test_fetch_current_user_by_authorization_success(monkeypatch):
+def test_verify_authorization_success(monkeypatch):
     fake_response = _build_ajax_response(
         {
             "code": 200,
@@ -43,7 +43,7 @@ def test_fetch_current_user_by_authorization_success(monkeypatch):
 
     monkeypatch.setattr(auth_service, "HttpClient", FakeHttpClient)
 
-    result = asyncio.run(auth_service.fetch_current_user_by_authorization())
+    result = asyncio.run(auth_service.verify_authorization())
 
     assert isinstance(result, AuthUser)
     assert result.id == 1
@@ -51,7 +51,7 @@ def test_fetch_current_user_by_authorization_success(monkeypatch):
     assert result.real_name == "Alice"
 
 
-def test_fetch_current_user_by_authorization_maps_401(monkeypatch):
+def test_verify_authorization_maps_401(monkeypatch):
     fake_response = _build_ajax_response(
         {
             "code": 401,
@@ -76,13 +76,13 @@ def test_fetch_current_user_by_authorization_maps_401(monkeypatch):
     monkeypatch.setattr(auth_service, "HttpClient", FakeHttpClient)
 
     with pytest.raises(ServiceException) as exc_info:
-        asyncio.run(auth_service.fetch_current_user_by_authorization())
+        asyncio.run(auth_service.verify_authorization())
 
     assert exc_info.value.code == ResponseCode.UNAUTHORIZED.code
     assert exc_info.value.message == "token invalid"
 
 
-def test_fetch_current_user_by_authorization_maps_401x_to_401(monkeypatch):
+def test_verify_authorization_maps_401x_to_401(monkeypatch):
     fake_response = _build_ajax_response(
         {
             "code": 4011,
@@ -107,13 +107,13 @@ def test_fetch_current_user_by_authorization_maps_401x_to_401(monkeypatch):
     monkeypatch.setattr(auth_service, "HttpClient", FakeHttpClient)
 
     with pytest.raises(ServiceException) as exc_info:
-        asyncio.run(auth_service.fetch_current_user_by_authorization())
+        asyncio.run(auth_service.verify_authorization())
 
     assert exc_info.value.code == ResponseCode.UNAUTHORIZED.code
     assert exc_info.value.message == "访问令牌已过期"
 
 
-def test_fetch_current_user_by_authorization_maps_500_to_503(monkeypatch):
+def test_verify_authorization_maps_500_to_503(monkeypatch):
     fake_response = _build_ajax_response(
         {
             "code": 500,
@@ -138,12 +138,12 @@ def test_fetch_current_user_by_authorization_maps_500_to_503(monkeypatch):
     monkeypatch.setattr(auth_service, "HttpClient", FakeHttpClient)
 
     with pytest.raises(ServiceException) as exc_info:
-        asyncio.run(auth_service.fetch_current_user_by_authorization())
+        asyncio.run(auth_service.verify_authorization())
 
     assert exc_info.value.code == 503
 
 
-def test_fetch_current_user_by_authorization_maps_network_error_to_503(monkeypatch):
+def test_verify_authorization_maps_network_error_to_503(monkeypatch):
     class FakeHttpClient:
         def __init__(self, **_kwargs):
             pass
@@ -160,12 +160,12 @@ def test_fetch_current_user_by_authorization_maps_network_error_to_503(monkeypat
     monkeypatch.setattr(auth_service, "HttpClient", FakeHttpClient)
 
     with pytest.raises(ServiceException) as exc_info:
-        asyncio.run(auth_service.fetch_current_user_by_authorization())
+        asyncio.run(auth_service.verify_authorization())
 
     assert exc_info.value.code == 503
 
 
-def test_fetch_current_user_by_authorization_maps_non_json_to_503(monkeypatch):
+def test_verify_authorization_maps_non_json_to_503(monkeypatch):
     request = httpx.Request("GET", "http://test/agent/authorization")
     fake_response = httpx.Response(
         status_code=200,
@@ -190,12 +190,12 @@ def test_fetch_current_user_by_authorization_maps_non_json_to_503(monkeypatch):
     monkeypatch.setattr(auth_service, "HttpClient", FakeHttpClient)
 
     with pytest.raises(ServiceException) as exc_info:
-        asyncio.run(auth_service.fetch_current_user_by_authorization())
+        asyncio.run(auth_service.verify_authorization())
 
     assert exc_info.value.code == 503
 
 
-def test_fetch_current_user_by_authorization_maps_invalid_data_to_503(monkeypatch):
+def test_verify_authorization_maps_invalid_data_to_503(monkeypatch):
     fake_response = _build_ajax_response(
         {
             "code": 200,
@@ -222,6 +222,6 @@ def test_fetch_current_user_by_authorization_maps_invalid_data_to_503(monkeypatc
     monkeypatch.setattr(auth_service, "HttpClient", FakeHttpClient)
 
     with pytest.raises(ServiceException) as exc_info:
-        asyncio.run(auth_service.fetch_current_user_by_authorization())
+        asyncio.run(auth_service.verify_authorization())
 
     assert exc_info.value.code == 503
