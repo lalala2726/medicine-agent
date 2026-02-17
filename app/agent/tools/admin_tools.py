@@ -116,20 +116,31 @@ class OrderDetailRequest(BaseModel):
 
 @tool(description="获取当前登录用户的基本信息。"
                   "调用时机：用户询问「我是谁」「我的账户信息」，或需要用户ID进行后续操作时。")
-@tool_call_status(tool_name="获取用户信息")
+@tool_call_status(
+    tool_name="获取用户信息",
+    start_message="正在获取用户信息",
+    error_message="获取用户信息失败",
+    timely_message="用户信息正在持续处理中",
+)
 async def get_user_info() -> dict:
     """
     获取当前登录用户的基本信息。
     当用户询问“我是谁”、“我的账户信息”或需要用户ID进行后续操作时调用。
     """
     async with HttpClient() as client:
-        response = await client.get(url="/agent/tools/current_user")
+        response = await client.get(url="/agent/info")
         return HttpResponse.parse_data(response)
 
 
-@tool(args_schema=MallProductListQueryRequest, description="搜索商城商品列表，支持按名称、价格区间、分类等条件筛选。"
+@tool(args_schema=MallProductListQueryRequest, description="查看商城商品列表，如果不传入任何参数，只传递分页信息的话，这边默认返回最新的前N条数据，"
+                                                           "支持按名称、价格区间、分类等条件筛选。"
                                                            "调用时机：当用户关注于商城内的商品信息时。")
-@tool_call_status(tool_name="获取商品列表")
+@tool_call_status(
+    tool_name="获取商品列表",
+    start_message="正在查询商品列表",
+    error_message="获取商品列表失败",
+    timely_message="商品列表正在持续处理中",
+)
 async def get_product_list(
         page_num: int = 1,
         page_size: int = 10,
@@ -155,27 +166,37 @@ async def get_product_list(
             "minPrice": min_price,
             "maxPrice": max_price,
         }
-        response = await client.get(url="/agent/tools/product/list", params=params)
+        response = await client.get(url="/agent/product/list", params=params)
         return HttpResponse.parse_data(response)
 
 
 @tool(args_schema=ProductInfoRequest, description="根据商品ID获取详细信息，支持批量查询。"
                                                   "调用时机：用户明确询问某个或某些商品的详细信息时。")
-@tool_call_status(tool_name="获取商品详情")
+@tool_call_status(
+    tool_name="获取商品详情",
+    start_message="正在查询商品详情",
+    error_message="获取商品详情失败",
+    timely_message="商品详情正在持续处理中",
+)
 async def get_product_detail(product_id: list[str]) -> dict:
     """
     根据商品ID获取详细信息，支持批量查询。
-    后端路径格式：`/agent/products/{ids}`，例如 `/agent/tools/products/1001,1002`。
+    后端路径格式：`/agent/products/{ids}`，例如 `/agent/products/1001,1002`。
     """
     ids_str = format_ids_to_string(product_id)
     async with HttpClient() as client:
-        response = await client.get(url=f"/agent/tools/product/{ids_str}")
+        response = await client.get(url=f"/agent/product/{ids_str}")
         return HttpResponse.parse_data(response)
 
 
 @tool(args_schema=DrugDetailRequest, description="根据商品ID获取药品详细信息，包括说明书、适应症、用法用量等，支持批量查询。"
                                                  "调用时机：用户询问药品的详细说明书、适应症、用法用量等信息时。")
-@tool_call_status(tool_name="获取药品详情")
+@tool_call_status(
+    tool_name="获取药品详情",
+    start_message="正在查询药品详情",
+    error_message="获取药品详情失败",
+    timely_message="药品详情正在持续处理中",
+)
 async def get_drug_detail(product_id: list[str]) -> dict:
     """
     根据药品商品ID获取详细药品信息，包括药品说明书、适应症、用法用量等。
@@ -183,14 +204,19 @@ async def get_drug_detail(product_id: list[str]) -> dict:
     """
     ids_str = format_ids_to_string(product_id)
     async with HttpClient() as client:
-        response = await client.get(url=f"/agent/tools/drug/{ids_str}")
+        response = await client.get(url=f"/agent/drug/{ids_str}")
         return HttpResponse.parse_data(response)
 
 
 @tool(args_schema=MallOrderListRequest, description="获取订单列表，支持按订单号、状态、收货人信息等条件筛选。"
                                                     "注意：若用户需要更详细的订单信息（如收货地址、物流详情），请调用 get_orders_detail 工具。"
                                                     "调用时机：用户需要浏览或搜索订单时。")
-@tool_call_status(tool_name="获取订单列表")
+@tool_call_status(
+    tool_name="获取订单列表",
+    start_message="正在查询订单列表",
+    error_message="获取订单列表失败",
+    timely_message="订单列表正在持续处理中",
+)
 async def get_order_list(
         page_num: int = 1,
         page_size: int = 10,
@@ -215,21 +241,26 @@ async def get_order_list(
             "receiverName": receiver_name,
             "receiverPhone": receiver_phone,
         }
-        response = await client.get(url="/agent/tools/order/list", params=params)
+        response = await client.get(url="/agent/order/list", params=params)
         return HttpResponse.parse_data(response)
 
 
 @tool(args_schema=OrderDetailRequest, description="根据订单ID获取详细信息，包括收货地址、物流信息、商品明细等，支持批量查询。"
                                                   "调用时机：用户询问某个或某些订单的详细信息时，或订单列表信息无法满足用户需求时。")
-@tool_call_status(tool_name="获取订单详情")
+@tool_call_status(
+    tool_name="获取订单详情",
+    start_message="正在查询订单详情",
+    error_message="获取订单详情失败",
+    timely_message="订单详情正在持续处理中",
+)
 async def get_orders_detail(order_id: list[str]) -> dict:
     """
     获取订单详情，支持批量查询。
-    后端路径格式：`/agent/tools/orders/{ids}`，例如 `/agent/tools/orders/1,2,3`。
+    后端路径格式：`/agent/orders/{ids}`，例如 `/agent/orders/1,2,3`。
     """
     ids_str = format_ids_to_string(order_id)
     async with HttpClient() as client:
-        response = await client.get(url=f"/agent/tools/order/{ids_str}")
+        response = await client.get(url=f"/agent/order/{ids_str}")
         return HttpResponse.parse_data(response)
 
 

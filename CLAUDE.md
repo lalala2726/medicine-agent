@@ -10,18 +10,13 @@ information.
 
 **Tech Stack:** FastAPI, LangChain, Qwen VL (via DashScope API), Pydantic
 
-## Development Commands
+## Build, Test, and Development Commands
 
-```bash
-# Run development server with hot reload
-uvicorn app.main:app --reload
-
-# Run tests
-python -m pytest
-
-# Run specific test file
-python -m pytest tests/test_specific.py
-```
+- This project uses conda; run commands in env `medicine-ai-agent`.
+- Prefer `conda run -n medicine-ai-agent <command>` for reproducible execution.
+- `uvicorn app.main:app --reload` runs the API locally with hot reload.
+- `python -m pytest` runs the test suite (currently minimal; add tests as you implement features).
+- No build step is required; this is a pure Python service.
 
 **Required Environment Variable:**
 

@@ -5,8 +5,8 @@ from typing import Any, Callable
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.core.assistant_status import emit_function_call, emit_status
-from app.schemas.sse_response import MessageType
+from app.core.assistant_status import emit_function_call, emit_sse_response, emit_status
+from app.schemas.sse_response import AssistantResponse, Content, MessageType
 from app.services.assistant_stream_service import (
     AssistantStreamConfig,
     StreamRuntimeState,
@@ -69,6 +69,7 @@ def _build_config(
         should_stream_token: Callable[[str | None, dict[str, Any]], bool] | None = None,
         extract_final_content: Callable[[dict[str, Any]], str] | None = None,
         map_exception: Callable[[Exception], str] | None = None,
+        initial_emitted_events: tuple[AssistantResponse, ...] = (),
 ) -> AssistantStreamConfig:
     return AssistantStreamConfig(
         workflow=workflow,
@@ -83,6 +84,7 @@ def _build_config(
         build_stream_config=lambda: {"trace_id": "demo"},
         invoke_sync=lambda state: workflow.invoke(state),
         map_exception=map_exception or (lambda exc: f"处理失败: {exc}"),
+        initial_emitted_events=initial_emitted_events,
     )
 
 
@@ -90,8 +92,17 @@ def test_stream_service_hides_node_for_function_call_but_keeps_status_node():
     class _StatusAsyncGraph:
         async def astream(self, _state: dict, **_kwargs):
             emit_status(node="router", state="start", message="开始")
-            emit_function_call(node="tool:get_order_list", state="start", message="调用中")
-            emit_function_call(node="tool:get_order_list", state="end")
+            emit_function_call(
+                node="tool:get_order_list",
+                parent_node="order",
+                state="start",
+                message="调用中",
+            )
+            emit_function_call(
+                node="tool:get_order_list",
+                parent_node="order",
+                state="end",
+            )
             emit_status(node="router", state="end")
             yield ("values", {"final": "done"})
 
@@ -105,16 +116,113 @@ def test_stream_service_hides_node_for_function_call_but_keeps_status_node():
         item["content"] for item in status_payloads
     ]
     assert {"node": "router", "state": "end"} in [item["content"] for item in status_payloads]
-    assert {"state": "start", "message": "调用中"} in [
+    assert {"parent_node": "order", "state": "start", "message": "调用中"} in [
         item["content"] for item in function_call_payloads
     ]
-    assert {"state": "end"} in [item["content"] for item in function_call_payloads]
+    assert {"parent_node": "order", "state": "end"} in [
+        item["content"] for item in function_call_payloads
+    ]
     assert all("node" not in item["content"] for item in function_call_payloads)
 
     assert any(item["content"].get("text") == "done" for item in answer_payloads)
     assert answer_payloads[-1]["is_end"] is True
     assert answer_payloads[-1]["content"]["text"] == ""
 
+
+def test_stream_service_emits_initial_session_event_before_graph_output():
+    graph = _DummyAsyncGraph(events=[("values", {"final": ""})])
+    session_event = AssistantResponse(
+        content=Content(node="conversation", state="created", message="会话创建成功"),
+        type=MessageType.STATUS,
+        meta={"conversation_uuid": "conv-1", "conversation_id": "mongo-1"},
+    )
+    payloads = _stream_with_config(
+        _build_config(
+            graph,
+            should_stream_token=lambda *_: False,
+            extract_final_content=lambda _state: "",
+            initial_emitted_events=(session_event,),
+        )
+    )
+
+    # 首条事件应是预注入的会话创建通知。
+    assert payloads[0]["type"] == "status"
+    assert payloads[0]["content"] == {
+        "node": "conversation",
+        "state": "created",
+        "message": "会话创建成功",
+    }
+    assert payloads[0]["meta"] == {
+        "conversation_uuid": "conv-1",
+        "conversation_id": "mongo-1",
+    }
+    assert payloads[-1]["is_end"] is True
+
+
+def test_stream_service_accepts_custom_assistant_response_answer_and_skips_fallback():
+    class _CustomAnswerGraph:
+        async def astream(self, _state: dict, **_kwargs):
+            emit_sse_response(
+                AssistantResponse(
+                    content=Content(text="manual answer", message="附加参数"),
+                    type=MessageType.ANSWER,
+                    meta={"conversation_uuid": "conv-2"},
+                    is_end=True,
+                )
+            )
+            yield ("values", {"final": "fallback should be skipped"})
+
+    payloads = _stream_with_config(
+        _build_config(
+            _CustomAnswerGraph(),
+            should_stream_token=lambda *_: False,
+        )
+    )
+
+    answer_payloads = [item for item in payloads if item["type"] == "answer"]
+    non_end_payloads = [item for item in answer_payloads if not item["is_end"]]
+    assert len(non_end_payloads) == 1
+    assert non_end_payloads[0]["content"]["text"] == "manual answer"
+    assert non_end_payloads[0]["content"]["message"] == "附加参数"
+    assert non_end_payloads[0]["meta"] == {"conversation_uuid": "conv-2"}
+    assert non_end_payloads[0]["is_end"] is False
+
+    # 结束包仍由流式引擎统一输出，避免业务侧提前关闭流。
+    assert answer_payloads[-1]["is_end"] is True
+    assert answer_payloads[-1]["content"]["text"] == ""
+
+
+def test_stream_service_hides_node_for_custom_function_call_response():
+    class _CustomFunctionCallGraph:
+        async def astream(self, _state: dict, **_kwargs):
+            emit_sse_response(
+                AssistantResponse(
+                    content=Content(
+                        node="tool:get_order_list",
+                        parent_node="order",
+                        state="start",
+                        message="调用中",
+                    ),
+                    type=MessageType.FUNCTION_CALL,
+                )
+            )
+            yield ("values", {"final": ""})
+
+    payloads = _stream_with_config(
+        _build_config(
+            _CustomFunctionCallGraph(),
+            should_stream_token=lambda *_: False,
+            extract_final_content=lambda _state: "",
+        )
+    )
+
+    function_call_payloads = [item for item in payloads if item["type"] == "function_call"]
+    assert len(function_call_payloads) == 1
+    assert function_call_payloads[0]["content"] == {
+        "parent_node": "order",
+        "state": "start",
+        "message": "调用中",
+    }
 
 def test_stream_service_streams_message_tokens_and_skips_fallback():
     graph = _DummyAsyncGraph(
@@ -176,6 +284,26 @@ def test_stream_service_invoke_fallback_path():
     non_end_texts = [item["content"]["text"] for item in answer_payloads if not item["is_end"]]
     assert non_end_texts == ["sync fallback"]
     assert answer_payloads[-1]["is_end"] is True
+
+
+def test_stream_service_skips_empty_fallback_text():
+    graph = _DummyAsyncGraph(
+        events=[
+            ("values", {"final": ""}),
+        ]
+    )
+    payloads = _stream_with_config(
+        _build_config(
+            graph,
+            extract_final_content=lambda _state: "",
+        )
+    )
+
+    answer_payloads = [item for item in payloads if item["type"] == "answer"]
+    non_end_payloads = [item for item in answer_payloads if not item["is_end"]]
+    assert non_end_payloads == []
+    assert answer_payloads[-1]["is_end"] is True
+    assert answer_payloads[-1]["content"]["text"] == ""
 
 
 def test_drain_pending_events_consumes_tail_events():

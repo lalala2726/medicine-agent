@@ -5,6 +5,7 @@ import app.utils.streaming_utils as streaming_utils_module
 from app.core.assistant_status import (
     reset_status_emitter,
     set_status_emitter,
+    status_node,
     tool_call_status,
 )
 from app.core.request_context import (
@@ -169,6 +170,112 @@ def test_exec_tool_running_loop_branch_propagates_contextvars():
             "type": "function_call",
             "content": {
                 "node": "tool:get_order_list",
+                "state": "end",
+            },
+        },
+    ]
+
+
+def test_exec_tool_known_tool_emits_parent_node_with_status_context():
+    events: list[dict] = []
+    token = set_status_emitter(events.append)
+
+    @status_node(node="order", start_message="正在处理订单问题")
+    def _node() -> str:
+        return streaming_utils_module._exec_tool(
+            tool_call={"name": "get_order_list", "args": {"page_num": 1}, "id": "1"},
+            tool_map={"get_order_list": _DecoratedSuccessTool()},
+            log_enabled=False,
+        )
+
+    result = _node()
+    reset_status_emitter(token)
+
+    assert json.loads(result) == {"items": [1, 2, 3]}
+    assert events == [
+        {
+            "type": "status",
+            "content": {
+                "node": "order",
+                "state": "start",
+                "message": "正在处理订单问题",
+            },
+        },
+        {
+            "type": "function_call",
+            "content": {
+                "node": "tool:get_order_list",
+                "parent_node": "order",
+                "state": "start",
+                "message": "正在查询订单信息",
+            },
+        },
+        {
+            "type": "function_call",
+            "content": {
+                "node": "tool:get_order_list",
+                "parent_node": "order",
+                "state": "end",
+            },
+        },
+        {
+            "type": "status",
+            "content": {
+                "node": "order",
+                "state": "end",
+            },
+        },
+    ]
+
+
+def test_exec_tool_unknown_tool_emits_parent_node_with_status_context():
+    events: list[dict] = []
+    token = set_status_emitter(events.append)
+
+    @status_node(node="order", start_message="正在处理订单问题")
+    def _node() -> str:
+        return streaming_utils_module._exec_tool(
+            tool_call={"name": "unknown_tool", "args": {}, "id": "1"},
+            tool_map={},
+            log_enabled=False,
+        )
+
+    result = _node()
+    reset_status_emitter(token)
+
+    assert json.loads(result)["error"] == "未知工具: unknown_tool"
+    assert events == [
+        {
+            "type": "status",
+            "content": {
+                "node": "order",
+                "state": "start",
+                "message": "正在处理订单问题",
+            },
+        },
+        {
+            "type": "function_call",
+            "content": {
+                "node": "tool:unknown_tool",
+                "parent_node": "order",
+                "state": "start",
+                "message": "正在调用工具 unknown_tool",
+            },
+        },
+        {
+            "type": "function_call",
+            "content": {
+                "node": "tool:unknown_tool",
+                "parent_node": "order",
+                "state": "end",
+                "result": "error",
+                "message": "未知工具: unknown_tool",
+            },
+        },
+        {
+            "type": "status",
+            "content": {
+                "node": "order",
                 "state": "end",
             },
         },

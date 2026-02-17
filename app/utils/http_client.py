@@ -35,7 +35,7 @@ class HttpClient:
     ) -> None:
         self._ensure_env_loaded()
         if base_url is None:
-            base_url = os.getenv("HTTP_BASE_URL", "http://localhost:8080")
+            base_url = os.getenv("HTTP_BASE_URL", "http://localhost:8083")
         self._default_log_enabled = self._parse_bool(
             os.getenv("HTTP_CLIENT_LOG_ENABLED")
         )

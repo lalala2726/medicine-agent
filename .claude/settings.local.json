@@ -14,7 +14,9 @@
       "Bash(python3:*)",
       "Bash(poetry install:*)",
       "Bash(pip3 list:*)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(git fetch:*)",
+      "Bash(gh pr list:*)"
     ]
   }
 }
