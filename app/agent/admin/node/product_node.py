@@ -1,5 +1,6 @@
 from langchain_core.prompts import SystemMessagePromptTemplate
 
+from app.agent.admin.agent_utils import invoke_with_failure_policy
 from app.agent.admin.agent_state import AgentState
 from app.agent.admin.node.runtime_context import (
     build_instruction_with_failure_policy,
@@ -12,7 +13,7 @@ from app.core.assistant_status import status_node
 from app.core.langsmith import traceable
 from app.core.llm import create_chat_model
 from app.schemas.prompt import base_prompt
-from app.utils.streaming_utils import invoke_with_policy, is_final_node
+from app.utils.streaming_utils import is_final_node
 
 system_prompt = (
         """
@@ -67,18 +68,12 @@ def product_agent(state: AgentState) -> dict:
     # 只有最终输出步骤才开启 stream 分支。
     final_output = is_final_node(state, "product_agent")
     try:
-        content, diagnostics = invoke_with_policy(
-            llm,
-            messages,
+        content, diagnostics = invoke_with_failure_policy(
+            llm=llm,
+            messages=messages,
             tools=tools,
             enable_stream=final_output,
-            error_marker_prefix=str(
-                failure_policy.get("error_marker_prefix") or "__ERROR__:"
-            ),
-            tool_error_counting=str(
-                failure_policy.get("tool_error_counting") or "consecutive"
-            ),
-            max_tool_errors=int(failure_policy.get("max_tool_errors") or 2),
+            failure_policy=failure_policy,
         )
         stream_chunks = list(diagnostics.get("stream_chunks") or [])
         step_status, failed_error, content = evaluate_failure_by_policy(

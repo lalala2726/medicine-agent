@@ -175,7 +175,7 @@ def test_product_agent_marks_failed_when_model_returns_error_marker(monkeypatch)
     monkeypatch.setattr(product_module, "create_chat_model", lambda *args, **kwargs: object())
     monkeypatch.setattr(
         product_module,
-        "invoke_with_policy",
+        "invoke_with_failure_policy",
         lambda *_args, **_kwargs: ("__ERROR__: 商品数据不可信", {"stream_chunks": []}),
     )
 
@@ -198,7 +198,7 @@ def test_product_agent_marks_failed_when_tool_threshold_hit(monkeypatch):
     monkeypatch.setattr(product_module, "create_chat_model", lambda *args, **kwargs: object())
     monkeypatch.setattr(
         product_module,
-        "invoke_with_policy",
+        "invoke_with_failure_policy",
         lambda *_args, **_kwargs: (
             "工具失败达到阈值",
             {

@@ -5,6 +5,7 @@ from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from app.agent.admin.agent_utils import invoke_with_failure_policy
 from app.agent.admin.agent_state import AgentState
 from app.agent.admin.node.runtime_context import (
     build_step_output_update,
@@ -16,7 +17,7 @@ from app.core.assistant_status import status_node
 from app.core.langsmith import traceable
 from app.core.llm import create_chat_model
 from app.schemas.prompt import base_prompt
-from app.utils.streaming_utils import invoke_with_policy, is_final_node
+from app.utils.streaming_utils import is_final_node
 
 _CHART_SYSTEM_PROMPT = (
         """
@@ -107,18 +108,12 @@ def chart_agent(state: AgentState) -> dict:
             SystemMessage(content=_CHART_SYSTEM_PROMPT),
             HumanMessage(content=json.dumps(chart_input, ensure_ascii=False)),
         ]
-        content, diagnostics = invoke_with_policy(
-            llm,
-            messages,
+        content, diagnostics = invoke_with_failure_policy(
+            llm=llm,
+            messages=messages,
             tools=CHART_TOOLS,
             enable_stream=final_output,
-            error_marker_prefix=str(
-                failure_policy.get("error_marker_prefix") or "__ERROR__:"
-            ),
-            tool_error_counting=str(
-                failure_policy.get("tool_error_counting") or "consecutive"
-            ),
-            max_tool_errors=int(failure_policy.get("max_tool_errors") or 2),
+            failure_policy=failure_policy,
         )
         step_status, failed_error, content = evaluate_failure_by_policy(
             content,
