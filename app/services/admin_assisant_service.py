@@ -6,9 +6,10 @@ import uuid
 from typing import Any
 
 from fastapi.responses import StreamingResponse
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 from loguru import logger
 
+from app.agent.admin.agent_state import ChatHistoryMessage
 from app.agent.admin.workflow import build_graph
 from app.core.codes import ResponseCode
 from app.core.exceptions import ServiceException
@@ -25,7 +26,7 @@ from app.services.conversation_service import (
     get_admin_conversation,
     save_conversation_title,
 )
-from app.services.message_service import add_message
+from app.services.message_service import add_message, get_history
 from app.utils.streaming_utils import is_final_node
 
 ADMIN_WORKFLOW = build_graph()
@@ -69,7 +70,11 @@ def _build_stream_config() -> dict | None:
     )
 
 
-def _build_initial_state(question: str) -> dict[str, Any]:
+def _build_initial_state(
+        question: str,
+        *,
+        history_messages: list[ChatHistoryMessage] | None = None,
+) -> dict[str, Any]:
     """
     构造管理助手的初始状态。
 
@@ -87,7 +92,7 @@ def _build_initial_state(question: str) -> dict[str, Any]:
         "product_context": {},
         "aftersale_context": {},
         "excel_context": {},
-        "history_messages": [],
+        "history_messages": list(history_messages or []),
         "step_outputs": {},
         "shared_memory": {},
         "results": {},
@@ -265,7 +270,9 @@ def assistant_chat(*, question: str, conversation_uuid: str | None = None) -> St
 
     initial_emitted_events: list[AssistantResponse] = []
     current_user_id = get_user_id()
-    if conversation_uuid is None:
+    history_messages: list[ChatHistoryMessage] = []
+    is_new_conversation = conversation_uuid is None
+    if is_new_conversation:
         # 未传入会话 UUID，则创建新会话
         conversation_uuid = str(uuid.uuid4())
         conversation_id = add_admin_conversation(
@@ -295,10 +302,16 @@ def assistant_chat(*, question: str, conversation_uuid: str | None = None) -> St
 
     # 用户消息立即落库，确保问题先被记录。
     add_message(conversation_id=conversation_id, role="user", content=question)
+    # 仅旧会话读取历史，窗口固定最近 50 条，且包含本次已落库的问题。
+    if not is_new_conversation:
+        history_messages = load_history(conversation_id=conversation_id, limit=50)
 
     stream_config = AssistantStreamConfig(
         workflow=ADMIN_WORKFLOW,
-        build_initial_state=_build_initial_state,
+        build_initial_state=lambda q: _build_initial_state(
+            q,
+            history_messages=history_messages,
+        ),
         extract_final_content=lambda _state: "",
         should_stream_token=_should_stream_token,
         build_stream_config=_build_stream_config,
@@ -312,14 +325,23 @@ def assistant_chat(*, question: str, conversation_uuid: str | None = None) -> St
 
 def load_history(
         *,
-        conversation_uuid: str,
-        user_id: int,
-) -> tuple[HumanMessage, AIMessage] | None:
-    """加载聊天历史。"""
+        conversation_id: str,
+        limit: int = 50,
+) -> list[ChatHistoryMessage]:
+    """
+    加载会话历史消息（最近窗口）。
 
-    _ = conversation_uuid
-    _ = user_id
-    pass
+    读取策略：
+    1. 先按创建时间倒序读取最近 N 条；
+    2. 再反转为正序，保证喂给模型时上下文顺序正确。
+    """
+
+    history_messages = get_history(
+        conversation_id=conversation_id,
+        limit=limit,
+        ascending=False,
+    )
+    return list(reversed(history_messages))
 
 
 def list_history() -> None:

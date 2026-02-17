@@ -3,6 +3,7 @@ import json
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.agent.admin.agent_state import AgentState
+from app.agent.admin.history_utils import build_messages_with_history
 from app.core.assistant_status import status_node
 from app.core.langsmith import traceable
 from app.core.llm import create_chat_model
@@ -44,6 +45,7 @@ def chat_agent(state: AgentState) -> AgentState:
     user_input = str(state.get("user_input") or "").strip()
     if not user_input:
         user_input = "你好"
+    history_messages = list(state.get("history_messages") or [])
 
     try:
         llm = create_chat_model(
@@ -57,10 +59,11 @@ def chat_agent(state: AgentState) -> AgentState:
                 HumanMessage(content=fallback_input),
             ]
         else:
-            messages = [
-                SystemMessage(content=_CHAT_SYSTEM_PROMPT),
-                HumanMessage(content=user_input),
-            ]
+            messages = build_messages_with_history(
+                system_prompt=_CHAT_SYSTEM_PROMPT,
+                history_messages=history_messages,
+                fallback_user_input=user_input,
+            )
         if hasattr(llm, "stream") and callable(getattr(llm, "stream")):
             streamed_parts: list[str] = []
             for chunk in llm.stream(messages):

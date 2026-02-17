@@ -1,5 +1,7 @@
 import json
 
+from langchain_core.messages import AIMessage
+
 import app.agent.admin.node.chart_node as chart_node_module
 from app.core.assistant_status import reset_status_emitter, set_status_emitter
 
@@ -43,7 +45,7 @@ def _build_state(
         "product_context": {},
         "aftersale_context": {},
         "excel_context": {},
-        "history_messages": [{"role": "assistant", "content": "上一轮建议"}],
+        "history_messages": [AIMessage(content="上一轮建议")],
         "step_outputs": step_outputs
         or {
             "s0": {

@@ -3,10 +3,10 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.constants import END, START
 from langgraph.graph import StateGraph
 
+from app.agent.admin.history_utils import build_messages_with_history
 from app.agent.admin.agent_state import AgentState
 from app.agent.admin.dag_rules import EXECUTION_NODES, compute_planner_update
 from app.agent.admin.node import (
@@ -166,11 +166,12 @@ def gateway_router(state: AgentState) -> dict[str, Any]:
         - `stage_index/next_nodes/next_step_ids/current_step_ids/completed_step_ids/blocked_step_ids`
     """
     user_input = str(state.get("user_input") or "").strip()
+    history_messages = list(state.get("history_messages") or [])
     routing = dict(state.get("routing") or {})
 
     route_target = "coordinator_agent"
     difficulty = "medium"
-    if user_input:
+    if user_input or history_messages:
         try:
             model = create_chat_model(
                 model="qwen-flash",
@@ -178,10 +179,11 @@ def gateway_router(state: AgentState) -> dict[str, Any]:
                 temperature=0,
                 response_format={"type": "json_object"},
             )
-            messages = [
-                SystemMessage(content=GATEWAY_ROUTER_PROMPT),
-                HumanMessage(content=f"用户请求：{user_input}"),
-            ]
+            messages = build_messages_with_history(
+                system_prompt=GATEWAY_ROUTER_PROMPT,
+                history_messages=history_messages,
+                fallback_user_input=user_input,
+            )
             response = model.invoke(messages)
             raw = json.loads(str(response.content))
             route_target = str(raw["route_target"])

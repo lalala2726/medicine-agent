@@ -2,6 +2,7 @@ import asyncio
 import json
 
 from fastapi.responses import StreamingResponse
+from langchain_core.messages import AIMessage, HumanMessage
 
 from app.services import admin_assisant_service as service_module
 from app.schemas.sse_response import MessageType
@@ -43,6 +44,7 @@ def test_assistant_chat_delegates_to_stream_service(monkeypatch):
     captured: dict = {}
     scheduled_calls: list[dict] = []
     saved_messages: list[dict] = []
+    call_order: list[str] = []
 
     def _fake_create_streaming_response(question: str, config: AssistantStreamConfig):
         captured["question"] = question
@@ -101,7 +103,23 @@ def test_assistant_chat_delegates_to_stream_service(monkeypatch):
     monkeypatch.setattr(
         service_module,
         "add_message",
-        lambda **kwargs: saved_messages.append(kwargs) or "507f1f77bcf86cd799439012",
+        lambda **kwargs: (
+                saved_messages.append(kwargs),
+                call_order.append(f"add_{kwargs['role']}"),
+                "507f1f77bcf86cd799439012",
+        )[-1],
+    )
+    monkeypatch.setattr(
+        service_module,
+        "load_history",
+        lambda **kwargs: (
+                call_order.append("load_history"),
+                [
+                    HumanMessage(content="历史问题"),
+                    AIMessage(content="历史回答"),
+                    HumanMessage(content="代理测试"),
+                ],
+        )[-1],
     )
 
     response = service_module.assistant_chat(
@@ -115,13 +133,18 @@ def test_assistant_chat_delegates_to_stream_service(monkeypatch):
     assert isinstance(stream_config, AssistantStreamConfig)
     assert stream_config.workflow is service_module.ADMIN_WORKFLOW
     assert stream_config.build_initial_state("x")["user_input"] == "x"
-    assert stream_config.build_initial_state("x")["history_messages"] == []
+    history_messages = stream_config.build_initial_state("x")["history_messages"]
+    assert len(history_messages) == 3
+    assert isinstance(history_messages[0], HumanMessage)
+    assert isinstance(history_messages[1], AIMessage)
+    assert isinstance(history_messages[2], HumanMessage)
     assert stream_config.extract_final_content({"results": {"chat": {"content": "ok"}}}) == ""
     assert stream_config.should_stream_token("chat_agent", {"routing": {}, "plan": []}) is True
     assert stream_config.should_stream_token("router", {"routing": {}, "plan": []}) is False
     assert stream_config.map_exception(RuntimeError("boom")) == "服务暂时不可用，请稍后重试。"
     assert stream_config.initial_emitted_events == ()
     assert scheduled_calls == []
+    assert call_order == ["add_user", "load_history"]
     assert saved_messages == [
         {
             "conversation_id": "507f1f77bcf86cd799439011",
@@ -143,6 +166,7 @@ def test_assistant_chat_new_conversation_injects_created_session_event(monkeypat
     captured: dict = {}
     scheduled_calls: list[dict] = []
     saved_messages: list[dict] = []
+    load_history_called = False
 
     def _fake_create_streaming_response(question: str, config: AssistantStreamConfig):
         captured["question"] = question
@@ -187,6 +211,12 @@ def test_assistant_chat_new_conversation_injects_created_session_event(monkeypat
         "add_message",
         lambda **kwargs: saved_messages.append(kwargs) or "507f1f77bcf86cd799439012",
     )
+    def _fake_load_history(**_kwargs):
+        nonlocal load_history_called
+        load_history_called = True
+        return []
+
+    monkeypatch.setattr(service_module, "load_history", _fake_load_history)
 
     response = service_module.assistant_chat(question="新建会话")
 
@@ -208,6 +238,7 @@ def test_assistant_chat_new_conversation_injects_created_session_event(monkeypat
             "question": "新建会话",
         }
     ]
+    assert load_history_called is False
     assert saved_messages == [
         {
             "conversation_id": "db-new-conv-uuid-100",
@@ -215,6 +246,7 @@ def test_assistant_chat_new_conversation_injects_created_session_event(monkeypat
             "content": "新建会话",
         }
     ]
+    assert stream_config.build_initial_state("x")["history_messages"] == []
 
     assert stream_config.on_answer_completed is not None
     asyncio.run(stream_config.on_answer_completed("AI结束回复"))
@@ -223,3 +255,32 @@ def test_assistant_chat_new_conversation_injects_created_session_event(monkeypat
         "role": "assistant",
         "content": "AI结束回复",
     }
+
+
+def test_load_history_reads_latest_window_and_returns_chronological(monkeypatch):
+    captured: dict = {}
+
+    def _fake_get_history(*, conversation_id: str, limit: int, ascending: bool):
+        captured["conversation_id"] = conversation_id
+        captured["limit"] = limit
+        captured["ascending"] = ascending
+        # 模拟数据库倒序（新 -> 旧）结果。
+        return [
+            HumanMessage(content="Q2"),
+            AIMessage(content="A1"),
+            HumanMessage(content="Q1"),
+        ]
+
+    monkeypatch.setattr(service_module, "get_history", _fake_get_history)
+
+    history_messages = service_module.load_history(
+        conversation_id="507f1f77bcf86cd799439011",
+        limit=50,
+    )
+
+    assert captured == {
+        "conversation_id": "507f1f77bcf86cd799439011",
+        "limit": 50,
+        "ascending": False,
+    }
+    assert [message.content for message in history_messages] == ["Q1", "A1", "Q2"]

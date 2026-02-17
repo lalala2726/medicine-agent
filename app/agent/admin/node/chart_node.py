@@ -67,7 +67,7 @@ def _build_chart_input(state: AgentState, runtime: dict[str, Any]) -> dict[str, 
     if isinstance(user_input, str) and user_input:
         payload["user_input"] = user_input
 
-    history_messages = runtime.get("history_messages")
+    history_messages = runtime.get("history_messages_serialized")
     if isinstance(history_messages, list) and history_messages:
         payload["history_messages"] = history_messages
 

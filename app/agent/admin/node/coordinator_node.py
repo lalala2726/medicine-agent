@@ -1,7 +1,7 @@
 import json
 from typing import Any
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage
 
 from app.agent.admin.agent_state import AgentState, PlanStep
 from app.agent.admin.dag_rules import (
@@ -9,6 +9,7 @@ from app.agent.admin.dag_rules import (
     review_plan,
     select_model_by_difficulty,
 )
+from app.agent.admin.history_utils import build_messages_with_history
 from app.agent.tools.coordinator_tools import get_agent_detail
 from app.core.assistant_status import status_node
 from app.core.langsmith import traceable
@@ -132,16 +133,18 @@ def coordinator(state: AgentState) -> dict[str, Any]:
     if not user_input:
         routing["difficulty"] = difficulty
         return {"routing": routing, "plan": []}
+    history_messages = list(state.get("history_messages") or [])
 
     llm = create_chat_model(
         model=model_name,
         temperature=0,
         response_format={"type": "json_object"},
     )
-    base_messages = [
-        SystemMessage(content=_system_prompt),
-        HumanMessage(content=f"用户请求：{user_input}"),
-    ]
+    base_messages = build_messages_with_history(
+        system_prompt=_system_prompt,
+        history_messages=history_messages,
+        fallback_user_input=user_input,
+    )
 
     routing["difficulty"] = difficulty
     reviewed_plan: list[PlanStep] = []

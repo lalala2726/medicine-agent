@@ -2,14 +2,10 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Dict, List, Literal, TypedDict
 
+from langchain_core.messages import AIMessage, HumanMessage
 
-class HistoryMessage(TypedDict):
-    """
-    对话历史消息。
-    """
 
-    role: Literal["user", "assistant"]
-    content: str
+ChatHistoryMessage = HumanMessage | AIMessage
 
 
 class StepOutput(TypedDict, total=False):
@@ -260,8 +256,8 @@ class AgentState(TypedDict):
     # 商品 Agent 上下文
     product_context: ProductContext
 
-    # 历史消息（用户与助手）
-    history_messages: List[HistoryMessage]
+    # 历史消息（仅支持 LangChain 消息对象）
+    history_messages: List[ChatHistoryMessage]
 
     # DAG 步骤产出（并发安全聚合）
     step_outputs: Annotated[dict[str, StepOutput], _merge_step_outputs]

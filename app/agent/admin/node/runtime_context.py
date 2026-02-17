@@ -4,6 +4,7 @@ import json
 from typing import Any
 
 from app.agent.admin.agent_state import AgentState, PlanStep, StepFailurePolicy, StepOutput
+from app.agent.admin.history_utils import history_to_role_dicts
 
 _DEFAULT_FAILURE_POLICY: StepFailurePolicy = {
     "mode": "hybrid",
@@ -52,6 +53,7 @@ def build_step_runtime(
     """
     step = get_current_step(state, node_name)
     coordinator_mode = _is_coordinator_mode(state)
+    raw_history_messages = list(state.get("history_messages") or [])
 
     raw_step_id = step.get("step_id")
     step_id = str(raw_step_id).strip() if isinstance(raw_step_id, str) else ""
@@ -62,9 +64,13 @@ def build_step_runtime(
 
     # 设计约束：
     # - coordinator 模式下默认不读 user/history，必须通过步骤开关显式开启；
-    # - 非 coordinator 模式沿用旧行为（user_input 默认可读）。
-    include_user_input = bool(step.get("include_user_input")) if coordinator_mode else True
-    include_chat_history = bool(step.get("include_chat_history")) if coordinator_mode else False
+    # - 非 coordinator 模式默认可读 history，且有 history 时不再重复注入 user_input。
+    if coordinator_mode:
+        include_user_input = bool(step.get("include_user_input"))
+        include_chat_history = bool(step.get("include_chat_history"))
+    else:
+        include_chat_history = True
+        include_user_input = not raw_history_messages
 
     read_from: list[str] = []
     if coordinator_mode and isinstance(step.get("read_from"), list):
@@ -82,8 +88,9 @@ def build_step_runtime(
             upstream_outputs[dependency_id] = payload
 
     user_input = str(state.get("user_input") or "").strip() if include_user_input else ""
-    history_messages = (
-        list(state.get("history_messages") or []) if include_chat_history else []
+    history_messages = list(raw_history_messages) if include_chat_history else []
+    history_messages_serialized = (
+        history_to_role_dicts(history_messages) if include_chat_history else []
     )
 
     return {
@@ -97,6 +104,7 @@ def build_step_runtime(
         "include_chat_history": include_chat_history,
         "user_input": user_input,
         "history_messages": history_messages,
+        "history_messages_serialized": history_messages_serialized,
         "final_output": bool(step.get("final_output")),
         "failure_policy": resolve_failure_policy(step),
     }
@@ -205,7 +213,7 @@ def build_instruction_text(runtime: dict[str, Any]) -> str:
     if isinstance(user_input, str) and user_input:
         sections.append(f"用户输入：{user_input}")
 
-    history_messages = runtime.get("history_messages")
+    history_messages = runtime.get("history_messages_serialized")
     if isinstance(history_messages, list) and history_messages:
         sections.append(
             "历史对话：\n" + json.dumps(history_messages, ensure_ascii=False)
