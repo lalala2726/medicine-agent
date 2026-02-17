@@ -5,6 +5,10 @@ from contextvars import ContextVar, Token
 from functools import wraps
 from typing import Any, Callable, Literal
 
+from loguru import logger
+
+from app.schemas.sse_response import AssistantResponse
+
 EventPayload = dict[str, Any]
 EventContent = dict[str, Any]
 EventEmitter = Callable[[EventPayload], None]
@@ -71,17 +75,41 @@ def _build_event_content(
     return content
 
 
-def _emit_event(*, event_type: str, content: EventContent) -> None:
-    """发射事件信封；未注册发射器时静默忽略。"""
+def _emit_payload(*, payload: EventPayload, source: str) -> None:
+    """
+    发射原始事件负载到当前上下文 emitter。
+
+    行为约束：
+    - 没有 emitter 时记录 warning 并忽略，避免影响主流程；
+    - emitter 执行异常时记录 warning 并忽略，避免中断业务。
+    """
+
     emitter = _status_emitter.get()
     if emitter is None:
+        logger.warning(
+            "SSE event ignored because emitter is missing: source={}",
+            source,
+        )
         return
 
     try:
-        emitter({"type": event_type, "content": content})
-    except Exception:
-        # 状态事件不应影响主流程
+        emitter(payload)
+    except Exception as exc:
+        logger.warning(
+            "SSE event ignored because emitter failed: source={} error={}",
+            source,
+            exc,
+        )
         return
+
+
+def _emit_event(*, event_type: str, content: EventContent) -> None:
+    """发射标准状态事件信封（兼容旧接口）。"""
+
+    _emit_payload(
+        payload={"type": event_type, "content": content},
+        source=f"event:{event_type}",
+    )
 
 
 def emit_status(
@@ -133,6 +161,21 @@ def emit_function_call(
             arguments=arguments,
         ),
     )
+
+
+def emit_sse_response(response: AssistantResponse) -> None:
+    """
+    发送任意 AssistantResponse 结构的 SSE 事件。
+
+    适用场景：业务侧需要在任意时机插入自定义 SSE 信息（参数提示、状态补充等）。
+
+    注意：
+    - 该入口会强制 `is_end=False`，保证流结束包仍由流式引擎统一收尾输出。
+    """
+
+    normalized_response = response.model_copy(update={"is_end": False})
+    payload = normalized_response.model_dump(mode="json", exclude_none=True)
+    _emit_payload(payload=payload, source="emit_sse_response")
 
 
 def resolve_tool_call_messages(tool_name: str) -> tuple[str, str, str]:

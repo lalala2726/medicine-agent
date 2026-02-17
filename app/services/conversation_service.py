@@ -1,16 +1,28 @@
 import datetime
 from typing import Annotated
 
+from bson.int64 import Int64
 from pydantic import Field
 from pymongo.errors import PyMongoError
 
-from core.codes import ResponseCode
-from core.exceptions import ServiceException
-from core.mongodb import get_mongo_database
+from app.core.codes import ResponseCode
+from app.core.exceptions import ServiceException
+from app.core.mongodb import get_mongo_database
 
 _TABLE_NAME = "conversations"
 _ADMIN_MARK = "admin"
 _USER_MARK = "user"
+
+
+def _to_mongo_long(value: int) -> Int64:
+    """
+    将 Python int 显式转换为 MongoDB int64。
+
+    这样可以避免在开启 `$jsonSchema`（bsonType=long）校验时，
+    Python 小整数被编码成 int32 导致写入失败。
+    """
+
+    return Int64(value)
 
 
 def _get_conversation(
@@ -39,7 +51,7 @@ def _get_conversation(
     query = {
         "uuid": conversation_uuid,
         "conversation_type": conversation_type,
-        "user_id": user_id,
+        "user_id": _to_mongo_long(user_id),
     }
 
     try:
@@ -131,7 +143,7 @@ def _add_conversation(
     conversation = {
         "uuid": conversation_uuid,
         "conversation_type": conversation_type,
-        "user_id": user_id,
+        "user_id": _to_mongo_long(user_id),
         "title": "新聊天",
         "create_time": now,
         "update_time": now,
@@ -196,3 +208,31 @@ def add_admin_conversation(
         conversation_type=_ADMIN_MARK,
         user_id=user_id,
     )
+
+def save_conversation_title(
+        *,
+        conversation_uuid: Annotated[str, Field(min_length=1)],
+        title: Annotated[str, Field(min_length=1)],
+) -> None:
+    """
+    保存会话标题并刷新更新时间。
+
+    Args:
+        conversation_uuid: 会话唯一标识 UUID。
+        title: 新标题。
+
+    Raises:
+        ServiceException: 当数据库操作失败时抛出。
+    """
+
+    db = get_mongo_database()
+    collection = db[_TABLE_NAME]
+
+    now = datetime.datetime.now()
+    query = {"uuid": conversation_uuid}
+    update_doc = {"$set": {"title": title, "update_time": now}}
+
+    try:
+        collection.update_one(query, update_doc)
+    except PyMongoError as exc:
+        raise ServiceException(code=ResponseCode.DATABASE_ERROR, message="数据库错误") from exc

@@ -31,6 +31,7 @@ from app.utils.streaming_utils import extract_text
 
 StreamEvent = tuple[str, Any]
 GraphEventPayload = tuple[str, Any]
+InitialEmittedEvent = AssistantResponse | dict[str, Any]
 
 EVENT_EMITTED = "emitted"
 EVENT_GRAPH = "graph"
@@ -57,6 +58,7 @@ class AssistantStreamConfig:
         build_stream_config: 生成 astream 调用配置（可返回 None 表示不传 config）。
         invoke_sync: 无 astream 能力时的同步执行入口（通常内部调用 graph.invoke）。
         map_exception: 将异常映射为前端可读错误文案的函数。
+        initial_emitted_events: 流开始前先注入的事件（用于会话创建成功等前置通知）。
         hide_node_types: 对哪些事件类型隐藏 `node` 字段，默认隐藏 function_call。
         stream_modes: astream 订阅模式，默认 messages + values。
         response_headers: StreamingResponse 的响应头，默认包含禁缓存和禁代理缓冲。
@@ -76,6 +78,10 @@ class AssistantStreamConfig:
     invoke_sync: Callable[[dict[str, Any]], dict[str, Any]]
     # 异常映射器：把内部异常转成统一错误文案。
     map_exception: Callable[[Exception], str]
+    # 流开始前注入的事件列表（例如会话创建成功事件），会按给定顺序输出。
+    initial_emitted_events: tuple[InitialEmittedEvent, ...] = field(
+        default_factory=tuple
+    )
     # 这些事件类型会隐藏 content.node，避免暴露内部节点标识。
     hide_node_types: set[MessageType] = field(
         default_factory=lambda: {MessageType.FUNCTION_CALL}
@@ -160,6 +166,9 @@ def _resolve_message_type(raw_type: Any) -> MessageType:
     不因上游事件类型不规范而中断主流程。
     """
 
+    if isinstance(raw_type, MessageType):
+        return raw_type
+
     normalized_type = str(raw_type or MessageType.STATUS.value)
     try:
         return MessageType(normalized_type)
@@ -167,24 +176,45 @@ def _resolve_message_type(raw_type: Any) -> MessageType:
         return MessageType.STATUS
 
 
-def build_emitted_sse(
+def _resolve_timestamp(raw_timestamp: Any) -> int | None:
+    """解析输入时间戳，非法值回退为 None（由模型默认值填充）。"""
+
+    if isinstance(raw_timestamp, int):
+        return raw_timestamp
+    return None
+
+
+def _resolve_meta(raw_meta: Any) -> dict[str, Any] | None:
+    """解析输入的 meta 字段，仅接受字典类型。"""
+
+    if isinstance(raw_meta, dict):
+        return raw_meta
+    return None
+
+
+def build_emitted_response(
         event_payload: dict[str, Any], hide_node_types: set[MessageType]
-) -> str | None:
+) -> AssistantResponse | None:
     """
-    将状态发射器事件（status/function_call/tool_response）转换为 SSE 文本。
+    将状态发射器事件（兼容旧信封与 AssistantResponse 风格）转换为 AssistantResponse。
 
     Args:
         event_payload: 发射器推送的原始事件。
         hide_node_types: 需要隐藏 `node` 字段的事件类型集合。
 
     Returns:
-        str | None: 可序列化时返回 SSE 文本；结构不合法时返回 None 并忽略该事件。
+        AssistantResponse | None: 可解析时返回标准响应模型；结构不合法时返回 None 并忽略。
 
     说明：
     - `function_call` 等事件按配置隐藏 `node`，避免把“工具节点内部标识”暴露给前端。
     - 如果事件结构不合法（例如 content 不是字典），选择忽略而非抛错，
       保障主流式链路稳定。
+    - 自定义发射事件无论传入何种 `is_end`，都会在这里强制归一为 False，
+      保证流结束包仅由收尾流程输出一次。
     """
+
+    if not isinstance(event_payload, dict):
+        return None
 
     content = event_payload.get("content")
     if not isinstance(content, dict):
@@ -196,7 +226,20 @@ def build_emitted_sse(
     if message_type in hide_node_types:
         node = None
 
-    payload = AssistantResponse(
+    payload_kwargs: dict[str, Any] = {}
+    resolved_timestamp = _resolve_timestamp(event_payload.get("timestamp"))
+    if resolved_timestamp is not None:
+        payload_kwargs["timestamp"] = resolved_timestamp
+
+    # 优先读取新字段 `meta`，兼容读取旧字段 `extra`。
+    raw_meta = event_payload.get("meta")
+    if raw_meta is None:
+        raw_meta = event_payload.get("extra")
+    resolved_meta = _resolve_meta(raw_meta)
+    if resolved_meta is not None:
+        payload_kwargs["meta"] = resolved_meta
+
+    return AssistantResponse(
         content=Content(
             text=content.get("text"),
             node=node,
@@ -208,8 +251,36 @@ def build_emitted_sse(
             arguments=content.get("arguments"),
         ),
         type=message_type,
+        is_end=False,
+        **payload_kwargs,
     )
+
+
+def build_emitted_sse(
+        event_payload: dict[str, Any], hide_node_types: set[MessageType]
+) -> str | None:
+    """将状态发射器事件转换为 SSE 文本。"""
+
+    payload = build_emitted_response(event_payload, hide_node_types)
+    if payload is None:
+        return None
     return serialize_sse(payload)
+
+
+def _normalize_initial_event_payload(event: InitialEmittedEvent) -> dict[str, Any] | None:
+    """
+    归一化预注入事件负载。
+
+    支持两种输入：
+    - AssistantResponse：按统一 JSON 结构导出；
+    - dict：直接作为 emitted payload 使用。
+    """
+
+    if isinstance(event, AssistantResponse):
+        return event.model_dump(mode="json", exclude_none=True)
+    if isinstance(event, dict):
+        return event
+    return None
 
 
 def handle_graph_message_chunk(
@@ -306,10 +377,20 @@ def _process_stream_event(
     """
 
     if event_type == EVENT_EMITTED:
-        rendered = build_emitted_sse(payload, hide_node_types)
+        emitted_response = build_emitted_response(payload, hide_node_types)
         result = EventProcessResult()
-        if rendered:
-            result.rendered_events.append(rendered)
+        if emitted_response is None:
+            return result
+
+        # 自定义 answer 事件也视作“已输出内容”，避免 done 后 fallback 重复输出。
+        if (
+                emitted_response.type == MessageType.ANSWER
+                and isinstance(emitted_response.content.text, str)
+                and emitted_response.content.text
+        ):
+            runtime_state.has_streamed_output = True
+
+        result.rendered_events.append(serialize_sse(emitted_response))
         return result
 
     if event_type == EVENT_GRAPH:
@@ -453,6 +534,13 @@ async def _event_stream(
         loop.call_soon_threadsafe(queue.put_nowait, (EVENT_EMITTED, event))
 
     emitter_token = set_status_emitter(_event_emitter)
+
+    # 先把前置事件写入队列，确保“会话创建成功”等通知优先于图执行事件输出。
+    for initial_event in config.initial_emitted_events:
+        initial_payload = _normalize_initial_event_payload(initial_event)
+        if initial_payload is not None:
+            queue.put_nowait((EVENT_EMITTED, initial_payload))
+
     producer_task = asyncio.create_task(
         _produce_workflow_events(
             queue=queue,

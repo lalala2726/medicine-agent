@@ -3,6 +3,7 @@ import time
 from fastapi import Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from loguru import logger
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.core.codes import ResponseCode
@@ -11,6 +12,43 @@ from app.schemas.response import ApiResponse
 
 
 class ExceptionHandlers:
+    @staticmethod
+    def _build_request_context(request: Request | None) -> str:
+        """
+        构造统一的请求定位信息。
+
+        仅输出 method/path/client，避免泄露 body 与敏感头信息。
+        """
+
+        if request is None:
+            return "method=unknown path=unknown client=unknown"
+
+        method = request.method or "unknown"
+        path = request.url.path or "unknown"
+        client = request.client
+        if client is None:
+            client_text = "unknown"
+        elif client.port is None:
+            client_text = client.host
+        else:
+            client_text = f"{client.host}:{client.port}"
+        return f"method={method} path={path} client={client_text}"
+
+    @staticmethod
+    def _log_exception(*, request: Request | None, exc: Exception, category: str) -> None:
+        """
+        记录异常详细日志（含堆栈）用于排查。
+
+        category 用于标识异常来源：validation/service/http/unhandled。
+        """
+
+        request_context = ExceptionHandlers._build_request_context(request)
+        logger.opt(exception=exc).error(
+            "API exception category={} {}",
+            category,
+            request_context,
+        )
+
     @staticmethod
     def _resolve_http_status(code: int) -> int:
         """
@@ -41,8 +79,13 @@ class ExceptionHandlers:
 
     @staticmethod
     async def request_validation_exception_handler(
-            _: Request, exc: RequestValidationError
+            request: Request | None, exc: RequestValidationError
     ) -> JSONResponse:
+        ExceptionHandlers._log_exception(
+            request=request,
+            exc=exc,
+            category="validation",
+        )
         return JSONResponse(
             status_code=ResponseCode.BAD_REQUEST,
             content={
@@ -54,7 +97,12 @@ class ExceptionHandlers:
         )
 
     @staticmethod
-    async def service_exception_handler(_: Request, exc: ServiceException) -> JSONResponse:
+    async def service_exception_handler(request: Request | None, exc: ServiceException) -> JSONResponse:
+        ExceptionHandlers._log_exception(
+            request=request,
+            exc=exc,
+            category="service",
+        )
         try:
             response_code = ResponseCode(exc.code)
         except ValueError:
@@ -69,7 +117,12 @@ class ExceptionHandlers:
         )
 
     @staticmethod
-    async def http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
+    async def http_exception_handler(request: Request | None, exc: StarletteHTTPException) -> JSONResponse:
+        ExceptionHandlers._log_exception(
+            request=request,
+            exc=exc,
+            category="http",
+        )
         try:
             response_code = ResponseCode(exc.status_code)
         except ValueError:
@@ -77,7 +130,8 @@ class ExceptionHandlers:
         if response_code:
             # 404 错误时包含请求路径信息
             if exc.status_code == 404:
-                message = f"路由 {request.url.path} 不存在"
+                path = request.url.path if request is not None else "unknown"
+                message = f"路由 {path} 不存在"
             else:
                 message = None
             content = ApiResponse.error(response_code, message=message).model_dump()
@@ -89,7 +143,12 @@ class ExceptionHandlers:
         )
 
     @staticmethod
-    async def unhandled_exception_handler(_: Request, __: Exception) -> JSONResponse:
+    async def unhandled_exception_handler(request: Request | None, exc: Exception) -> JSONResponse:
+        ExceptionHandlers._log_exception(
+            request=request,
+            exc=exc,
+            category="unhandled",
+        )
         return JSONResponse(
             status_code=ResponseCode.INTERNAL_ERROR,
             content=ApiResponse.error(ResponseCode.INTERNAL_ERROR).model_dump(),

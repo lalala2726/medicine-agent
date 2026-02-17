@@ -14,6 +14,26 @@ def _build_request(path: str) -> Request:
     return Request({"type": "http", "method": "POST", "path": path, "headers": []})
 
 
+def _install_log_spy(monkeypatch) -> list[dict]:
+    calls: list[dict] = []
+
+    def _fake_log_exception(*, request, exc, category) -> None:
+        calls.append(
+            {
+                "request": request,
+                "exc": exc,
+                "category": category,
+            }
+        )
+
+    monkeypatch.setattr(
+        ExceptionHandlers,
+        "_log_exception",
+        staticmethod(_fake_log_exception),
+    )
+    return calls
+
+
 def test_request_validation_exception_handler():
     exc = RequestValidationError(
         [
@@ -108,3 +128,74 @@ def test_unhandled_exception_handler():
     body = json.loads(response.body)
     assert body["code"] == ResponseCode.INTERNAL_ERROR
     assert body["message"] == ResponseCode.INTERNAL_ERROR.message
+
+
+def test_build_request_context_handles_none_request():
+    context = ExceptionHandlers._build_request_context(None)
+    assert context == "method=unknown path=unknown client=unknown"
+
+
+def test_request_validation_exception_handler_logs_detail(monkeypatch):
+    calls = _install_log_spy(monkeypatch)
+    exc = RequestValidationError(
+        [
+            {
+                "type": "missing",
+                "loc": ("body", "question"),
+                "msg": "Field required",
+                "input": {},
+            }
+        ]
+    )
+
+    response = anyio.run(
+        ExceptionHandlers.request_validation_exception_handler,
+        None,
+        exc,
+    )
+
+    assert response.status_code == ResponseCode.BAD_REQUEST
+    assert len(calls) == 1
+    assert calls[0]["category"] == "validation"
+    assert calls[0]["request"] is None
+    assert calls[0]["exc"] is exc
+
+
+def test_service_exception_handler_logs_detail(monkeypatch):
+    calls = _install_log_spy(monkeypatch)
+    exc = ServiceException(message="bad", code=ResponseCode.BAD_REQUEST)
+
+    response = anyio.run(ExceptionHandlers.service_exception_handler, None, exc)
+
+    assert response.status_code == ResponseCode.BAD_REQUEST
+    assert len(calls) == 1
+    assert calls[0]["category"] == "service"
+    assert calls[0]["request"] is None
+    assert calls[0]["exc"] is exc
+
+
+def test_http_exception_handler_logs_detail(monkeypatch):
+    calls = _install_log_spy(monkeypatch)
+    request = _build_request("/missing")
+    exc = StarletteHTTPException(status_code=404, detail="not found")
+
+    response = anyio.run(ExceptionHandlers.http_exception_handler, request, exc)
+
+    assert response.status_code == 404
+    assert len(calls) == 1
+    assert calls[0]["category"] == "http"
+    assert calls[0]["request"] is request
+    assert calls[0]["exc"] is exc
+
+
+def test_unhandled_exception_handler_logs_detail(monkeypatch):
+    calls = _install_log_spy(monkeypatch)
+    exc = Exception("boom")
+
+    response = anyio.run(ExceptionHandlers.unhandled_exception_handler, None, exc)
+
+    assert response.status_code == ResponseCode.INTERNAL_ERROR
+    assert len(calls) == 1
+    assert calls[0]["category"] == "unhandled"
+    assert calls[0]["request"] is None
+    assert calls[0]["exc"] is exc

@@ -1,7 +1,8 @@
 import time
 from enum import Enum
+from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 
 
 class Content(BaseModel):
@@ -27,6 +28,11 @@ class AssistantResponse(BaseModel):
 
     content: Content = Field(..., description="内容")
     type: MessageType = Field(default=MessageType.ANSWER, description="类型")
+    meta: dict[str, Any] | None = Field(
+        default=None,
+        validation_alias=AliasChoices("meta", "extra"),
+        description="元数据（如会话ID、追踪ID等扩展信息）",
+    )
     is_end: bool = Field(default=False, description="是否结束")
     timestamp: int = Field(
         default_factory=lambda: int(time.time() * 1000), description="时间戳（毫秒）"

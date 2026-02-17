@@ -3,6 +3,7 @@ import json
 from fastapi.responses import StreamingResponse
 
 from app.services import admin_assisant_service as service_module
+from app.schemas.sse_response import MessageType
 from app.services.assistant_stream_service import AssistantStreamConfig
 
 
@@ -39,6 +40,7 @@ def test_invoke_admin_workflow_passes_langsmith_config(monkeypatch):
 
 def test_assistant_chat_delegates_to_stream_service(monkeypatch):
     captured: dict = {}
+    scheduled_calls: list[dict] = []
 
     def _fake_create_streaming_response(question: str, config: AssistantStreamConfig):
         captured["question"] = question
@@ -79,6 +81,11 @@ def test_assistant_chat_delegates_to_stream_service(monkeypatch):
         "create_streaming_response",
         _fake_create_streaming_response,
     )
+    monkeypatch.setattr(
+        service_module,
+        "_schedule_title_generation",
+        lambda **kwargs: scheduled_calls.append(kwargs),
+    )
 
     response = service_module.assistant_chat(
         question="代理测试",
@@ -96,3 +103,70 @@ def test_assistant_chat_delegates_to_stream_service(monkeypatch):
     assert stream_config.should_stream_token("chat_agent", {"routing": {}, "plan": []}) is True
     assert stream_config.should_stream_token("router", {"routing": {}, "plan": []}) is False
     assert stream_config.map_exception(RuntimeError("boom")) == "服务暂时不可用，请稍后重试。"
+    assert stream_config.initial_emitted_events == ()
+    assert scheduled_calls == []
+
+
+def test_assistant_chat_new_conversation_injects_created_session_event(monkeypatch):
+    captured: dict = {}
+    scheduled_calls: list[dict] = []
+
+    def _fake_create_streaming_response(question: str, config: AssistantStreamConfig):
+        captured["question"] = question
+        captured["config"] = config
+
+        async def _stream():
+            yield (
+                "data: "
+                + json.dumps(
+                    {
+                        "content": {"text": ""},
+                        "type": "answer",
+                        "is_end": True,
+                        "timestamp": 1,
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n\n"
+            )
+
+        return StreamingResponse(_stream(), media_type="text/event-stream")
+
+    monkeypatch.setattr(
+        service_module,
+        "create_streaming_response",
+        _fake_create_streaming_response,
+    )
+    monkeypatch.setattr(service_module, "get_user_id", lambda: 100)
+    monkeypatch.setattr(service_module.uuid, "uuid4", lambda: "new-conv-uuid")
+    monkeypatch.setattr(
+        service_module,
+        "add_admin_conversation",
+        lambda *, conversation_uuid, user_id: f"db-{conversation_uuid}-{user_id}",
+    )
+    monkeypatch.setattr(
+        service_module,
+        "_schedule_title_generation",
+        lambda **kwargs: scheduled_calls.append(kwargs),
+    )
+
+    response = service_module.assistant_chat(question="新建会话")
+
+    assert isinstance(response, StreamingResponse)
+    assert captured["question"] == "新建会话"
+    stream_config = captured["config"]
+    assert len(stream_config.initial_emitted_events) == 1
+    session_event = stream_config.initial_emitted_events[0]
+    assert session_event.type == MessageType.STATUS
+    assert session_event.content.node == "conversation"
+    assert session_event.content.state == "created"
+    assert session_event.content.message == "会话创建成功"
+    assert session_event.meta == {
+        "conversation_uuid": "new-conv-uuid",
+    }
+    assert scheduled_calls == [
+        {
+            "conversation_uuid": "new-conv-uuid",
+            "question": "新建会话",
+        }
+    ]
