@@ -17,10 +17,11 @@
 """
 
 import asyncio
+import inspect
 import json
 from contextlib import suppress
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterable, Callable
+from typing import Any, AsyncIterable, Awaitable, Callable
 
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
@@ -78,6 +79,8 @@ class AssistantStreamConfig:
     invoke_sync: Callable[[dict[str, Any]], dict[str, Any]]
     # 异常映射器：把内部异常转成统一错误文案。
     map_exception: Callable[[Exception], str]
+    # 可选收尾回调：在流结束时回调完整 answer 文本（不含 is_end 收尾包）。
+    on_answer_completed: Callable[[str], None | Awaitable[None]] | None = None
     # 流开始前注入的事件列表（例如会话创建成功事件），会按给定顺序输出。
     initial_emitted_events: tuple[InitialEmittedEvent, ...] = field(
         default_factory=tuple
@@ -111,6 +114,7 @@ class StreamRuntimeState:
     latest_state: dict[str, Any]
     has_streamed_output: bool = False
     has_emitted_error: bool = False
+    aggregated_answer_parts: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -320,6 +324,7 @@ def handle_graph_message_chunk(
         return result
 
     runtime_state.has_streamed_output = True
+    runtime_state.aggregated_answer_parts.append(token_text)
     result.rendered_events.append(build_answer_sse(token_text, False))
     return result
 
@@ -389,6 +394,7 @@ def _process_stream_event(
                 and emitted_response.content.text
         ):
             runtime_state.has_streamed_output = True
+            runtime_state.aggregated_answer_parts.append(emitted_response.content.text)
 
         result.rendered_events.append(serialize_sse(emitted_response))
         return result
@@ -400,6 +406,7 @@ def _process_stream_event(
         runtime_state.has_emitted_error = True
         result = EventProcessResult()
         message = map_exception(payload)
+        runtime_state.aggregated_answer_parts.append(message)
         result.rendered_events.append(build_answer_sse(message, False))
         return result
 
@@ -510,6 +517,24 @@ async def _finalize_stream(emitter_token: Any, producer_task: asyncio.Task[Any])
     return build_answer_sse("", True)
 
 
+async def _invoke_answer_completed_callback(
+        callback: Callable[[str], None | Awaitable[None]] | None,
+        answer_text: str,
+) -> None:
+    """
+    执行“回答完成”回调。
+
+    允许回调为同步函数或异步函数；回调异常会被调用方兜底，不影响主流输出。
+    """
+
+    if callback is None:
+        return
+
+    callback_result = callback(answer_text)
+    if inspect.isawaitable(callback_result):
+        await callback_result
+
+
 async def _event_stream(
         *, question: str, config: AssistantStreamConfig
 ) -> AsyncIterable[str]:
@@ -584,8 +609,14 @@ async def _event_stream(
         if not runtime_state.has_emitted_error and not runtime_state.has_streamed_output:
             fallback_text = config.extract_final_content(runtime_state.latest_state)
             if isinstance(fallback_text, str) and fallback_text:
+                runtime_state.aggregated_answer_parts.append(fallback_text)
                 yield build_answer_sse(fallback_text, False)
     finally:
+        with suppress(Exception):
+            await _invoke_answer_completed_callback(
+                config.on_answer_completed,
+                "".join(runtime_state.aggregated_answer_parts),
+            )
         end_event = await _finalize_stream(emitter_token, producer_task)
         yield end_event
 

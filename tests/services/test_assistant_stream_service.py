@@ -70,6 +70,7 @@ def _build_config(
         extract_final_content: Callable[[dict[str, Any]], str] | None = None,
         map_exception: Callable[[Exception], str] | None = None,
         initial_emitted_events: tuple[AssistantResponse, ...] = (),
+        on_answer_completed: Callable[[str], None] | None = None,
 ) -> AssistantStreamConfig:
     return AssistantStreamConfig(
         workflow=workflow,
@@ -84,6 +85,7 @@ def _build_config(
         build_stream_config=lambda: {"trace_id": "demo"},
         invoke_sync=lambda state: workflow.invoke(state),
         map_exception=map_exception or (lambda exc: f"处理失败: {exc}"),
+        on_answer_completed=on_answer_completed,
         initial_emitted_events=initial_emitted_events,
     )
 
@@ -255,6 +257,28 @@ def test_stream_service_uses_fallback_when_no_tokens():
     non_end_texts = [item["content"]["text"] for item in answer_payloads if not item["is_end"]]
     assert non_end_texts == ["fallback text"]
     assert answer_payloads[-1]["is_end"] is True
+
+
+def test_stream_service_calls_answer_completed_callback_with_aggregated_text():
+    graph = _DummyAsyncGraph(
+        events=[
+            ("messages", (_DummyMessageChunk("你"), {"langgraph_node": "chat_agent"})),
+            ("messages", (_DummyMessageChunk("好"), {"langgraph_node": "chat_agent"})),
+            ("values", {"final": "不会走兜底"}),
+        ]
+    )
+    completed_payloads: list[str] = []
+    payloads = _stream_with_config(
+        _build_config(
+            graph,
+            on_answer_completed=lambda text: completed_payloads.append(text),
+        )
+    )
+
+    answer_payloads = [item for item in payloads if item["type"] == "answer"]
+    non_end_texts = [item["content"]["text"] for item in answer_payloads if not item["is_end"]]
+    assert non_end_texts == ["你", "好"]
+    assert completed_payloads == ["你好"]
 
 
 def test_stream_service_maps_exception_to_answer():

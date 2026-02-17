@@ -1,3 +1,4 @@
+import asyncio
 import json
 
 from fastapi.responses import StreamingResponse
@@ -41,6 +42,7 @@ def test_invoke_admin_workflow_passes_langsmith_config(monkeypatch):
 def test_assistant_chat_delegates_to_stream_service(monkeypatch):
     captured: dict = {}
     scheduled_calls: list[dict] = []
+    saved_messages: list[dict] = []
 
     def _fake_create_streaming_response(question: str, config: AssistantStreamConfig):
         captured["question"] = question
@@ -86,6 +88,21 @@ def test_assistant_chat_delegates_to_stream_service(monkeypatch):
         "_schedule_title_generation",
         lambda **kwargs: scheduled_calls.append(kwargs),
     )
+    monkeypatch.setattr(service_module, "get_user_id", lambda: 100)
+    monkeypatch.setattr(
+        service_module,
+        "get_admin_conversation",
+        lambda *, conversation_uuid, user_id: {
+            "_id": "507f1f77bcf86cd799439011",
+            "uuid": conversation_uuid,
+            "user_id": user_id,
+        },
+    )
+    monkeypatch.setattr(
+        service_module,
+        "add_message",
+        lambda **kwargs: saved_messages.append(kwargs) or "507f1f77bcf86cd799439012",
+    )
 
     response = service_module.assistant_chat(
         question="代理测试",
@@ -105,11 +122,27 @@ def test_assistant_chat_delegates_to_stream_service(monkeypatch):
     assert stream_config.map_exception(RuntimeError("boom")) == "服务暂时不可用，请稍后重试。"
     assert stream_config.initial_emitted_events == ()
     assert scheduled_calls == []
+    assert saved_messages == [
+        {
+            "conversation_id": "507f1f77bcf86cd799439011",
+            "role": "user",
+            "content": "代理测试",
+        }
+    ]
+
+    assert stream_config.on_answer_completed is not None
+    asyncio.run(stream_config.on_answer_completed("AI最终回复"))
+    assert saved_messages[-1] == {
+        "conversation_id": "507f1f77bcf86cd799439011",
+        "role": "assistant",
+        "content": "AI最终回复",
+    }
 
 
 def test_assistant_chat_new_conversation_injects_created_session_event(monkeypatch):
     captured: dict = {}
     scheduled_calls: list[dict] = []
+    saved_messages: list[dict] = []
 
     def _fake_create_streaming_response(question: str, config: AssistantStreamConfig):
         captured["question"] = question
@@ -149,6 +182,11 @@ def test_assistant_chat_new_conversation_injects_created_session_event(monkeypat
         "_schedule_title_generation",
         lambda **kwargs: scheduled_calls.append(kwargs),
     )
+    monkeypatch.setattr(
+        service_module,
+        "add_message",
+        lambda **kwargs: saved_messages.append(kwargs) or "507f1f77bcf86cd799439012",
+    )
 
     response = service_module.assistant_chat(question="新建会话")
 
@@ -170,3 +208,18 @@ def test_assistant_chat_new_conversation_injects_created_session_event(monkeypat
             "question": "新建会话",
         }
     ]
+    assert saved_messages == [
+        {
+            "conversation_id": "db-new-conv-uuid-100",
+            "role": "user",
+            "content": "新建会话",
+        }
+    ]
+
+    assert stream_config.on_answer_completed is not None
+    asyncio.run(stream_config.on_answer_completed("AI结束回复"))
+    assert saved_messages[-1] == {
+        "conversation_id": "db-new-conv-uuid-100",
+        "role": "assistant",
+        "content": "AI结束回复",
+    }

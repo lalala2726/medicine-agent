@@ -7,7 +7,6 @@ from typing import Any
 
 from fastapi.responses import StreamingResponse
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-from langchain_core.prompts import SystemMessagePromptTemplate
 from loguru import logger
 
 from app.agent.admin.workflow import build_graph
@@ -21,7 +20,12 @@ from app.services.assistant_stream_service import (
     AssistantStreamConfig,
     create_streaming_response,
 )
-from app.services.conversation_service import add_admin_conversation, save_conversation_title
+from app.services.conversation_service import (
+    add_admin_conversation,
+    get_admin_conversation,
+    save_conversation_title,
+)
+from app.services.message_service import add_message
 from app.utils.streaming_utils import is_final_node
 
 ADMIN_WORKFLOW = build_graph()
@@ -192,26 +196,81 @@ def _schedule_title_generation(*, conversation_uuid: str, question: str) -> None
     )
 
 
+def _load_admin_conversation(
+        *,
+        conversation_uuid: str,
+        user_id: int,
+) -> str:
+    """
+    加载会话并返回 Mongo 会话ID（ObjectId 字符串）。
+
+    Raises:
+        ServiceException: 会话不存在、无权限或会话数据异常时抛出。
+    """
+
+    conversation = get_admin_conversation(
+        conversation_uuid=conversation_uuid,
+        user_id=user_id,
+    )
+    if conversation is None:
+        raise ServiceException(code=ResponseCode.NOT_FOUND, message="会话不存在")
+
+    conversation_id = conversation.get("_id")
+    if conversation_id is None:
+        raise ServiceException(code=ResponseCode.DATABASE_ERROR, message="会话数据异常")
+    return str(conversation_id)
+
+
+def _build_assistant_message_callback(*, conversation_id: str):
+    """
+    构建“流结束后写入 AI 消息”的异步回调。
+
+    该回调由流式引擎在输出结束时触发，满足“AI 完整响应后再落库”的时序要求。
+    """
+
+    async def _callback(answer_text: str) -> None:
+        normalized_answer = str(answer_text or "").strip()
+        if not normalized_answer:
+            return
+
+        try:
+            await asyncio.to_thread(
+                add_message,
+                conversation_id=conversation_id,
+                role="assistant",
+                content=normalized_answer,
+            )
+        except Exception as exc:  # pragma: no cover - 防御性兜底
+            logger.opt(exception=exc).warning(
+                "Failed to persist assistant message conversation_id={conversation_id}",
+                conversation_id=conversation_id,
+            )
+
+    return _callback
+
+
 def assistant_chat(*, question: str, conversation_uuid: str | None = None) -> StreamingResponse:
     """
     管理助手聊天入口（SSE 流式返回）。
 
     行为说明：
     1. 首次消息（未传 `conversation_uuid`）会创建会话并先推送“会话创建成功”事件；
-    2. 标题生成与保存在后台并行执行，不阻塞当前流式响应；
-    3. 已存在会话（传入 `conversation_uuid`）的历史加载仍为后续待实现。
+    2. 用户提问会在进入工作流前先写入消息表；
+    3. AI 回复会在流结束后再写入消息表；
+    4. 标题生成与保存在后台并行执行，不阻塞当前流式响应。
     """
 
     if not question:
         raise ServiceException(code=ResponseCode.BAD_REQUEST, message="问题不能为空")
 
     initial_emitted_events: list[AssistantResponse] = []
+    current_user_id = get_user_id()
     if conversation_uuid is None:
         # 未传入会话 UUID，则创建新会话
         conversation_uuid = str(uuid.uuid4())
         conversation_id = add_admin_conversation(
             conversation_uuid=conversation_uuid,
-            user_id=get_user_id(),
+            user_id=current_user_id,
         )
 
         if conversation_id is None:
@@ -229,8 +288,13 @@ def assistant_chat(*, question: str, conversation_uuid: str | None = None) -> St
             )
         )
     else:
-        # todo 加载会话并响应消息
-        pass
+        conversation_id = _load_admin_conversation(
+            conversation_uuid=conversation_uuid,
+            user_id=current_user_id,
+        )
+
+    # 用户消息立即落库，确保问题先被记录。
+    add_message(conversation_id=conversation_id, role="user", content=question)
 
     stream_config = AssistantStreamConfig(
         workflow=ADMIN_WORKFLOW,
@@ -240,6 +304,7 @@ def assistant_chat(*, question: str, conversation_uuid: str | None = None) -> St
         build_stream_config=_build_stream_config,
         invoke_sync=_invoke_admin_workflow,
         map_exception=_map_exception,
+        on_answer_completed=_build_assistant_message_callback(conversation_id=conversation_id),
         initial_emitted_events=tuple(initial_emitted_events),
     )
     return create_streaming_response(question, stream_config)
