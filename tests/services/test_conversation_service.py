@@ -63,6 +63,19 @@ def test_get_admin_conversation_uses_int64_user_id_in_query(monkeypatch):
     }
 
 
+def test_add_client_conversation_uses_client_type(monkeypatch):
+    collection = _DummyCollection()
+    monkeypatch.setattr(service_module, "get_mongo_database", lambda: {"conversations": collection})
+
+    service_module.add_client_conversation(
+        conversation_uuid="conv-client-1",
+        user_id=2,
+    )
+
+    assert collection.last_inserted is not None
+    assert collection.last_inserted["conversation_type"] == "client"
+
+
 def test_save_conversation_title_updates_title(monkeypatch):
     collection = _DummyCollection()
     monkeypatch.setattr(service_module, "get_mongo_database", lambda: {"conversations": collection})

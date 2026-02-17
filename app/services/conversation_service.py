@@ -1,4 +1,5 @@
 import datetime
+import os
 from typing import Annotated
 
 from bson.int64 import Int64
@@ -7,11 +8,14 @@ from pymongo.errors import PyMongoError
 
 from app.core.codes import ResponseCode
 from app.core.exceptions import ServiceException
-from app.core.mongodb import get_mongo_database
+from app.core.mongodb import DEFAULT_CONVERSATIONS_COLLECTION, get_mongo_database
 
-_TABLE_NAME = "conversations"
+_TABLE_NAME = (
+    (os.getenv("MONGODB_CONVERSATIONS_COLLECTION") or DEFAULT_CONVERSATIONS_COLLECTION).strip()
+    or DEFAULT_CONVERSATIONS_COLLECTION
+)
 _ADMIN_MARK = "admin"
-_USER_MARK = "user"
+_CLIENT_MARK = "client"
 
 
 def _to_mongo_long(value: int) -> Int64:
@@ -36,7 +40,7 @@ def _get_conversation(
 
     Args:
         conversation_uuid: 会话的唯一标识符
-        conversation_type: 会话类型 (admin/user)
+        conversation_type: 会话类型 (admin/client)
         user_id: 用户ID，可选，用于验证会话归属
 
     Returns:
@@ -111,7 +115,7 @@ def get_client_conversation(
     return _get_conversation(
         user_id=user_id,
         conversation_uuid=conversation_uuid,
-        conversation_type=_USER_MARK,
+        conversation_type=_CLIENT_MARK,
     )
 
 
@@ -126,7 +130,7 @@ def _add_conversation(
 
     Args:
         conversation_uuid: 会话的唯一标识符
-        conversation_type: 会话类型 (admin/user)
+        conversation_type: 会话类型 (admin/client)
         user_id: 用户ID，用于关联会话归属
 
     Returns:
@@ -179,7 +183,7 @@ def add_client_conversation(
     """
     return _add_conversation(
         conversation_uuid=conversation_uuid,
-        conversation_type=_USER_MARK,
+        conversation_type=_CLIENT_MARK,
         user_id=user_id,
     )
 

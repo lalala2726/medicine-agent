@@ -245,17 +245,6 @@ def assistant_chat(*, question: str, conversation_uuid: str | None = None) -> St
     return create_streaming_response(question, stream_config)
 
 
-def new_conversation(
-        *,
-        question: str
-):
-    pass
-
-
-def has_conversation(*, conversation_uuid: str) -> bool:
-    pass
-
-
 def load_history(
         *,
         conversation_uuid: str,
