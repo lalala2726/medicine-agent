@@ -119,7 +119,12 @@ def assistant_chat(*, question: str, conversation_uuid: str | None = None) -> St
 
     if not question:
         raise ServiceException(code=ResponseCode.BAD_REQUEST, message="问题不能为空")
-    _ = conversation_uuid
+    if conversation_uuid is None:
+        # todo 创建新会话并响应消息
+        pass
+    else:
+        # todo 加载会话并响应消息
+        pass
 
     stream_config = AssistantStreamConfig(
         workflow=ADMIN_WORKFLOW,
@@ -132,11 +137,20 @@ def assistant_chat(*, question: str, conversation_uuid: str | None = None) -> St
     )
     return create_streaming_response(question, stream_config)
 
+def new_conversation(
+        *,
+        question: str
+):
+    pass
+
+def has_conversation(*, conversation_uuid: str) -> bool:
+    pass
+
 
 def load_history(
-    *,
-    conversation_uuid: str,
-    user_id: int,
+        *,
+        conversation_uuid: str,
+        user_id: int,
 ) -> tuple[HumanMessage, AIMessage] | None:
     """加载聊天历史。"""
 
