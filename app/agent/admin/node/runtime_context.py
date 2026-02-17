@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, cast
 
 from app.agent.admin.agent_state import AgentState, PlanStep, StepFailurePolicy, StepOutput
 from app.agent.admin.history_utils import history_to_role_dicts
@@ -23,7 +23,6 @@ _STRICT_DATA_QUALITY_INSTRUCTION = (
 
 def _is_coordinator_mode(state: AgentState | dict[str, Any]) -> bool:
     # 只有 coordinator 编排路径，才启用“按步骤配置注入上下文”的严格模式。
-    # 直连节点（gateway 直达）仍保留历史行为，避免影响已有能力。
     routing = state.get("routing") or {}
     return routing.get("route_target") == "coordinator_agent"
 
@@ -257,7 +256,7 @@ def build_step_output_update(
     """
     step_id = str(runtime.get("step_id") or "").strip()
     if not step_id:
-        # 没有 step_id（例如 gateway 直连模式）就不写 step_outputs，保持兼容。
+        # 没有 step_id（例如 gateway 直连模式）就不写 step_outputs。
         return {}
 
     # 统一输出结构，供 planner 下一轮判断 completed/failed/skipped。

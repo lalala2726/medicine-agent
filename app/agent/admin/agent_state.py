@@ -65,67 +65,6 @@ def _merge_step_outputs(
     merged.update(right or {})
     return merged
 
-
-class OrderContext(TypedDict, total=False):
-    """
-    订单 Agent 使用的上下文
-    """
-
-    # 结果
-    result: Dict[str, Any]
-
-    # 订单 Agent 当前状态
-    status: str
-
-
-class AfterSaleContext(TypedDict, total=False):
-    """
-    售后 Agent 使用的上下文
-    """
-    # 售后或退款单 ID 列表
-    refund_ids: list[str]
-
-    # 售后类型
-    aftersale_type: str
-
-    # 售后处理结果数据
-    aftersale_data: list[Dict[str, Any]]
-
-    # 售后 Agent 当前状态
-    status: str
-
-
-class ExcelContext(TypedDict, total=False):
-    """
-    Excel Agent 使用的上下文
-    """
-    # 导出类型
-    export_type: str
-
-    # 数据来源 Agent
-    source_agent: str
-
-    # 导出的列名
-    columns: list[str]
-
-    # URL 地址
-    url: str
-
-    # Excel Agent 当前状态
-    status: str
-
-
-class ProductContext(TypedDict, total=False):
-    """
-    商品 Agent 使用的上下文
-    """
-    # 结果
-    result: Dict[str, Any]
-
-    # 商品 Agent 当前状态
-    status: str
-
-
 class StepFailurePolicy(TypedDict, total=False):
     """
     单步骤失败判定策略。
@@ -193,7 +132,7 @@ class RoutingState(TypedDict, total=False):
     路由状态（供 workflow/router 与各 agent 共享）
     """
 
-    # 当前执行到第几个阶段（兼容旧字段）
+    # 当前执行到第几个阶段
     stage_index: int
 
     # router 计算出的下一批可执行节点（单节点或并行多节点）
@@ -243,18 +182,6 @@ class AgentState(TypedDict):
 
     # 当前执行状态
     routing: RoutingState
-
-    # 订单 Agent 上下文
-    order_context: OrderContext
-
-    # 售后 Agent 上下文
-    aftersale_context: AfterSaleContext
-
-    # Excel Agent 上下文
-    excel_context: ExcelContext
-
-    # 商品 Agent 上下文
-    product_context: ProductContext
 
     # 历史消息（仅支持 LangChain 消息对象）
     history_messages: List[ChatHistoryMessage]

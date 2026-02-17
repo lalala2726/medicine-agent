@@ -1,12 +1,13 @@
 from langchain_core.prompts import SystemMessagePromptTemplate
 
-from app.agent.admin.agent_utils import invoke_with_failure_policy
+from app.agent.admin.agent_utils import (
+    build_standard_node_update,
+    execute_tool_node,
+)
 from app.agent.admin.agent_state import AgentState
 from app.agent.admin.node.runtime_context import (
     build_instruction_with_failure_policy,
-    build_step_output_update,
     build_step_runtime,
-    evaluate_failure_by_policy,
 )
 from app.agent.tools.admin_tools import get_orders_detail, get_order_list
 from app.core.assistant_status import status_node
@@ -73,48 +74,27 @@ def order_agent(state: AgentState) -> dict:
     tools = [get_orders_detail, get_order_list]
     # final_output=true 时允许节点内部 stream（用于最终对用户输出的节点）。
     final_output = is_final_node(state, "order_agent")
-    try:
-        content, diagnostics = invoke_with_failure_policy(
-            llm=llm,
-            messages=messages,
-            tools=tools,
-            enable_stream=final_output,
-            failure_policy=failure_policy,
-        )
-        stream_chunks = list(diagnostics.get("stream_chunks") or [])
-        step_status, failed_error, content = evaluate_failure_by_policy(
-            content,
-            diagnostics,
-            failure_policy,
-        )
-    except Exception as exc:
-        content = "订单服务暂时不可用，请稍后重试。"
-        stream_chunks = []
-        step_status = "failed"
-        failed_error = f"order_agent 执行失败: {exc}"
-
-    # 保留原有 order_context 结构，避免影响现有调用方。
-    order_context = dict(state.get("order_context") or {})
-    order_context["result"] = {
-        "content": content,
-        "is_end": final_output,
-    }
-    if stream_chunks:
-        order_context["stream_chunks"] = stream_chunks
-    else:
-        order_context.pop("stream_chunks", None)
-    order_context["status"] = "COMPLETED" if step_status == "completed" else "FAILED"
-
-    # 额外写入标准化 step_outputs，供 planner 下一轮调度使用。
-    result = {"order_context": order_context}
-    result.update(
-        build_step_output_update(
-            runtime,
-            node_name="order_agent",
-            status=step_status,
-            text=content,
-            output={"result": order_context["result"]},
-            error=failed_error,
-        )
+    execution_result = execute_tool_node(
+        llm=llm,
+        messages=messages,
+        tools=tools,
+        enable_stream=final_output,
+        failure_policy=failure_policy,
+        fallback_content="订单服务暂时不可用，请稍后重试。",
+        fallback_error="order_agent 执行失败",
     )
-    return result
+
+    return build_standard_node_update(
+        state=state,
+        runtime=runtime,
+        node_name="order_agent",
+        result_key="order",
+        execution_result=execution_result,
+        is_end=final_output,
+        step_output_payload={
+            "order": {
+                "content": execution_result.content,
+                "is_end": final_output,
+            }
+        },
+    )
