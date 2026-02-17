@@ -12,21 +12,39 @@ from app.utils.http_client import HttpClient
 AUTH_SERVICE_UNAVAILABLE_MESSAGE = "认证服务暂不可用，请稍后重试"
 
 
+def _is_auth_failure_code(code: int) -> bool:
+    """
+    认证失败码判定：
+    - 标准 HTTP 401/403
+    - 业务扩展码 401x/403x（例如 4011: 访问令牌已过期）
+    """
+    if code in {ResponseCode.UNAUTHORIZED.code, ResponseCode.FORBIDDEN.code}:
+        return True
+    code_text = str(code)
+    return code_text.startswith("401") or code_text.startswith("403")
+
+
 async def fetch_current_user_by_authorization() -> AuthUser:
     """
-    通过当前请求头中的 Authorization 调用 Spring 鉴权接口获取用户。
+    使用当前请求 Authorization 调用 Spring `/agent/authorization` 获取用户上下文。
 
-    映射规则：
-    - Spring 返回 code=401/403 -> FastAPI 抛 401
-    - Spring 返回 code!=200 且非 401/403 -> FastAPI 抛 503
-    - 网络错误/超时/非 JSON/无 data/data 不合法 -> FastAPI 抛 503
+    处理规则：
+    - 上游返回 code=200：解析 data 为 AuthUser。
+    - 上游返回 code!=200：
+      - 401/403/401x/403x -> 映射为 HTTP 401（保留 message）。
+      - 其余错误 -> 映射为 HTTP 503（保留 message）。
+    - 网络错误/超时/响应非 JSON/data 结构不合法 -> HTTP 503。
     """
     try:
         async with HttpClient(timeout=5.0) as client:
             response = await client.get("/agent/authorization")
     except ServiceException as exc:
-        if exc.code == ResponseCode.UNAUTHORIZED.code:
-            raise
+        if _is_auth_failure_code(exc.code):
+            raise ServiceException(
+                code=ResponseCode.UNAUTHORIZED,
+                message=exc.message,
+                data=exc.data,
+            ) from exc
         raise ServiceException(
             code=503,
             message=AUTH_SERVICE_UNAVAILABLE_MESSAGE,
@@ -38,33 +56,24 @@ async def fetch_current_user_by_authorization() -> AuthUser:
         ) from exc
 
     try:
-        payload = HttpResponse.from_response(response)
+        payload = HttpResponse.parse_data(response)
     except ServiceException as exc:
+        if _is_auth_failure_code(exc.code):
+            raise ServiceException(
+                code=ResponseCode.UNAUTHORIZED,
+                message=exc.message,
+                data=exc.data,
+            ) from exc
+        if str(exc.message).startswith("响应不是合法 JSON"):
+            raise ServiceException(code=503, message="认证服务响应格式错误") from exc
         raise ServiceException(
             code=503,
-            message="认证服务响应格式错误",
+            message=exc.message or AUTH_SERVICE_UNAVAILABLE_MESSAGE,
+            data=exc.data,
         ) from exc
 
-    if payload.code in {ResponseCode.UNAUTHORIZED.code, ResponseCode.FORBIDDEN.code}:
-        raise ServiceException(
-            code=ResponseCode.UNAUTHORIZED,
-            message=payload.message or ResponseCode.UNAUTHORIZED.message,
-        )
-
-    if payload.code != ResponseCode.SUCCESS.code:
-        raise ServiceException(
-            code=503,
-            message=AUTH_SERVICE_UNAVAILABLE_MESSAGE,
-        )
-
-    if payload.data is None:
-        raise ServiceException(
-            code=503,
-            message="认证服务响应缺少用户信息",
-        )
-
     try:
-        return AuthUser.model_validate(payload.data)
+        return AuthUser.model_validate(payload)
     except ValidationError as exc:
         raise ServiceException(
             code=503,

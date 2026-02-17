@@ -12,6 +12,14 @@ from app.schemas.response import ApiResponse
 
 class ExceptionHandlers:
     @staticmethod
+    def _resolve_http_status(code: int) -> int:
+        """
+        JSONResponse 仅接受合法 HTTP 状态码（100-599）。
+        当业务 code 非法（如 4011）时，回落为 400，避免 ASGI 层抛错。
+        """
+        return code if 100 <= int(code) <= 599 else ResponseCode.BAD_REQUEST.code
+
+    @staticmethod
     def _format_validation_errors(exc: RequestValidationError) -> list[dict[str, str]]:
         formatted_errors: list[dict[str, str]] = []
         for item in exc.errors():
@@ -56,7 +64,7 @@ class ExceptionHandlers:
         else:
             content = ApiResponse(code=exc.code, message=exc.message, data=exc.data).model_dump()
         return JSONResponse(
-            status_code=exc.code,
+            status_code=ExceptionHandlers._resolve_http_status(exc.code),
             content=content,
         )
 

@@ -60,6 +60,17 @@ def test_service_exception_handler_unknown_code():
     assert body["message"] == "custom"
 
 
+def test_service_exception_handler_non_http_business_code_falls_back_status():
+    exc = ServiceException(message="token expired", code=4011)
+
+    response = anyio.run(ExceptionHandlers.service_exception_handler, None, exc)
+
+    assert response.status_code == ResponseCode.BAD_REQUEST
+    body = json.loads(response.body)
+    assert body["code"] == 4011
+    assert body["message"] == "token expired"
+
+
 def test_http_exception_handler_known_code():
     exc = StarletteHTTPException(status_code=404, detail="not found")
 
