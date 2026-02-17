@@ -4,7 +4,9 @@ from fastapi.responses import StreamingResponse
 from fastapi.testclient import TestClient
 
 from app.api.routes import admin_assistant as assistant_module
+import app.main as main_module
 from app.main import app
+from app.schemas.auth import AuthUser
 
 
 def _extract_payloads(response_text: str) -> list[dict]:
@@ -44,8 +46,24 @@ def _build_streaming_response(text: str) -> StreamingResponse:
     return StreamingResponse(_stream(), media_type="text/event-stream")
 
 
+def _auth_headers() -> dict[str, str]:
+    return {"Authorization": "Bearer test-token"}
+
+
+def _mock_auth(monkeypatch) -> None:
+    async def _fake_fetch_current_user() -> AuthUser:
+        return AuthUser(id=1, username="tester")
+
+    monkeypatch.setattr(
+        main_module,
+        "fetch_current_user_by_authorization",
+        _fake_fetch_current_user,
+    )
+
+
 def test_assistant_route_delegates_to_service(monkeypatch):
     captured: dict = {}
+    _mock_auth(monkeypatch)
 
     def _fake_assistant_chat(*, question: str, conversation_uuid: str | None = None):
         captured["question"] = question
@@ -57,6 +75,7 @@ def test_assistant_route_delegates_to_service(monkeypatch):
 
     response = client.post(
         "/admin/assistant/chat",
+        headers=_auth_headers(),
         json={"question": "代理测试", "conversation_uuid": "conv-1"},
     )
 
@@ -72,6 +91,7 @@ def test_assistant_route_delegates_to_service(monkeypatch):
 
 def test_assistant_request_defaults_conversation_uuid_to_none(monkeypatch):
     captured: dict = {}
+    _mock_auth(monkeypatch)
 
     def _fake_assistant_chat(*, question: str, conversation_uuid: str | None = None):
         captured["question"] = question
@@ -81,7 +101,11 @@ def test_assistant_request_defaults_conversation_uuid_to_none(monkeypatch):
     monkeypatch.setattr(assistant_module, "assistant_chat", _fake_assistant_chat)
     client = TestClient(app)
 
-    response = client.post("/admin/assistant/chat", json={"question": "hi"})
+    response = client.post(
+        "/admin/assistant/chat",
+        headers=_auth_headers(),
+        json={"question": "hi"},
+    )
 
     assert response.status_code == 200
     assert captured["question"] == "hi"
@@ -90,6 +114,7 @@ def test_assistant_request_defaults_conversation_uuid_to_none(monkeypatch):
 
 def test_assistant_request_rejects_legacy_conversion_uuid(monkeypatch):
     called = {"value": False}
+    _mock_auth(monkeypatch)
 
     def _fake_assistant_chat(*, question: str, conversation_uuid: str | None = None):
         called["value"] = True
@@ -100,6 +125,7 @@ def test_assistant_request_rejects_legacy_conversion_uuid(monkeypatch):
 
     response = client.post(
         "/admin/assistant/chat",
+        headers=_auth_headers(),
         json={"question": "hi", "conversion_uuid": "legacy"},
     )
 
