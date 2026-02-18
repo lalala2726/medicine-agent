@@ -6,7 +6,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 
 from app.core.codes import ResponseCode
 from app.core.exceptions import ServiceException
-from app.schemas.admin_message import AdminMessageDocument, MessageRole
+from app.schemas.admin_message import AdminMessageDocument, MessageRole, TokenUsage
 from app.services import message_service as service_module
 
 
@@ -72,6 +72,17 @@ def test_add_message_inserts_expected_document(monkeypatch):
         lambda: {"admin_messages": collection},
     )
     monkeypatch.setattr(service_module, "_resolve_collection_name", lambda: "admin_messages")
+    monkeypatch.setattr(
+        service_module,
+        "build_user_token_usage",
+        lambda **_kwargs: TokenUsage(
+            prompt_tokens=3,
+            completion_tokens=0,
+            total_tokens=3,
+            intermediate_tokens=None,
+            breakdown=None,
+        ),
+    )
 
     result = service_module.add_message(
         conversation_id="507f1f77bcf86cd799439011",
@@ -87,6 +98,13 @@ def test_add_message_inserts_expected_document(monkeypatch):
     assert collection.last_inserted["role"] == MessageRole.USER
     assert collection.last_inserted["content"] == "你好"
     assert collection.last_inserted["conversation_id"] == ObjectId("507f1f77bcf86cd799439011")
+    assert collection.last_inserted["token_usage"] == {
+        "prompt_tokens": 3,
+        "completion_tokens": 0,
+        "total_tokens": 3,
+        "intermediate_tokens": None,
+        "breakdown": None,
+    }
     assert isinstance(collection.last_inserted["created_at"], datetime.datetime)
     assert isinstance(collection.last_inserted["updated_at"], datetime.datetime)
 
@@ -179,6 +197,52 @@ def test_add_message_rejects_invalid_conversation_id(monkeypatch):
         )
 
     assert exc_info.value.code == ResponseCode.BAD_REQUEST
+
+
+def test_add_message_persists_assistant_usage(monkeypatch):
+    collection = _DummyCollection()
+    monkeypatch.setattr(
+        service_module,
+        "get_mongo_database",
+        lambda: {"admin_messages": collection},
+    )
+    monkeypatch.setattr(service_module, "_resolve_collection_name", lambda: "admin_messages")
+
+    service_module.add_message(
+        conversation_id="507f1f77bcf86cd799439011",
+        role=MessageRole.ASSISTANT,
+        content="助手回复",
+        token_usage={
+            "prompt_tokens": 20,
+            "completion_tokens": 5,
+            "intermediate_tokens": 7,
+            "total_tokens": 32,
+            "breakdown": [
+                {
+                    "node_name": "chat_agent",
+                    "prompt_tokens": 20,
+                    "completion_tokens": 5,
+                    "total_tokens": 25,
+                }
+            ],
+        },
+    )
+
+    assert collection.last_inserted is not None
+    assert collection.last_inserted["token_usage"] == {
+        "prompt_tokens": 20,
+        "completion_tokens": 5,
+        "total_tokens": 32,
+        "intermediate_tokens": 7,
+        "breakdown": [
+            {
+                "node_name": "chat_agent",
+                "prompt_tokens": 20,
+                "completion_tokens": 5,
+                "total_tokens": 25,
+            }
+        ],
+    }
 
 
 def test_get_history_maps_role_to_langchain_messages(monkeypatch):

@@ -44,6 +44,7 @@ def test_assistant_chat_delegates_to_stream_service(monkeypatch):
     captured: dict = {}
     scheduled_calls: list[dict] = []
     saved_messages: list[dict] = []
+    merge_usage_calls: list[dict] = []
     call_order: list[str] = []
 
     def _fake_create_streaming_response(question: str, config: AssistantStreamConfig):
@@ -121,6 +122,27 @@ def test_assistant_chat_delegates_to_stream_service(monkeypatch):
                 ],
         )[-1],
     )
+    monkeypatch.setattr(
+        service_module,
+        "merge_assistant_token_usage",
+        lambda **kwargs: (
+                merge_usage_calls.append(kwargs),
+                {
+                    "prompt_tokens": 11,
+                    "completion_tokens": 7,
+                    "intermediate_tokens": 3,
+                    "total_tokens": 21,
+                    "breakdown": [
+                        {
+                            "node_name": "chat_agent",
+                            "prompt_tokens": 11,
+                            "completion_tokens": 7,
+                            "total_tokens": 18,
+                        }
+                    ],
+                },
+        )[-1],
+    )
 
     response = service_module.assistant_chat(
         question="代理测试",
@@ -154,11 +176,47 @@ def test_assistant_chat_delegates_to_stream_service(monkeypatch):
     ]
 
     assert stream_config.on_answer_completed is not None
-    asyncio.run(stream_config.on_answer_completed("AI最终回复"))
+    asyncio.run(
+        stream_config.on_answer_completed(
+            "AI最终回复",
+            {
+                "prompt_tokens": 100,
+                "completion_tokens": 20,
+                "intermediate_tokens": 10,
+                "total_tokens": 130,
+            },
+        )
+    )
+    assert merge_usage_calls == [
+        {
+            "stream_token_usage": {
+                "prompt_tokens": 100,
+                "completion_tokens": 20,
+                "intermediate_tokens": 10,
+                "total_tokens": 130,
+            },
+            "prompt_text": "代理测试",
+            "completion_text": "AI最终回复",
+        }
+    ]
     assert saved_messages[-1] == {
         "conversation_id": "507f1f77bcf86cd799439011",
         "role": "assistant",
         "content": "AI最终回复",
+        "token_usage": {
+            "prompt_tokens": 11,
+            "completion_tokens": 7,
+            "intermediate_tokens": 3,
+            "total_tokens": 21,
+            "breakdown": [
+                {
+                    "node_name": "chat_agent",
+                    "prompt_tokens": 11,
+                    "completion_tokens": 7,
+                    "total_tokens": 18,
+                }
+            ],
+        },
     }
 
 
@@ -166,6 +224,7 @@ def test_assistant_chat_new_conversation_injects_created_session_event(monkeypat
     captured: dict = {}
     scheduled_calls: list[dict] = []
     saved_messages: list[dict] = []
+    merge_usage_calls: list[dict] = []
     load_history_called = False
 
     def _fake_create_streaming_response(question: str, config: AssistantStreamConfig):
@@ -211,6 +270,20 @@ def test_assistant_chat_new_conversation_injects_created_session_event(monkeypat
         "add_message",
         lambda **kwargs: saved_messages.append(kwargs) or "507f1f77bcf86cd799439012",
     )
+    monkeypatch.setattr(
+        service_module,
+        "merge_assistant_token_usage",
+        lambda **kwargs: (
+                merge_usage_calls.append(kwargs),
+                {
+                    "prompt_tokens": 6,
+                    "completion_tokens": 4,
+                    "intermediate_tokens": 0,
+                    "total_tokens": 10,
+                    "breakdown": None,
+                },
+        )[-1],
+    )
     def _fake_load_history(**_kwargs):
         nonlocal load_history_called
         load_history_called = True
@@ -250,10 +323,24 @@ def test_assistant_chat_new_conversation_injects_created_session_event(monkeypat
 
     assert stream_config.on_answer_completed is not None
     asyncio.run(stream_config.on_answer_completed("AI结束回复"))
+    assert merge_usage_calls == [
+        {
+            "stream_token_usage": None,
+            "prompt_text": "新建会话",
+            "completion_text": "AI结束回复",
+        }
+    ]
     assert saved_messages[-1] == {
         "conversation_id": "db-new-conv-uuid-100",
         "role": "assistant",
         "content": "AI结束回复",
+        "token_usage": {
+            "prompt_tokens": 6,
+            "completion_tokens": 4,
+            "intermediate_tokens": 0,
+            "total_tokens": 10,
+            "breakdown": None,
+        },
     }
 
 

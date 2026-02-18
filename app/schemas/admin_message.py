@@ -15,6 +15,36 @@ class MessageRole(str, Enum):
     ASSISTANT = "assistant"
 
 
+class TokenUsageBreakdownItem(BaseModel):
+    """单个节点的 Token 消耗明细。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    node_name: str = Field(..., min_length=1, description="节点名称")
+    prompt_tokens: int = Field(default=0, ge=0, description="输入 Token 数")
+    completion_tokens: int = Field(default=0, ge=0, description="输出 Token 数")
+    total_tokens: int = Field(default=0, ge=0, description="节点总 Token 数")
+
+
+class TokenUsage(BaseModel):
+    """消息级 Token 消耗模型。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    prompt_tokens: int = Field(default=0, ge=0, description="输入 Token 数")
+    completion_tokens: int = Field(default=0, ge=0, description="输出 Token 数")
+    total_tokens: int = Field(default=0, ge=0, description="总 Token 数")
+    intermediate_tokens: int | None = Field(
+        default=None,
+        ge=0,
+        description="中间流程 Token 数",
+    )
+    breakdown: list[TokenUsageBreakdownItem] | None = Field(
+        default=None,
+        description="节点级 Token 明细",
+    )
+
+
 class AdminMessageCreate(BaseModel):
     """新增管理助手消息入参模型（服务层内部使用）。"""
 
@@ -25,6 +55,7 @@ class AdminMessageCreate(BaseModel):
     role: MessageRole = Field(..., description="消息角色")
     content: str = Field(..., min_length=1, description="消息内容")
     thought_chain: list[Any] | None = Field(default=None, description="思维链结构")
+    token_usage: TokenUsage | None = Field(default=None, description="Token 消耗明细")
 
 
 class AdminMessageDocument(BaseModel):
@@ -38,6 +69,7 @@ class AdminMessageDocument(BaseModel):
     role: MessageRole = Field(..., description="消息角色")
     content: str = Field(..., description="消息内容")
     thought_chain: list[Any] | None = Field(default=None, description="思维链结构")
+    token_usage: TokenUsage | None = Field(default=None, description="Token 消耗明细")
     created_at: datetime = Field(..., description="创建时间")
     updated_at: datetime = Field(..., description="更新时间")
 

@@ -14,7 +14,8 @@ from pymongo.errors import PyMongoError
 from app.core.codes import ResponseCode
 from app.core.exceptions import ServiceException
 from app.core.mongodb import DEFAULT_ADMIN_MESSAGES_COLLECTION, get_mongo_database
-from app.schemas.admin_message import AdminMessageCreate, AdminMessageDocument, MessageRole
+from app.schemas.admin_message import AdminMessageCreate, AdminMessageDocument, MessageRole, TokenUsage
+from app.services.token_usage_service import build_user_token_usage, normalize_token_usage
 
 
 def _resolve_collection_name() -> str:
@@ -58,6 +59,7 @@ def add_message(
         role: MessageRole | str,
         content: Annotated[str, Field(min_length=1)],
         thought_chain: list[Any] | None = None,
+        token_usage: TokenUsage | dict[str, Any] | None = None,
         message_uuid: str | None = None,
 ) -> str:
     """
@@ -68,6 +70,7 @@ def add_message(
         role: 消息角色（user/assistant）。
         content: 消息内容。
         thought_chain: 可选思维链结构。
+        token_usage: 可选 token 消耗明细。
         message_uuid: 可选消息 UUID，不传时自动生成。
 
     Returns:
@@ -83,7 +86,14 @@ def add_message(
         role=role,
         content=content,
         thought_chain=thought_chain,
+        token_usage=normalize_token_usage(token_usage),
     )
+    if payload.token_usage is None and payload.role == MessageRole.USER:
+        payload = payload.model_copy(
+            update={
+                "token_usage": build_user_token_usage(content=payload.content),
+            }
+        )
 
     now = datetime.datetime.now()
     document = payload.model_dump()

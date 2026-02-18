@@ -43,6 +43,9 @@ def create_chat_model(
         model_kwargs["response_format"] = response_format
     if model_kwargs:
         kwargs["model_kwargs"] = model_kwargs
+    # 默认开启 stream_usage，优先获取模型返回的真实 token 消耗。
+    # 若供应商未返回 usage，业务层会使用 tiktoken 估算兜底。
+    kwargs.setdefault("stream_usage", True)
 
     return ChatOpenAI(
         model=model,

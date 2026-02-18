@@ -27,6 +27,7 @@ from app.services.conversation_service import (
     save_conversation_title,
 )
 from app.services.message_service import add_message, get_history
+from app.services.token_usage_service import merge_assistant_token_usage
 from app.utils.streaming_utils import is_final_node
 
 ADMIN_WORKFLOW = build_graph()
@@ -222,24 +223,54 @@ def _load_admin_conversation(
     return str(conversation_id)
 
 
-def _build_assistant_message_callback(*, conversation_id: str):
+def _persist_assistant_message(
+        *,
+        conversation_id: str,
+        question: str,
+        answer_text: str,
+        stream_token_usage: dict[str, Any] | None,
+) -> None:
+    """
+    持久化 assistant 消息。
+
+    优先使用流式汇总中的真实 usage；缺失字段再回退 tiktoken 估算。
+    """
+
+    resolved_usage = merge_assistant_token_usage(
+        stream_token_usage=stream_token_usage,
+        prompt_text=question,
+        completion_text=answer_text,
+    )
+    add_message(
+        conversation_id=conversation_id,
+        role="assistant",
+        content=answer_text,
+        token_usage=resolved_usage,
+    )
+
+
+def _build_assistant_message_callback(*, conversation_id: str, question: str):
     """
     构建“流结束后写入 AI 消息”的异步回调。
 
     该回调由流式引擎在输出结束时触发，满足“AI 完整响应后再落库”的时序要求。
     """
 
-    async def _callback(answer_text: str) -> None:
+    async def _callback(
+            answer_text: str,
+            stream_token_usage: dict[str, Any] | None = None,
+    ) -> None:
         normalized_answer = str(answer_text or "").strip()
         if not normalized_answer:
             return
 
         try:
             await asyncio.to_thread(
-                add_message,
+                _persist_assistant_message,
                 conversation_id=conversation_id,
-                role="assistant",
-                content=normalized_answer,
+                question=question,
+                answer_text=normalized_answer,
+                stream_token_usage=stream_token_usage,
             )
         except Exception as exc:  # pragma: no cover - 防御性兜底
             logger.opt(exception=exc).warning(
@@ -313,7 +344,10 @@ def assistant_chat(*, question: str, conversation_uuid: str | None = None) -> St
         build_stream_config=_build_stream_config,
         invoke_sync=_invoke_admin_workflow,
         map_exception=_map_exception,
-        on_answer_completed=_build_assistant_message_callback(conversation_id=conversation_id),
+        on_answer_completed=_build_assistant_message_callback(
+            conversation_id=conversation_id,
+            question=question,
+        ),
         initial_emitted_events=tuple(initial_emitted_events),
     )
     return create_streaming_response(question, stream_config)

@@ -73,8 +73,63 @@ const adminMessagesValidator = {
         description: "消息内容"
       },
       thought_chain: {
-        bsonType: "array",
+        bsonType: ["array", "null"],
         description: "思维链结构"
+      },
+      token_usage: {
+        bsonType: ["object", "null"],
+        description: "LLM Token 消耗明细",
+        properties: {
+          prompt_tokens: {
+            bsonType: "int",
+            minimum: 0,
+            description: "输入 Token 数"
+          },
+          completion_tokens: {
+            bsonType: "int",
+            minimum: 0,
+            description: "输出 Token 数"
+          },
+          total_tokens: {
+            bsonType: "int",
+            minimum: 0,
+            description: "总 Token 数"
+          },
+          intermediate_tokens: {
+            bsonType: ["int", "null"],
+            minimum: 0,
+            description: "中间流程 Token 数"
+          },
+          breakdown: {
+            bsonType: ["array", "null"],
+            description: "节点级 Token 明细",
+            items: {
+              bsonType: "object",
+              required: ["node_name", "prompt_tokens", "completion_tokens", "total_tokens"],
+              properties: {
+                node_name: {
+                  bsonType: "string",
+                  description: "节点名称"
+                },
+                prompt_tokens: {
+                  bsonType: "int",
+                  minimum: 0,
+                  description: "输入 Token 数"
+                },
+                completion_tokens: {
+                  bsonType: "int",
+                  minimum: 0,
+                  description: "输出 Token 数"
+                },
+                total_tokens: {
+                  bsonType: "int",
+                  minimum: 0,
+                  description: "节点总 Token 数"
+                }
+              }
+            }
+          }
+        }
       },
       created_at: {
         bsonType: "date",
@@ -121,5 +176,6 @@ ensureCollectionWithValidator("admin_messages", adminMessagesValidator);
 db.admin_messages.createIndex({ uuid: 1 }, { unique: true });
 db.admin_messages.createIndex({ conversation_id: 1, created_at: 1 });
 db.admin_messages.createIndex({ conversation_id: 1, created_at: -1 });
+db.admin_messages.createIndex({ conversation_id: 1, "token_usage.total_tokens": -1 });
 
 print("MongoDB chat collections initialized.");
