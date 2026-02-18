@@ -261,6 +261,74 @@ def test_workflow_blocks_downstream_on_failure(monkeypatch: pytest.MonkeyPatch):
     assert result["routing"]["next_nodes"] == ["chat_agent"] or "fallback_context" in result["routing"]
 
 
+def test_workflow_merges_results_on_parallel_nodes(monkeypatch: pytest.MonkeyPatch):
+    plan = [
+        _make_step("s1", "order_agent"),
+        _make_step("s2", "product_agent"),
+        _make_step(
+            "s3",
+            "summary_agent",
+            depends_on=["s1", "s2"],
+            read_from=["s1", "s2"],
+            final_output=True,
+        ),
+    ]
+
+    def fake_gateway_router(_state: dict) -> dict:
+        return {"routing": {"route_target": "coordinator_agent", "difficulty": "medium"}}
+
+    def fake_coordinator(_state: dict) -> dict:
+        return {}
+
+    def _parallel_node(node_name: str, result_key: str):
+        def _runner(state: dict) -> dict:
+            step = ((state.get("routing") or {}).get("current_step_map") or {}).get(node_name) or {}
+            step_id = step.get("step_id")
+            return {
+                "results": {result_key: {"content": f"{node_name} done"}},
+                "step_outputs": {
+                    step_id: {
+                        "step_id": step_id,
+                        "node_name": node_name,
+                        "status": "completed",
+                        "text": f"{node_name} done",
+                        "output": {"ok": True},
+                    }
+                },
+            }
+
+        return _runner
+
+    def summary_runner(state: dict) -> dict:
+        step = ((state.get("routing") or {}).get("current_step_map") or {}).get("summary_agent") or {}
+        step_id = step.get("step_id")
+        return {
+            "results": {"summary": {"content": "summary done"}},
+            "step_outputs": {
+                step_id: {
+                    "step_id": step_id,
+                    "node_name": "summary_agent",
+                    "status": "completed",
+                    "text": "summary done",
+                    "output": {"ok": True},
+                }
+            },
+        }
+
+    monkeypatch.setattr(workflow_module, "gateway_router", fake_gateway_router)
+    monkeypatch.setattr(workflow_module, "coordinator", fake_coordinator)
+    monkeypatch.setattr(workflow_module, "order_agent", _parallel_node("order_agent", "order"))
+    monkeypatch.setattr(workflow_module, "product_agent", _parallel_node("product_agent", "product"))
+    monkeypatch.setattr(workflow_module, "summary_agent", summary_runner)
+    monkeypatch.setattr(workflow_module, "chart_agent", lambda _state: {})
+    monkeypatch.setattr(workflow_module, "excel_agent", lambda _state: {})
+
+    result = workflow_module.build_graph().invoke(_build_initial_state(plan=plan))
+    assert result["results"]["order"]["content"] == "order_agent done"
+    assert result["results"]["product"]["content"] == "product_agent done"
+    assert result["results"]["summary"]["content"] == "summary done"
+
+
 def test_planner_waits_optional_dependencies_until_terminal():
     plan = [
         _make_step("s1", "order_agent"),

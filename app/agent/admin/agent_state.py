@@ -65,6 +65,19 @@ def _merge_step_outputs(
     merged.update(right or {})
     return merged
 
+
+def _merge_results(
+        left: dict[str, Any] | None,
+        right: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """
+    合并并行节点写入的 results。
+    """
+    merged = dict(left or {})
+    merged.update(right or {})
+    return merged
+
+
 class StepFailurePolicy(TypedDict, total=False):
     """
     单步骤失败判定策略。
@@ -192,8 +205,8 @@ class AgentState(TypedDict):
     # 共享信息
     shared_memory: Dict[str, Any]
 
-    # 最终结果
-    results: Dict[str, Any]
+    # 最终结果（并发安全聚合）
+    results: Annotated[Dict[str, Any], _merge_results]
 
     # 错误信息
     errors: List[str]
