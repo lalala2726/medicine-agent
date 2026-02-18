@@ -86,8 +86,11 @@ class AssistantStreamConfig:
     invoke_sync: Callable[[dict[str, Any]], dict[str, Any]]
     # 异常映射器：把内部异常转成统一错误文案。
     map_exception: Callable[[Exception], str]
-    # 可选收尾回调：在流结束时回调完整 answer 文本与 token 汇总。
-    on_answer_completed: Callable[[str, dict[str, Any] | None], None | Awaitable[None]] | None = None
+    # 可选收尾回调：在流结束时回调完整 answer 文本、token 汇总与节点执行追踪。
+    on_answer_completed: Callable[
+        [str, dict[str, Any] | None, list[dict[str, Any]] | None],
+        None | Awaitable[None],
+    ] | None = None
     # 流开始前注入的事件列表（例如会话创建成功事件），会按给定顺序输出。
     initial_emitted_events: tuple[InitialEmittedEvent, ...] = field(
         default_factory=tuple
@@ -523,7 +526,128 @@ def _collect_chunk_usage(
     runtime_state.token_usage.completion_tokens += usage_delta["completion_tokens"]
 
 
-def _build_token_usage_summary(runtime_state: StreamRuntimeState) -> dict[str, Any] | None:
+def _normalize_execution_trace_item(raw_item: Any) -> dict[str, Any] | None:
+    """
+    归一化单条 execution_trace 记录。
+
+    Args:
+        raw_item: 原始执行追踪项。
+
+    Returns:
+        dict[str, Any] | None: 合法记录返回标准化字典；非法记录返回 None。
+    """
+
+    if not isinstance(raw_item, dict):
+        return None
+
+    node_name = str(raw_item.get("node_name") or "").strip()
+    if not node_name:
+        return None
+
+    model_name = str(raw_item.get("model_name") or UNKNOWN_MODEL_NAME).strip() or UNKNOWN_MODEL_NAME
+    input_messages = raw_item.get("input_messages")
+    if not isinstance(input_messages, list):
+        input_messages = []
+    tool_calls = raw_item.get("tool_calls")
+    if not isinstance(tool_calls, list):
+        tool_calls = []
+
+    return {
+        "node_name": node_name,
+        "model_name": model_name,
+        "input_messages": input_messages,
+        "output_text": str(raw_item.get("output_text") or ""),
+        "tool_calls": tool_calls,
+    }
+
+
+def _build_execution_trace_summary(latest_state: dict[str, Any]) -> list[dict[str, Any]] | None:
+    """
+    从最新状态提取 execution_trace 汇总。
+
+    Args:
+        latest_state: graph 最新状态。
+
+    Returns:
+        list[dict[str, Any]] | None: 归一化后的执行追踪列表，无有效项时返回 None。
+    """
+
+    raw_items = latest_state.get("execution_traces")
+    if not isinstance(raw_items, list):
+        return None
+
+    normalized_items: list[dict[str, Any]] = []
+    for item in raw_items:
+        normalized_item = _normalize_execution_trace_item(item)
+        if normalized_item is not None:
+            normalized_items.append(normalized_item)
+    return normalized_items or None
+
+
+def _build_node_model_map(execution_trace: list[dict[str, Any]] | None) -> dict[str, str]:
+    """
+    基于 execution_trace 构建节点到模型名映射。
+
+    Args:
+        execution_trace: 节点执行追踪列表。
+
+    Returns:
+        dict[str, str]: `node_name -> model_name` 映射。
+    """
+
+    mapping: dict[str, str] = {}
+    for item in execution_trace or []:
+        node_name = str(item.get("node_name") or "").strip()
+        model_name = str(item.get("model_name") or "").strip()
+        if not node_name or not model_name or model_name == UNKNOWN_MODEL_NAME:
+            continue
+        mapping[node_name] = model_name
+    return mapping
+
+
+def _backfill_breakdown_model_names(
+        breakdown: list[dict[str, Any]],
+        node_model_map: dict[str, str],
+) -> list[dict[str, Any]]:
+    """
+    使用 execution_trace 反向补齐 breakdown 中的 unknown 模型名，并按节点+模型合并。
+
+    Args:
+        breakdown: 原始 breakdown 列表。
+        node_model_map: 节点到模型名映射。
+
+    Returns:
+        list[dict[str, Any]]: 补齐且聚合后的 breakdown 列表。
+    """
+
+    merged: dict[str, dict[str, Any]] = {}
+    for item in breakdown:
+        node_name = str(item.get("node_name") or UNKNOWN_STREAM_NODE)
+        model_name = str(item.get("model_name") or UNKNOWN_MODEL_NAME)
+        if model_name == UNKNOWN_MODEL_NAME and node_name in node_model_map:
+            model_name = node_model_map[node_name]
+
+        key = f"{node_name}::{model_name}"
+        target = merged.setdefault(
+            key,
+            {
+                "node_name": node_name,
+                "model_name": model_name,
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0,
+            },
+        )
+        target["prompt_tokens"] += int(item.get("prompt_tokens") or 0)
+        target["completion_tokens"] += int(item.get("completion_tokens") or 0)
+        target["total_tokens"] += int(item.get("total_tokens") or 0)
+    return list(merged.values())
+
+
+def _build_token_usage_summary(
+        runtime_state: StreamRuntimeState,
+        execution_trace: list[dict[str, Any]] | None = None,
+) -> dict[str, Any] | None:
     """
     输出回调使用的 token usage 汇总结构。
 
@@ -543,6 +667,11 @@ def _build_token_usage_summary(runtime_state: StreamRuntimeState) -> dict[str, A
         return None
 
     breakdown = list(usage_state.breakdown_by_node_model.values())
+    if breakdown:
+        breakdown = _backfill_breakdown_model_names(
+            breakdown=breakdown,
+            node_model_map=_build_node_model_map(execution_trace),
+        )
     token_usage = build_token_usage(
         prompt_tokens=usage_state.prompt_tokens,
         completion_tokens=usage_state.completion_tokens,
@@ -607,7 +736,9 @@ def _process_graph_values_event(chunk: Any, runtime_state: StreamRuntimeState) -
     """
 
     if isinstance(chunk, dict):
-        runtime_state.latest_state = chunk
+        merged_state = dict(runtime_state.latest_state or {})
+        merged_state.update(chunk)
+        runtime_state.latest_state = merged_state
 
 
 def _process_graph_event(
@@ -788,9 +919,13 @@ async def _finalize_stream(emitter_token: Any, producer_task: asyncio.Task[Any])
 
 
 async def _invoke_answer_completed_callback(
-        callback: Callable[[str, dict[str, Any] | None], None | Awaitable[None]] | None,
+        callback: Callable[
+            [str, dict[str, Any] | None, list[dict[str, Any]] | None],
+            None | Awaitable[None],
+        ] | None,
         answer_text: str,
         token_usage: dict[str, Any] | None,
+        execution_trace: list[dict[str, Any]] | None,
 ) -> None:
     """
     执行“回答完成”回调。
@@ -801,12 +936,13 @@ async def _invoke_answer_completed_callback(
         callback: 结束回调函数。
         answer_text: 聚合后的完整回答文本。
         token_usage: 汇总后的 token usage。
+        execution_trace: 汇总后的节点执行追踪。
     """
 
     if callback is None:
         return
 
-    callback_result = callback(answer_text, token_usage)
+    callback_result = callback(answer_text, token_usage, execution_trace)
     if inspect.isawaitable(callback_result):
         await callback_result
 
@@ -889,10 +1025,15 @@ async def _event_stream(
                 yield build_answer_sse(fallback_text, False)
     finally:
         with suppress(Exception):
+            execution_trace = _build_execution_trace_summary(runtime_state.latest_state)
             await _invoke_answer_completed_callback(
                 config.on_answer_completed,
                 "".join(runtime_state.aggregated_answer_parts),
-                _build_token_usage_summary(runtime_state),
+                _build_token_usage_summary(
+                    runtime_state,
+                    execution_trace=execution_trace,
+                ),
+                execution_trace,
             )
         end_event = await _finalize_stream(emitter_token, producer_task)
         yield end_event

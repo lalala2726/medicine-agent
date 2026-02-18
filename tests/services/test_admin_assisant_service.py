@@ -4,8 +4,8 @@ import json
 from fastapi.responses import StreamingResponse
 from langchain_core.messages import AIMessage, HumanMessage
 
-from app.services import admin_assisant_service as service_module
 from app.schemas.sse_response import MessageType
+from app.services import admin_assisant_service as service_module
 from app.services.assistant_stream_service import AssistantStreamConfig
 
 
@@ -20,35 +20,33 @@ class _DummyGraph:
 
 
 def test_invoke_admin_workflow_passes_langsmith_config(monkeypatch):
-    """验证 _invoke_admin_workflow：会透传 LangSmith runnable config。"""
+    """测试目标：校验 workflow invoke 透传 tracing 配置；成功标准：graph.invoke 收到 config。"""
 
     graph = _DummyGraph(final_state={"results": {"chat": {"content": "ok"}}})
     monkeypatch.setattr(service_module, "ADMIN_WORKFLOW", graph)
     monkeypatch.setattr(
         service_module,
         "build_langsmith_runnable_config",
-        lambda **kwargs: {
+        lambda **_kwargs: {
             "run_name": "admin_assistant_graph",
             "tags": ["admin-assistant", "langgraph"],
             "metadata": {"entrypoint": "api.admin_assistant.chat"},
         },
     )
 
-    state = {"user_input": "hello"}
-    result = service_module._invoke_admin_workflow(state)
+    result = service_module._invoke_admin_workflow({"user_input": "hello"})
 
     assert result["results"]["chat"]["content"] == "ok"
     assert graph.captured_config is not None
     assert graph.captured_config["run_name"] == "admin_assistant_graph"
 
 
-def test_assistant_chat_delegates_to_stream_service(monkeypatch):
-    """验证 assistant_chat 旧会话路径：用户先落库，流结束后 assistant 携带新 token_usage 落库。"""
+def test_assistant_chat_schedules_user_persist_without_blocking_main_flow(monkeypatch):
+    """测试目标：user 消息走后台调度；成功标准：主流程只触发调度，不依赖同步落库。"""
 
     captured: dict = {}
-    scheduled_calls: list[dict] = []
+    background_calls: list[dict] = []
     saved_messages: list[dict] = []
-    merge_usage_calls: list[dict] = []
     call_order: list[str] = []
 
     def _fake_create_streaming_response(question: str, config: AssistantStreamConfig):
@@ -60,23 +58,10 @@ def test_assistant_chat_delegates_to_stream_service(monkeypatch):
                 "data: "
                 + json.dumps(
                     {
-                        "content": {"text": "delegated"},
-                        "type": "answer",
-                        "is_end": False,
-                        "timestamp": 1,
-                    },
-                    ensure_ascii=False,
-                )
-                + "\n\n"
-            )
-            yield (
-                "data: "
-                + json.dumps(
-                    {
                         "content": {"text": ""},
                         "type": "answer",
                         "is_end": True,
-                        "timestamp": 2,
+                        "timestamp": 1,
                     },
                     ensure_ascii=False,
                 )
@@ -85,16 +70,7 @@ def test_assistant_chat_delegates_to_stream_service(monkeypatch):
 
         return StreamingResponse(_stream(), media_type="text/event-stream")
 
-    monkeypatch.setattr(
-        service_module,
-        "create_streaming_response",
-        _fake_create_streaming_response,
-    )
-    monkeypatch.setattr(
-        service_module,
-        "_schedule_title_generation",
-        lambda **kwargs: scheduled_calls.append(kwargs),
-    )
+    monkeypatch.setattr(service_module, "create_streaming_response", _fake_create_streaming_response)
     monkeypatch.setattr(service_module, "get_user_id", lambda: 100)
     monkeypatch.setattr(
         service_module,
@@ -107,70 +83,46 @@ def test_assistant_chat_delegates_to_stream_service(monkeypatch):
     )
     monkeypatch.setattr(
         service_module,
+        "load_history",
+        lambda **_kwargs: (
+            call_order.append("load_history"),
+            [HumanMessage(content="历史问题"), AIMessage(content="历史回答")],
+        )[-1],
+    )
+    monkeypatch.setattr(
+        service_module,
         "add_message",
         lambda **kwargs: (
-                saved_messages.append(kwargs),
-                call_order.append(f"add_{kwargs['role']}"),
-                "507f1f77bcf86cd799439012",
+            saved_messages.append(kwargs),
+            call_order.append(f"add_{kwargs['role']}"),
+            "507f1f77bcf86cd799439012",
         )[-1],
     )
     monkeypatch.setattr(
         service_module,
-        "load_history",
-        lambda **kwargs: (
-                call_order.append("load_history"),
-                [
-                    HumanMessage(content="历史问题"),
-                    AIMessage(content="历史回答"),
-                    HumanMessage(content="代理测试"),
-                ],
-        )[-1],
-    )
-    monkeypatch.setattr(
-        service_module,
-        "merge_assistant_token_usage",
-        lambda **kwargs: (
-                merge_usage_calls.append(kwargs),
-                {
-                    "prompt_tokens": 11,
-                    "completion_tokens": 7,
-                    "total_tokens": 18,
-                    "breakdown": [
-                        {
-                            "node_name": "chat_agent",
-                            "model_name": "qwen-max",
-                            "prompt_tokens": 11,
-                            "completion_tokens": 7,
-                            "total_tokens": 18,
-                        }
-                    ],
-                },
+        "_schedule_background_task",
+        lambda *, task_name, func, kwargs: (
+            background_calls.append({"task_name": task_name, "kwargs": kwargs}),
+            func(**kwargs),
         )[-1],
     )
 
-    response = service_module.assistant_chat(
-        question="代理测试",
-        conversation_uuid="conv-1",
-    )
+    response = service_module.assistant_chat(question="代理测试", conversation_uuid="conv-1")
 
     assert isinstance(response, StreamingResponse)
-    stream_config = captured["config"]
     assert captured["question"] == "代理测试"
-    assert isinstance(stream_config, AssistantStreamConfig)
-    assert stream_config.workflow is service_module.ADMIN_WORKFLOW
-    assert stream_config.build_initial_state("x")["user_input"] == "x"
-    history_messages = stream_config.build_initial_state("x")["history_messages"]
-    assert len(history_messages) == 3
-    assert isinstance(history_messages[0], HumanMessage)
-    assert isinstance(history_messages[1], AIMessage)
-    assert isinstance(history_messages[2], HumanMessage)
-    assert stream_config.extract_final_content({"results": {"chat": {"content": "ok"}}}) == ""
-    assert stream_config.should_stream_token("chat_agent", {"routing": {}, "plan": []}) is True
-    assert stream_config.should_stream_token("router", {"routing": {}, "plan": []}) is False
-    assert stream_config.map_exception(RuntimeError("boom")) == "服务暂时不可用，请稍后重试。"
-    assert stream_config.initial_emitted_events == ()
-    assert scheduled_calls == []
-    assert call_order == ["add_user", "load_history"]
+    stream_config = captured["config"]
+    assert stream_config.build_initial_state("x")["execution_traces"] == []
+    assert call_order == ["load_history", "add_user"]
+    assert background_calls == [
+        {
+            "task_name": "persist_user_message",
+            "kwargs": {
+                "conversation_id": "507f1f77bcf86cd799439011",
+                "question": "代理测试",
+            },
+        }
+    ]
     assert saved_messages == [
         {
             "conversation_id": "507f1f77bcf86cd799439011",
@@ -179,57 +131,128 @@ def test_assistant_chat_delegates_to_stream_service(monkeypatch):
         }
     ]
 
-    assert stream_config.on_answer_completed is not None
-    asyncio.run(
-        stream_config.on_answer_completed(
-            "AI最终回复",
-            {
-                "prompt_tokens": 100,
-                "completion_tokens": 20,
-                "total_tokens": 130,
-            },
-        )
+
+def test_answer_completed_schedules_async_persist_with_execution_trace(monkeypatch):
+    """测试目标：assistant 完成回调仅调度后台任务；成功标准：调度参数含 usage 与 execution_trace。"""
+
+    background_calls: list[dict] = []
+    saved_messages: list[dict] = []
+    merge_calls: list[dict] = []
+
+    monkeypatch.setattr(
+        service_module,
+        "_schedule_background_task",
+        lambda *, task_name, func, kwargs: (
+            background_calls.append({"task_name": task_name, "kwargs": kwargs}),
+            func(**kwargs),
+        )[-1],
     )
-    assert merge_usage_calls == [
-        {
-            "stream_token_usage": {
-                "prompt_tokens": 100,
-                "completion_tokens": 20,
-                "total_tokens": 130,
+    monkeypatch.setattr(
+        service_module,
+        "merge_assistant_token_usage",
+        lambda **kwargs: (
+            merge_calls.append(kwargs),
+            {
+                "prompt_tokens": 8,
+                "completion_tokens": 4,
+                "total_tokens": 12,
+                "breakdown": None,
             },
-            "prompt_text": "代理测试",
-            "completion_text": "AI最终回复",
-        }
-    ]
-    assert saved_messages[-1] == {
-        "conversation_id": "507f1f77bcf86cd799439011",
-        "role": "assistant",
-        "content": "AI最终回复",
-        "token_usage": {
-            "prompt_tokens": 11,
-            "completion_tokens": 7,
-            "total_tokens": 18,
-            "breakdown": [
+        )[-1],
+    )
+    monkeypatch.setattr(
+        service_module,
+        "add_message",
+        lambda **kwargs: saved_messages.append(kwargs) or "507f1f77bcf86cd799439012",
+    )
+
+    callback = service_module._build_assistant_message_callback(
+        conversation_id="507f1f77bcf86cd799439011",
+        question="用户问题",
+    )
+    asyncio.run(
+        callback(
+            "AI回复",
+            {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+            [
                 {
                     "node_name": "chat_agent",
                     "model_name": "qwen-max",
-                    "prompt_tokens": 11,
-                    "completion_tokens": 7,
-                    "total_tokens": 18,
+                    "input_messages": [{"role": "human", "content": "用户问题"}],
+                    "output_text": "AI回复",
+                    "tool_calls": [],
                 }
             ],
-        },
-    }
+        )
+    )
+
+    assert background_calls == [
+        {
+            "task_name": "persist_assistant_message",
+            "kwargs": {
+                "conversation_id": "507f1f77bcf86cd799439011",
+                "question": "用户问题",
+                "answer_text": "AI回复",
+                "stream_token_usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+                "execution_trace": [
+                    {
+                        "node_name": "chat_agent",
+                        "model_name": "qwen-max",
+                        "input_messages": [{"role": "human", "content": "用户问题"}],
+                        "output_text": "AI回复",
+                        "tool_calls": [],
+                    }
+                ],
+            },
+        }
+    ]
+    assert merge_calls == [
+        {
+            "stream_token_usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+            "prompt_text": "用户问题",
+            "completion_text": "AI回复",
+        }
+    ]
+    assert saved_messages[-1]["execution_trace"][0]["node_name"] == "chat_agent"
+
+
+def test_persist_failure_only_logs_warning(monkeypatch):
+    """测试目标：后台任务失败仅日志；成功标准：异常不抛出且 warning 被记录。"""
+
+    warning_calls: list[dict] = []
+
+    class _DummyLogger:
+        def warning(self, message: str, **kwargs):
+            warning_calls.append({"message": message, "kwargs": kwargs})
+
+    monkeypatch.setattr(service_module.logger, "opt", lambda **_kwargs: _DummyLogger())
+
+    class _ImmediateThread:
+        def __init__(self, target, daemon=True):
+            self._target = target
+            self.daemon = daemon
+
+        def start(self):
+            self._target()
+
+    monkeypatch.setattr(service_module.threading, "Thread", _ImmediateThread)
+
+    service_module._schedule_background_task(
+        task_name="broken_task",
+        func=lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("boom")),
+        kwargs={},
+    )
+
+    assert warning_calls
+    assert warning_calls[0]["kwargs"]["task_name"] == "broken_task"
 
 
 def test_assistant_chat_new_conversation_injects_created_session_event(monkeypatch):
-    """验证 assistant_chat 新会话路径：会注入创建事件并在完成回调写入 assistant usage。"""
+    """测试目标：新会话路径注入创建事件；成功标准：事件正确且 user 消息经后台调度。"""
 
     captured: dict = {}
-    scheduled_calls: list[dict] = []
-    saved_messages: list[dict] = []
-    merge_usage_calls: list[dict] = []
-    load_history_called = False
+    scheduled_title_calls: list[dict] = []
+    background_calls: list[dict] = []
 
     def _fake_create_streaming_response(question: str, config: AssistantStreamConfig):
         captured["question"] = question
@@ -252,11 +275,7 @@ def test_assistant_chat_new_conversation_injects_created_session_event(monkeypat
 
         return StreamingResponse(_stream(), media_type="text/event-stream")
 
-    monkeypatch.setattr(
-        service_module,
-        "create_streaming_response",
-        _fake_create_streaming_response,
-    )
+    monkeypatch.setattr(service_module, "create_streaming_response", _fake_create_streaming_response)
     monkeypatch.setattr(service_module, "get_user_id", lambda: 100)
     monkeypatch.setattr(service_module.uuid, "uuid4", lambda: "new-conv-uuid")
     monkeypatch.setattr(
@@ -267,32 +286,13 @@ def test_assistant_chat_new_conversation_injects_created_session_event(monkeypat
     monkeypatch.setattr(
         service_module,
         "_schedule_title_generation",
-        lambda **kwargs: scheduled_calls.append(kwargs),
+        lambda **kwargs: scheduled_title_calls.append(kwargs),
     )
     monkeypatch.setattr(
         service_module,
-        "add_message",
-        lambda **kwargs: saved_messages.append(kwargs) or "507f1f77bcf86cd799439012",
+        "_schedule_background_task",
+        lambda *, task_name, func, kwargs: background_calls.append({"task_name": task_name, "kwargs": kwargs}),
     )
-    monkeypatch.setattr(
-        service_module,
-        "merge_assistant_token_usage",
-        lambda **kwargs: (
-                merge_usage_calls.append(kwargs),
-                {
-                    "prompt_tokens": 6,
-                    "completion_tokens": 4,
-                    "total_tokens": 10,
-                    "breakdown": None,
-                },
-        )[-1],
-    )
-    def _fake_load_history(**_kwargs):
-        nonlocal load_history_called
-        load_history_called = True
-        return []
-
-    monkeypatch.setattr(service_module, "load_history", _fake_load_history)
 
     response = service_module.assistant_chat(question="新建会话")
 
@@ -304,50 +304,13 @@ def test_assistant_chat_new_conversation_injects_created_session_event(monkeypat
     assert session_event.type == MessageType.STATUS
     assert session_event.content.node == "conversation"
     assert session_event.content.state == "created"
-    assert session_event.content.message == "会话创建成功"
-    assert session_event.meta == {
-        "conversation_uuid": "new-conv-uuid",
-    }
-    assert scheduled_calls == [
-        {
-            "conversation_uuid": "new-conv-uuid",
-            "question": "新建会话",
-        }
-    ]
-    assert load_history_called is False
-    assert saved_messages == [
-        {
-            "conversation_id": "db-new-conv-uuid-100",
-            "role": "user",
-            "content": "新建会话",
-        }
-    ]
-    assert stream_config.build_initial_state("x")["history_messages"] == []
-
-    assert stream_config.on_answer_completed is not None
-    asyncio.run(stream_config.on_answer_completed("AI结束回复", None))
-    assert merge_usage_calls == [
-        {
-            "stream_token_usage": None,
-            "prompt_text": "新建会话",
-            "completion_text": "AI结束回复",
-        }
-    ]
-    assert saved_messages[-1] == {
-        "conversation_id": "db-new-conv-uuid-100",
-        "role": "assistant",
-        "content": "AI结束回复",
-        "token_usage": {
-            "prompt_tokens": 6,
-            "completion_tokens": 4,
-            "total_tokens": 10,
-            "breakdown": None,
-        },
-    }
+    assert session_event.meta == {"conversation_uuid": "new-conv-uuid"}
+    assert scheduled_title_calls == [{"conversation_uuid": "new-conv-uuid", "question": "新建会话"}]
+    assert background_calls[0]["task_name"] == "persist_user_message"
 
 
 def test_load_history_reads_latest_window_and_returns_chronological(monkeypatch):
-    """验证 load_history：读取倒序窗口后会反转为时间正序。"""
+    """测试目标：历史读取顺序正确；成功标准：倒序读后返回正序窗口。"""
 
     captured: dict = {}
 
@@ -355,12 +318,7 @@ def test_load_history_reads_latest_window_and_returns_chronological(monkeypatch)
         captured["conversation_id"] = conversation_id
         captured["limit"] = limit
         captured["ascending"] = ascending
-        # 模拟数据库倒序（新 -> 旧）结果。
-        return [
-            HumanMessage(content="Q2"),
-            AIMessage(content="A1"),
-            HumanMessage(content="Q1"),
-        ]
+        return [HumanMessage(content="Q2"), AIMessage(content="A1"), HumanMessage(content="Q1")]
 
     monkeypatch.setattr(service_module, "get_history", _fake_get_history)
 

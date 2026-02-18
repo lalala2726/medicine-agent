@@ -253,6 +253,84 @@ def test_add_message_persists_assistant_usage(monkeypatch):
     }
 
 
+def test_add_message_persists_execution_trace_for_assistant(monkeypatch):
+    """测试目标：assistant execution_trace 可落库；成功标准：trace 字段完整写入。"""
+
+    collection = _DummyCollection()
+    monkeypatch.setattr(service_module, "get_mongo_database", lambda: {"admin_messages": collection})
+    monkeypatch.setattr(service_module, "_resolve_collection_name", lambda: "admin_messages")
+
+    service_module.add_message(
+        conversation_id="507f1f77bcf86cd799439011",
+        role=MessageRole.ASSISTANT,
+        content="助手回复",
+        execution_trace=[
+            {
+                "node_name": "order_agent",
+                "model_name": "qwen3-max",
+                "input_messages": [{"role": "system", "content": "请处理订单"}],
+                "output_text": "订单已处理",
+                "tool_calls": [
+                    {
+                        "tool_name": "get_order_list",
+                        "tool_input": {"page_num": 1},
+                        "tool_output": {"list": []},
+                        "is_error": False,
+                        "error_message": None,
+                    }
+                ],
+            }
+        ],
+    )
+
+    assert collection.last_inserted is not None
+    assert collection.last_inserted["execution_trace"] == [
+        {
+            "node_name": "order_agent",
+            "model_name": "qwen3-max",
+            "input_messages": [{"role": "system", "content": "请处理订单"}],
+            "output_text": "订单已处理",
+            "tool_calls": [
+                {
+                    "tool_name": "get_order_list",
+                    "tool_input": {"page_num": 1},
+                    "tool_output": {"list": []},
+                    "is_error": False,
+                    "error_message": None,
+                }
+            ],
+        }
+    ]
+
+
+def test_add_message_user_still_auto_builds_token_usage(monkeypatch):
+    """测试目标：user 自动 token 估算保留；成功标准：未传 usage 时仍补齐 token_usage。"""
+
+    collection = _DummyCollection()
+    monkeypatch.setattr(service_module, "get_mongo_database", lambda: {"admin_messages": collection})
+    monkeypatch.setattr(service_module, "_resolve_collection_name", lambda: "admin_messages")
+    monkeypatch.setattr(
+        service_module,
+        "build_user_token_usage",
+        lambda **_kwargs: TokenUsage(
+            prompt_tokens=5,
+            completion_tokens=0,
+            total_tokens=5,
+            breakdown=None,
+        ),
+    )
+
+    service_module.add_message(
+        conversation_id="507f1f77bcf86cd799439011",
+        role=MessageRole.USER,
+        content="你好",
+    )
+
+    assert collection.last_inserted is not None
+    assert collection.last_inserted["token_usage"]["prompt_tokens"] == 5
+    assert collection.last_inserted.get("execution_trace") is None
+
+
 def test_get_history_maps_role_to_langchain_messages(monkeypatch):
     """验证 get_history：能按 role 正确映射为 HumanMessage/AIMessage。"""
 

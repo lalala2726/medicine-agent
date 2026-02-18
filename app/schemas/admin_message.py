@@ -41,6 +41,30 @@ class TokenUsage(BaseModel):
     )
 
 
+class ToolCallTraceItem(BaseModel):
+    """单次工具调用追踪明细。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    tool_name: str = Field(..., min_length=1, description="工具名称")
+    tool_input: Any = Field(..., description="工具输入参数")
+    tool_output: Any = Field(..., description="工具输出结果")
+    is_error: bool = Field(default=False, description="是否为错误调用")
+    error_message: str | None = Field(default=None, description="错误信息")
+
+
+class ExecutionTraceItem(BaseModel):
+    """单个节点执行追踪明细。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    node_name: str = Field(..., min_length=1, description="节点名称")
+    model_name: str = Field(..., min_length=1, description="模型名称")
+    input_messages: list[Any] = Field(default_factory=list, description="节点输入消息")
+    output_text: str = Field(default="", description="节点输出文本")
+    tool_calls: list[ToolCallTraceItem] = Field(default_factory=list, description="节点工具调用明细")
+
+
 class AdminMessageCreate(BaseModel):
     """新增管理助手消息入参模型（服务层内部使用）。"""
 
@@ -52,6 +76,7 @@ class AdminMessageCreate(BaseModel):
     content: str = Field(..., min_length=1, description="消息内容")
     thought_chain: list[Any] | None = Field(default=None, description="思维链结构")
     token_usage: TokenUsage | None = Field(default=None, description="Token 消耗明细")
+    execution_trace: list[ExecutionTraceItem] | None = Field(default=None, description="节点执行追踪")
 
 
 class AdminMessageDocument(BaseModel):
@@ -66,6 +91,7 @@ class AdminMessageDocument(BaseModel):
     content: str = Field(..., description="消息内容")
     thought_chain: list[Any] | None = Field(default=None, description="思维链结构")
     token_usage: TokenUsage | None = Field(default=None, description="Token 消耗明细")
+    execution_trace: list[ExecutionTraceItem] | None = Field(default=None, description="节点执行追踪")
     created_at: datetime = Field(..., description="创建时间")
     updated_at: datetime = Field(..., description="更新时间")
 

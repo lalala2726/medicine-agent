@@ -82,7 +82,7 @@ def _build_initial_state(
     所有节点共享该状态结构，避免执行过程中出现缺失键导致的分支判断复杂化。
     """
 
-    # 初始状态里预置 step_outputs/history_messages，让 DAG 节点与 planner
+    # 初始状态里预置 step_outputs/history_messages/execution_traces，让 DAG 节点与 planner
     # 不需要做大量判空分支。
     return {
         "user_input": question,
@@ -91,6 +91,7 @@ def _build_initial_state(
         "routing": {},
         "history_messages": list(history_messages or []),
         "step_outputs": {},
+        "execution_traces": [],
         "shared_memory": {},
         "results": {},
         "errors": [],
@@ -223,12 +224,60 @@ def _load_admin_conversation(
     return str(conversation_id)
 
 
+def _schedule_background_task(
+        *,
+        task_name: str,
+        func: Any,
+        kwargs: dict[str, Any],
+) -> None:
+    """
+    使用守护线程调度后台任务。
+
+    Args:
+        task_name: 任务名称（用于日志追踪）。
+        func: 要执行的函数。
+        kwargs: 关键字参数。
+
+    Returns:
+        None
+    """
+
+    def _runner() -> None:
+        try:
+            func(**kwargs)
+        except Exception as exc:  # pragma: no cover - 防御性兜底
+            logger.opt(exception=exc).warning("Background task failed task_name={task_name}", task_name=task_name)
+
+    thread = threading.Thread(target=_runner, daemon=True)
+    thread.start()
+
+
+def _persist_user_message(
+        *,
+        conversation_id: str,
+        question: str,
+) -> None:
+    """
+    后台持久化 user 消息。
+
+    Args:
+        conversation_id: 会话 ID。
+        question: 用户问题文本。
+
+    Returns:
+        None
+    """
+
+    add_message(conversation_id=conversation_id, role="user", content=question)
+
+
 def _persist_assistant_message(
         *,
         conversation_id: str,
         question: str,
         answer_text: str,
         stream_token_usage: dict[str, Any] | None,
+        execution_trace: list[dict[str, Any]] | None,
 ) -> None:
     """
     持久化 assistant 消息。
@@ -246,6 +295,7 @@ def _persist_assistant_message(
         role="assistant",
         content=answer_text,
         token_usage=resolved_usage,
+        execution_trace=execution_trace,
     )
 
 
@@ -258,25 +308,24 @@ def _build_assistant_message_callback(*, conversation_id: str, question: str):
 
     async def _callback(
             answer_text: str,
-            stream_token_usage: dict[str, Any] | None = None,
+            stream_token_usage: dict[str, Any] | None,
+            execution_trace: list[dict[str, Any]] | None,
     ) -> None:
         normalized_answer = str(answer_text or "").strip()
         if not normalized_answer:
             return
 
-        try:
-            await asyncio.to_thread(
-                _persist_assistant_message,
-                conversation_id=conversation_id,
-                question=question,
-                answer_text=normalized_answer,
-                stream_token_usage=stream_token_usage,
-            )
-        except Exception as exc:  # pragma: no cover - 防御性兜底
-            logger.opt(exception=exc).warning(
-                "Failed to persist assistant message conversation_id={conversation_id}",
-                conversation_id=conversation_id,
-            )
+        _schedule_background_task(
+            task_name="persist_assistant_message",
+            func=_persist_assistant_message,
+            kwargs={
+                "conversation_id": conversation_id,
+                "question": question,
+                "answer_text": normalized_answer,
+                "stream_token_usage": stream_token_usage,
+                "execution_trace": execution_trace,
+            },
+        )
 
     return _callback
 
@@ -287,8 +336,8 @@ def assistant_chat(*, question: str, conversation_uuid: str | None = None) -> St
 
     行为说明：
     1. 首次消息（未传 `conversation_uuid`）会创建会话并先推送“会话创建成功”事件；
-    2. 用户提问会在进入工作流前先写入消息表；
-    3. AI 回复会在流结束后再写入消息表；
+    2. 用户提问会后台写入消息表；
+    3. AI 回复会在流结束后后台写入消息表；
     4. 标题生成与保存在后台并行执行，不阻塞当前流式响应。
     """
 
@@ -327,11 +376,18 @@ def assistant_chat(*, question: str, conversation_uuid: str | None = None) -> St
             user_id=current_user_id,
         )
 
-    # 用户消息立即落库，确保问题先被记录。
-    add_message(conversation_id=conversation_id, role="user", content=question)
-    # 仅旧会话读取历史，窗口固定最近 50 条，且包含本次已落库的问题。
+    # 仅旧会话读取历史，窗口固定最近 50 条。
+    # 先读取历史，再后台写入当前问题，避免读取窗口出现本轮消息重复。
     if not is_new_conversation:
         history_messages = load_history(conversation_id=conversation_id, limit=50)
+    _schedule_background_task(
+        task_name="persist_user_message",
+        func=_persist_user_message,
+        kwargs={
+            "conversation_id": conversation_id,
+            "question": question,
+        },
+    )
 
     stream_config = AssistantStreamConfig(
         workflow=ADMIN_WORKFLOW,

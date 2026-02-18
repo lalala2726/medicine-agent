@@ -36,6 +36,7 @@ def _build_initial_state(
         "routing": routing or {},
         "history_messages": history_messages or [],
         "step_outputs": step_outputs or {},
+        "execution_traces": [],
         "shared_memory": {},
         "results": {},
         "errors": [],

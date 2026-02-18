@@ -130,6 +130,62 @@ const adminMessagesValidator = {
           }
         }
       },
+      execution_trace: {
+        bsonType: ["array", "null"],
+        description: "节点执行追踪明细",
+        items: {
+          bsonType: "object",
+          required: ["node_name", "model_name", "input_messages", "output_text", "tool_calls"],
+          properties: {
+            node_name: {
+              bsonType: "string",
+              description: "节点名称"
+            },
+            model_name: {
+              bsonType: "string",
+              description: "模型名称"
+            },
+            input_messages: {
+              bsonType: "array",
+              description: "节点输入消息列表"
+            },
+            output_text: {
+              bsonType: "string",
+              description: "节点输出文本"
+            },
+            tool_calls: {
+              bsonType: "array",
+              description: "节点工具调用明细",
+              items: {
+                bsonType: "object",
+                required: ["tool_name", "tool_input", "tool_output", "is_error"],
+                properties: {
+                  tool_name: {
+                    bsonType: "string",
+                    description: "工具名称"
+                  },
+                  tool_input: {
+                    bsonType: ["object", "array", "string", "int", "long", "double", "bool", "null"],
+                    description: "工具输入"
+                  },
+                  tool_output: {
+                    bsonType: ["object", "array", "string", "int", "long", "double", "bool", "null"],
+                    description: "工具输出"
+                  },
+                  is_error: {
+                    bsonType: "bool",
+                    description: "是否调用失败"
+                  },
+                  error_message: {
+                    bsonType: ["string", "null"],
+                    description: "失败信息"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
       created_at: {
         bsonType: "date",
         description: "创建时间"

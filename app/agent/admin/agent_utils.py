@@ -6,6 +6,8 @@ from typing import Any, Mapping, Sequence
 from app.agent.admin.agent_state import StepFailurePolicy, StepOutput
 from app.utils.streaming_utils import invoke, invoke_with_policy
 
+UNKNOWN_MODEL_NAME = "unknown"
+
 
 @dataclass(slots=True)
 class NodeExecutionResult:
@@ -16,6 +18,9 @@ class NodeExecutionResult:
         content: 对用户可见文本。
         status: 步骤状态（completed/failed）。
         error: 失败原因（仅失败时有值）。
+        model_name: 当前节点使用的模型名称。
+        input_messages: 当前节点输入消息序列化结果。
+        tool_calls: 当前节点工具调用明细。
         diagnostics: 执行诊断信息（工具调用统计等）。
         stream_chunks: 节点内部流式分片（仅最终节点可能有值）。
     """
@@ -23,8 +28,80 @@ class NodeExecutionResult:
     content: str
     status: str
     error: str | None = None
+    model_name: str = UNKNOWN_MODEL_NAME
+    input_messages: list[Any] = field(default_factory=list)
+    tool_calls: list[dict[str, Any]] = field(default_factory=list)
     diagnostics: dict[str, Any] = field(default_factory=dict)
     stream_chunks: list[str] = field(default_factory=list)
+
+
+def _resolve_llm_model_name(llm: Any) -> str:
+    """
+    解析节点模型名，缺失时回退为 unknown。
+    """
+    for attr in ("model_name", "model"):
+        candidate = getattr(llm, attr, None)
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()
+    return UNKNOWN_MODEL_NAME
+
+
+def _serialize_message(message: Any) -> dict[str, Any]:
+    """
+    将 LangChain 消息对象序列化为可落库字典。
+    """
+    role = str(getattr(message, "type", "") or message.__class__.__name__).strip().lower()
+    content = getattr(message, "content", "")
+    message_dict: dict[str, Any] = {
+        "role": role or "unknown",
+        "content": content if content is not None else "",
+    }
+    additional_kwargs = getattr(message, "additional_kwargs", None)
+    if isinstance(additional_kwargs, dict) and additional_kwargs:
+        message_dict["additional_kwargs"] = additional_kwargs
+    name = getattr(message, "name", None)
+    if isinstance(name, str) and name:
+        message_dict["name"] = name
+    return message_dict
+
+
+def _serialize_messages(messages: Sequence[Any]) -> list[dict[str, Any]]:
+    """
+    批量序列化节点输入消息。
+    """
+    return [_serialize_message(item) for item in messages]
+
+
+def build_execution_trace_update(
+        *,
+        node_name: str,
+        model_name: str = UNKNOWN_MODEL_NAME,
+        input_messages: list[Any] | None = None,
+        output_text: str = "",
+        tool_calls: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """
+    构建 execution_traces 增量更新。
+
+    Args:
+        node_name: 当前节点名。
+        model_name: 当前节点模型名，默认 unknown。
+        input_messages: 节点输入消息序列化列表。
+        output_text: 节点输出文本。
+        tool_calls: 节点工具调用明细列表。
+
+    Returns:
+        dict[str, Any]: 包含 `execution_traces` 的增量更新字典。
+    """
+
+    trace_item = {
+        "node_name": str(node_name or UNKNOWN_MODEL_NAME),
+        "model_name": str(model_name or UNKNOWN_MODEL_NAME),
+        "input_messages": list(input_messages or []),
+        "output_text": str(output_text or ""),
+        "tool_calls": list(tool_calls or []),
+    }
+    return {"execution_traces": [trace_item]}
 
 
 def _resolve_failure_policy(
@@ -185,6 +262,9 @@ def execute_tool_node(
     - 统一按策略判定 completed/failed；
     - 统一异常兜底输出。
     """
+    model_name = _resolve_llm_model_name(llm)
+    # 在模型调用前捕获输入消息，避免工具循环追加的中间消息污染“节点输入”定义。
+    serialized_inputs = _serialize_messages(messages)
 
     try:
         content, diagnostics = invoke_with_failure_policy(
@@ -203,6 +283,10 @@ def execute_tool_node(
             content=normalized_content,
             status=step_status,
             error=failed_error,
+            model_name=model_name,
+            input_messages=serialized_inputs,
+            # 工具执行层已产出结构化明细，这里直接透传给 execution_trace。
+            tool_calls=list(diagnostics.get("tool_call_details") or []),
             diagnostics=diagnostics,
             stream_chunks=list(diagnostics.get("stream_chunks") or []),
         )
@@ -211,6 +295,9 @@ def execute_tool_node(
             content=fallback_content,
             status="failed",
             error=f"{fallback_error}: {exc}",
+            model_name=model_name,
+            input_messages=serialized_inputs,
+            tool_calls=[],
             diagnostics={},
             stream_chunks=[],
         )
@@ -226,15 +313,26 @@ def execute_text_node(
     """
     统一执行“纯文本节点”（无工具调用）。
     """
+    model_name = _resolve_llm_model_name(llm)
+    serialized_inputs = _serialize_messages(messages)
 
     try:
         content = invoke(llm, messages)
-        return NodeExecutionResult(content=content, status="completed")
+        return NodeExecutionResult(
+            content=content,
+            status="completed",
+            model_name=model_name,
+            input_messages=serialized_inputs,
+            tool_calls=[],
+        )
     except Exception as exc:
         return NodeExecutionResult(
             content=fallback_content,
             status="failed",
             error=f"{fallback_error}: {exc}",
+            model_name=model_name,
+            input_messages=serialized_inputs,
+            tool_calls=[],
         )
 
 
@@ -274,12 +372,23 @@ def build_standard_node_update(
             error=execution_result.error,
         )
     )
+    result.update(
+        build_execution_trace_update(
+            node_name=node_name,
+            model_name=execution_result.model_name,
+            input_messages=execution_result.input_messages,
+            output_text=execution_result.content,
+            tool_calls=execution_result.tool_calls,
+        )
+    )
     return result
 
 
 __all__ = [
+    "UNKNOWN_MODEL_NAME",
     "NodeExecutionResult",
     "build_standard_node_update",
+    "build_execution_trace_update",
     "execute_text_node",
     "execute_tool_node",
     "invoke_with_failure_policy",

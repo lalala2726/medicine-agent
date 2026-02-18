@@ -21,6 +21,30 @@ class StepOutput(TypedDict, total=False):
     error: str
 
 
+class ToolCallTrace(TypedDict, total=False):
+    """
+    单次工具调用追踪信息。
+    """
+
+    tool_name: str
+    tool_input: Any
+    tool_output: Any
+    is_error: bool
+    error_message: str
+
+
+class NodeExecutionTrace(TypedDict, total=False):
+    """
+    单个节点执行追踪信息。
+    """
+
+    node_name: str
+    model_name: str
+    input_messages: list[Any]
+    output_text: str
+    tool_calls: list[ToolCallTrace]
+
+
 class FallbackFailedStep(TypedDict, total=False):
     """
     fallback 场景下的失败步骤信息。
@@ -75,6 +99,18 @@ def _merge_results(
     """
     merged = dict(left or {})
     merged.update(right or {})
+    return merged
+
+
+def _merge_execution_traces(
+        left: list[NodeExecutionTrace] | None,
+        right: list[NodeExecutionTrace] | None,
+) -> list[NodeExecutionTrace]:
+    """
+    合并并行节点写入的 execution_traces。
+    """
+    merged = list(left or [])
+    merged.extend(list(right or []))
     return merged
 
 
@@ -201,6 +237,9 @@ class AgentState(TypedDict):
 
     # DAG 步骤产出（并发安全聚合）
     step_outputs: Annotated[dict[str, StepOutput], _merge_step_outputs]
+
+    # 全图节点执行追踪（并发安全聚合），仅用于消息持久化审计。
+    execution_traces: Annotated[list[NodeExecutionTrace], _merge_execution_traces]
 
     # 共享信息
     shared_memory: Dict[str, Any]

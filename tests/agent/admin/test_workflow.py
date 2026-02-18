@@ -26,6 +26,7 @@ def _build_initial_state(
         "routing": routing or {},
         "history_messages": [],
         "step_outputs": step_outputs or {},
+        "execution_traces": [],
         "shared_memory": {},
         "results": {},
         "errors": [],
@@ -58,6 +59,7 @@ def test_chat_node_handles_non_business_chat(monkeypatch: pytest.MonkeyPatch):
     result = chat_module.chat_agent(state)
     assert result["results"]["chat"]["mode"] == "chat"
     assert result["results"]["chat"]["content"] == "你好，我可以陪你聊聊日常问题。"
+    assert result["execution_traces"][0]["node_name"] == "chat_agent"
 
 
 def test_chat_node_streams_when_model_supports_stream(monkeypatch: pytest.MonkeyPatch):
@@ -85,6 +87,32 @@ def test_chat_node_streams_when_model_supports_stream(monkeypatch: pytest.Monkey
     result = chat_module.chat_agent(state)
     assert dummy_model.invoke_called is False
     assert result["results"]["chat"]["content"] == "你好"
+    assert result["execution_traces"][0]["model_name"] == "qwen-flash"
+
+
+def test_gateway_and_planner_emit_execution_trace(monkeypatch: pytest.MonkeyPatch):
+    """测试目标：网关与规划节点写入 trace；成功标准：节点名与空输入/空工具字段符合约定。"""
+
+    class _DummyResponse:
+        def __init__(self, content: str):
+            self.content = content
+
+    class _DummyModel:
+        def invoke(self, _messages):
+            return _DummyResponse('{"route_target":"chat_agent","difficulty":"simple"}')
+
+    monkeypatch.setattr(workflow_module, "create_chat_model", lambda **_kwargs: _DummyModel())
+    monkeypatch.setattr(workflow_module, "compute_planner_update", lambda _state: {"routing": {"next_nodes": []}})
+
+    gateway_update = workflow_module.gateway_router(_build_initial_state(plan=[]))
+    planner_update = workflow_module.planner(_build_initial_state(plan=[]))
+
+    assert gateway_update["execution_traces"][0]["node_name"] == "gateway_router"
+    assert gateway_update["execution_traces"][0]["input_messages"] == []
+    assert gateway_update["execution_traces"][0]["tool_calls"] == []
+    assert planner_update["execution_traces"][0]["node_name"] == "planner"
+    assert planner_update["execution_traces"][0]["input_messages"] == []
+    assert planner_update["execution_traces"][0]["tool_calls"] == []
 
 
 def _make_step(

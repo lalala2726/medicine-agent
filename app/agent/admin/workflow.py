@@ -7,6 +7,7 @@ from langgraph.constants import END, START
 from langgraph.graph import StateGraph
 
 from app.agent.admin.history_utils import build_messages_with_history
+from app.agent.admin.agent_utils import build_execution_trace_update
 from app.agent.admin.agent_state import AgentState
 from app.agent.admin.dag_rules import EXECUTION_NODES, compute_planner_update
 from app.agent.admin.node import (
@@ -199,7 +200,17 @@ def gateway_router(state: AgentState) -> dict[str, Any]:
     routing.setdefault("completed_step_ids", [])
     routing.setdefault("blocked_step_ids", [])
 
-    return {"routing": routing}
+    gateway_update: dict[str, Any] = {"routing": routing}
+    gateway_update.update(
+        build_execution_trace_update(
+            node_name="gateway_router",
+            model_name="unknown",
+            input_messages=[],
+            output_text=json.dumps(gateway_update, ensure_ascii=False, default=str),
+            tool_calls=[],
+        )
+    )
+    return gateway_update
 
 
 def _route_from_gateway(state: AgentState) -> str:
@@ -231,7 +242,17 @@ def planner(state: AgentState) -> dict[str, Any]:
     Returns:
         由 `compute_planner_update` 返回的调度更新结果。
     """
-    return compute_planner_update(state)
+    planner_update = compute_planner_update(state)
+    planner_update.update(
+        build_execution_trace_update(
+            node_name="planner",
+            model_name="unknown",
+            input_messages=[],
+            output_text=json.dumps(planner_update, ensure_ascii=False, default=str),
+            tool_calls=[],
+        )
+    )
+    return planner_update
 
 
 def _route_to_next_node(state: AgentState) -> str | list[str]:

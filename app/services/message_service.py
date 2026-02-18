@@ -7,6 +7,7 @@ from typing import Annotated, Any
 
 from bson import ObjectId
 from langchain_core.messages import AIMessage, HumanMessage
+from loguru import logger
 from pydantic import Field
 from pymongo import ASCENDING, DESCENDING
 from pymongo.errors import PyMongoError
@@ -14,7 +15,13 @@ from pymongo.errors import PyMongoError
 from app.core.codes import ResponseCode
 from app.core.exceptions import ServiceException
 from app.core.mongodb import DEFAULT_ADMIN_MESSAGES_COLLECTION, get_mongo_database
-from app.schemas.admin_message import AdminMessageCreate, AdminMessageDocument, MessageRole, TokenUsage
+from app.schemas.admin_message import (
+    AdminMessageCreate,
+    AdminMessageDocument,
+    ExecutionTraceItem,
+    MessageRole,
+    TokenUsage,
+)
 from app.services.token_usage_service import build_user_token_usage, normalize_token_usage
 
 
@@ -53,6 +60,36 @@ def _to_message_document(document: dict[str, Any]) -> AdminMessageDocument:
     return AdminMessageDocument.model_validate(document)
 
 
+def _normalize_execution_trace(
+        execution_trace: list[ExecutionTraceItem | dict[str, Any]] | None,
+) -> list[ExecutionTraceItem] | None:
+    """
+    归一化 execution_trace，自动忽略非法项。
+
+    Args:
+        execution_trace: 原始节点执行追踪数据。
+
+    Returns:
+        list[ExecutionTraceItem] | None: 归一化结果，无有效项时返回 None。
+    """
+
+    if execution_trace is None:
+        return None
+
+    normalized_items: list[ExecutionTraceItem] = []
+    for item in execution_trace:
+        if isinstance(item, ExecutionTraceItem):
+            normalized_items.append(item)
+            continue
+        if not isinstance(item, dict):
+            continue
+        try:
+            normalized_items.append(ExecutionTraceItem.model_validate(item))
+        except Exception:
+            logger.warning("Ignore invalid execution_trace item while persisting message.")
+    return normalized_items or None
+
+
 def add_message(
         *,
         conversation_id: Annotated[str, Field(min_length=1)],
@@ -60,6 +97,7 @@ def add_message(
         content: Annotated[str, Field(min_length=1)],
         thought_chain: list[Any] | None = None,
         token_usage: TokenUsage | dict[str, Any] | None = None,
+        execution_trace: list[ExecutionTraceItem | dict[str, Any]] | None = None,
         message_uuid: str | None = None,
 ) -> str:
     """
@@ -71,6 +109,7 @@ def add_message(
         content: 消息内容。
         thought_chain: 可选思维链结构。
         token_usage: 可选 token 消耗明细。
+        execution_trace: 可选节点执行追踪明细。
         message_uuid: 可选消息 UUID，不传时自动生成。
 
     Returns:
@@ -87,6 +126,7 @@ def add_message(
         content=content,
         thought_chain=thought_chain,
         token_usage=normalize_token_usage(token_usage),
+        execution_trace=_normalize_execution_trace(execution_trace),
     )
     if payload.token_usage is None and payload.role == MessageRole.USER:
         payload = payload.model_copy(

@@ -3,6 +3,7 @@ from typing import Any
 
 from langchain_core.messages import HumanMessage
 
+from app.agent.admin.agent_utils import build_execution_trace_update
 from app.agent.admin.agent_state import AgentState, PlanStep
 from app.agent.admin.dag_rules import (
     build_retry_feedback,
@@ -14,7 +15,7 @@ from app.agent.tools.coordinator_tools import get_agent_detail
 from app.core.assistant_status import status_node
 from app.core.langsmith import traceable
 from app.core.llm import create_chat_model
-from app.utils.streaming_utils import invoke
+from app.utils.streaming_utils import invoke_with_policy
 
 _system_prompt = """
     你是后台工作流中的 coordinator_agent，负责把用户请求拆解成 DAG 计划（仅规划，不执行）。你的目标是创建高效、无冗余的 DAG，确保节点之间协调良好，上游节点仅输出下游节点所需的最小必要信息，避免不必要的细节输出。
@@ -104,6 +105,21 @@ _system_prompt = """
 _PLAN_REVIEW_RETRY_LIMIT = 2
 
 
+def _serialize_messages(messages: list[Any]) -> list[dict[str, Any]]:
+    """
+    序列化节点输入消息，供 execution_trace 落库。
+    """
+    serialized: list[dict[str, Any]] = []
+    for message in messages:
+        serialized.append(
+            {
+                "role": str(getattr(message, "type", "") or message.__class__.__name__).strip().lower() or "unknown",
+                "content": getattr(message, "content", ""),
+            }
+        )
+    return serialized
+
+
 @status_node(node="coordinator", start_message="正在规划任务中")
 @traceable(name="Coordinator Agent Node", run_type="chain")
 def coordinator(state: AgentState) -> dict[str, Any]:
@@ -133,7 +149,17 @@ def coordinator(state: AgentState) -> dict[str, Any]:
     user_input = str(state.get("user_input") or "").strip()
     if not user_input:
         routing["difficulty"] = difficulty
-        return {"routing": routing, "plan": []}
+        result = {"routing": routing, "plan": []}
+        result.update(
+            build_execution_trace_update(
+                node_name="coordinator_agent",
+                model_name="unknown",
+                input_messages=[],
+                output_text=json.dumps(result, ensure_ascii=False, default=str),
+                tool_calls=[],
+            )
+        )
+        return result
     history_messages = list(state.get("history_messages") or [])
 
     llm = create_chat_model(
@@ -150,14 +176,18 @@ def coordinator(state: AgentState) -> dict[str, Any]:
     routing["difficulty"] = difficulty
     reviewed_plan: list[PlanStep] = []
     last_reason = "模型返回内容不是有效 JSON。"
+    last_messages_for_trace = list(base_messages)
+    last_tool_calls: list[dict[str, Any]] = []
 
     for attempt in range(_PLAN_REVIEW_RETRY_LIMIT + 1):
         messages = list(base_messages)
         if attempt > 0:
             messages.append(HumanMessage(content=build_retry_feedback(last_reason)))
+        last_messages_for_trace = list(messages)
 
         try:
-            payload = _invoke_coordinator_payload(llm, messages)
+            payload, tool_calls = _invoke_coordinator_payload(llm, messages)
+            last_tool_calls = list(tool_calls)
         except Exception:
             last_reason = "模型返回内容不是有效 JSON。"
             continue
@@ -168,13 +198,23 @@ def coordinator(state: AgentState) -> dict[str, Any]:
             break
         last_reason = reason
 
-    return {
+    result = {
         "routing": routing,
         "plan": reviewed_plan,
     }
+    result.update(
+        build_execution_trace_update(
+            node_name="coordinator_agent",
+            model_name=model_name,
+            input_messages=_serialize_messages(last_messages_for_trace),
+            output_text=json.dumps(result, ensure_ascii=False, default=str),
+            tool_calls=last_tool_calls,
+        )
+    )
+    return result
 
 
-def _invoke_coordinator_payload(llm: Any, messages: list[Any]) -> dict[str, Any]:
+def _invoke_coordinator_payload(llm: Any, messages: list[Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """
     调用 coordinator 模型并解析 JSON 结果。
 
@@ -183,8 +223,13 @@ def _invoke_coordinator_payload(llm: Any, messages: list[Any]) -> dict[str, Any]
     """
     bind_tools = getattr(llm, "bind_tools", None)
     if callable(bind_tools):
-        content = invoke(llm, messages, tools=[get_agent_detail])
-        return json.loads(str(content))
+        content, diagnostics = invoke_with_policy(
+            llm,
+            messages,
+            tools=[get_agent_detail],
+            enable_stream=False,
+        )
+        return json.loads(str(content)), list(diagnostics.get("tool_call_details") or [])
 
     response = llm.invoke(messages)
-    return json.loads(str(response.content))
+    return json.loads(str(response.content)), []
