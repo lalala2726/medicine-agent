@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, cast
+from typing import Any
 
 from app.agent.admin.agent_state import AgentState, PlanStep, StepFailurePolicy, StepOutput
 from app.agent.admin.history_utils import history_to_role_dicts
@@ -22,6 +22,15 @@ _STRICT_DATA_QUALITY_INSTRUCTION = (
 
 
 def _is_coordinator_mode(state: AgentState | dict[str, Any]) -> bool:
+    """
+    判断当前运行状态是否处于 coordinator 编排模式。
+
+    Args:
+        state: 节点执行时的状态对象，需包含 `routing.route_target` 字段。
+
+    Returns:
+        当 `routing.route_target == "coordinator_agent"` 时返回 True，否则返回 False。
+    """
     # 只有 coordinator 编排路径，才启用“按步骤配置注入上下文”的严格模式。
     routing = state.get("routing") or {}
     return routing.get("route_target") == "coordinator_agent"
@@ -31,6 +40,16 @@ def get_current_step(
         state: AgentState | dict[str, Any],
         node_name: str,
 ) -> dict | dict[Any, Any]:
+    """
+    获取当前节点在本轮调度中的步骤定义。
+
+    Args:
+        state: 节点执行时的状态对象，读取 `routing.current_step_map`。
+        node_name: 当前节点名（如 `order_agent`）。
+
+    Returns:
+        当前节点对应的步骤配置字典；若不存在或结构非法则返回空字典。
+    """
     # planner 每一轮会把“本轮要执行的节点步骤定义”放进 current_step_map。
     # 节点通过 node_name 拿到自己的 step 配置（step_id/read_from/final_output...）。
     routing = state.get("routing") or {}
@@ -48,7 +67,15 @@ def build_step_runtime(
         default_task_description: str,
 ) -> dict[str, Any]:
     """
-    构建当前节点执行所需的运行时上下文。
+    构建当前节点执行所需的标准运行时上下文。
+
+    Args:
+        state: 节点执行时的状态对象。
+        node_name: 当前节点名（如 `order_agent`）。
+        default_task_description: 当步骤未提供 `task_description` 时使用的默认任务描述。
+
+    Returns:
+        包含步骤定义、上下文注入开关、上游输出、用户输入、历史消息、失败策略等字段的运行时字典。
     """
     step = get_current_step(state, node_name)
     coordinator_mode = _is_coordinator_mode(state)
@@ -111,7 +138,13 @@ def build_step_runtime(
 
 def resolve_failure_policy(step: PlanStep | dict[str, Any] | None) -> StepFailurePolicy:
     """
-    解析步骤级失败策略，缺失时回退为系统默认值。
+    解析步骤级失败策略并补齐默认值。
+
+    Args:
+        step: 步骤定义对象，可能包含 `failure_policy` 字段；为 None 时使用默认策略。
+
+    Returns:
+        归一化后的步骤失败策略对象。
     """
     raw = (step or {}).get("failure_policy")
     if not isinstance(raw, dict):
@@ -165,45 +198,15 @@ def resolve_failure_policy(step: PlanStep | dict[str, Any] | None) -> StepFailur
     }
 
 
-def evaluate_failure_by_policy(
-        content: str,
-        diagnostics: dict[str, Any] | None,
-        policy: StepFailurePolicy | dict[str, Any] | None,
-) -> tuple[str, str | None, str]:
-    """
-    根据策略判定步骤成功/失败，并返回标准化展示文本。
-
-    Returns:
-        (status, error_reason, normalized_text)
-    """
-    resolved = resolve_failure_policy(policy or {})
-    mode = str(resolved.get("mode") or "hybrid")
-    marker_prefix = str(resolved.get("error_marker_prefix") or "__ERROR__:")
-
-    normalized_text = str(content or "").strip()
-    marker_hit = bool(marker_prefix) and normalized_text.startswith(marker_prefix)
-    if marker_hit:
-        marker_reason = normalized_text[len(marker_prefix):].strip() or "模型返回错误标记。"
-        normalized_text = marker_reason
-        if mode in {"hybrid", "marker_only"}:
-            return "failed", marker_reason, normalized_text
-
-    diagnostics = diagnostics or {}
-    threshold_hit = bool(diagnostics.get("threshold_hit"))
-    if threshold_hit and mode in {"hybrid", "tool_only"}:
-        reason = str(diagnostics.get("threshold_reason") or "").strip()
-        if not reason:
-            reason = "工具失败次数达到阈值。"
-        if not normalized_text:
-            normalized_text = reason
-        return "failed", reason, normalized_text
-
-    return "completed", None, normalized_text
-
-
 def build_instruction_text(runtime: dict[str, Any]) -> str:
     """
     将任务描述、可读上下文与上游产出合并为 instruction 文本。
+
+    Args:
+        runtime: `build_step_runtime` 生成的运行时上下文字典。
+
+    Returns:
+        提供给模型的 instruction 文本（包含任务描述、用户输入、历史对话、上游步骤输出等）。
     """
     # 统一生成 instruction 文本，降低各节点拼 prompt 的重复代码。
     sections = [f"任务描述：{runtime.get('task_description') or ''}"]
@@ -234,40 +237,15 @@ def build_instruction_with_failure_policy(runtime: dict[str, Any]) -> str:
     规则：
     - 基础内容沿用 `build_instruction_text`（任务描述、上下文、上游输出）
     - 当 strict_data_quality=true 时，追加统一失败策略提示
+
+    Args:
+        runtime: `build_step_runtime` 生成的运行时上下文字典。
+
+    Returns:
+        拼接失败策略提示后的 instruction 文本。
     """
     instruction = build_instruction_text(runtime)
     failure_policy = runtime.get("failure_policy") or {}
     if bool(failure_policy.get("strict_data_quality", True)):
         instruction += _STRICT_DATA_QUALITY_INSTRUCTION
     return instruction
-
-
-def build_step_output_update(
-        runtime: dict[str, Any],
-        *,
-        node_name: str,
-        status: str,
-        text: str = "",
-        output: dict[str, Any] | None = None,
-        error: str | None = None,
-) -> dict[str, Any]:
-    """
-    基于当前 step_id 构建 step_outputs 增量更新。
-    """
-    step_id = str(runtime.get("step_id") or "").strip()
-    if not step_id:
-        # 没有 step_id（例如 gateway 直连模式）就不写 step_outputs。
-        return {}
-
-    # 统一输出结构，供 planner 下一轮判断 completed/failed/skipped。
-    payload: StepOutput = {
-        "step_id": step_id,
-        "node_name": node_name,
-        "status": status,  # type: ignore[typeddict-item]
-        "text": text,
-        "output": output or {},
-    }
-    if error:
-        payload["error"] = error
-
-    return {"step_outputs": {step_id: payload}}
