@@ -59,10 +59,28 @@ EXECUTION_NODES = (
 
 
 def _empty_failure_policy() -> StepFailurePolicy:
+    """
+    返回空失败策略对象（用于校验失败分支）。
+
+    Args:
+        无。
+
+    Returns:
+        StepFailurePolicy: 空字典形式的失败策略。
+    """
     return {}
 
 
 def _default_failure_policy() -> StepFailurePolicy:
+    """
+    返回系统默认失败策略。
+
+    Args:
+        无。
+
+    Returns:
+        StepFailurePolicy: 包含默认 mode、阈值与哨兵配置的策略对象。
+    """
     return {
         "mode": _DEFAULT_FAILURE_MODE,
         "error_marker_prefix": _DEFAULT_ERROR_MARKER_PREFIX,
@@ -611,6 +629,13 @@ def _build_skipped_step_output(
 def _build_terminated_step_output(step: PlanStep, *, reason: str) -> dict[str, Any]:
     """
     构造 fallback 终止时的 skipped 输出。
+
+    Args:
+        step: 步骤定义。
+        reason: 终止原因说明。
+
+    Returns:
+        dict[str, Any]: 标准化 skipped 步骤输出对象。
     """
     step_id = str(step.get("step_id") or "")
     node_name = str(step.get("node_name") or "")
@@ -635,6 +660,16 @@ def _build_fallback_context(
 ) -> FallbackContext:
     """
     构造 planner -> chat 兜底输出所需上下文。
+
+    Args:
+        ordered_step_ids: 按执行拓扑排序的步骤 ID 列表。
+        step_by_id: step_id 到步骤定义的映射。
+        status_by_id: step_id 到执行状态的映射。
+        step_outputs: 各步骤输出载荷。
+        final_step_id: 标记为 final_output 的步骤 ID。
+
+    Returns:
+        FallbackContext: fallback 聊天节点可消费的上下文对象。
     """
     failed_steps: list[FallbackFailedStep] = []
     partial_results: list[FallbackPartialResult] = []

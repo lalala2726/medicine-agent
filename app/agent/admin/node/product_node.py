@@ -50,6 +50,20 @@ system_prompt = (
 )
 @traceable(name="Product Agent Node", run_type="chain")
 def product_agent(state: AgentState) -> dict:
+    """
+    执行商品领域节点。
+
+    作用：
+    - 基于步骤配置构造商品查询任务；
+    - 调用商品工具（列表/详情）完成业务处理；
+    - 输出标准化节点结果与执行追踪。
+
+    Args:
+        state: 当前全局状态，含步骤映射、上游输出与上下文开关。
+
+    Returns:
+        dict: 节点增量更新（results、step_outputs、execution_traces）。
+    """
     # 从 planner 当前步骤中读取运行时配置与上游可读输出。
     runtime = build_step_runtime(
         state,

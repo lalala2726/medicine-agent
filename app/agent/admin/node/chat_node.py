@@ -40,6 +40,12 @@ _FALLBACK_CHAT_SYSTEM_PROMPT = (
 def _serialize_messages(messages: list[Any]) -> list[dict[str, Any]]:
     """
     序列化节点输入消息，供 execution_trace 存储。
+
+    Args:
+        messages: 待序列化的消息列表。
+
+    Returns:
+        list[dict[str, Any]]: 统一结构的消息字典列表。
     """
     return [
         {
@@ -52,6 +58,17 @@ def _serialize_messages(messages: list[Any]) -> list[dict[str, Any]]:
 
 @traceable(name="Chat Agent Node", run_type="chain")
 def chat_agent(state: AgentState) -> AgentState:
+    """
+    执行聊天节点（含 fallback 聊天模式）。
+
+    Args:
+        state: 当前全局状态，包含用户输入、历史对话和 fallback 上下文。
+
+    Returns:
+        AgentState: 增量更新结果，包含：
+            - `results["chat"]`
+            - `execution_traces`（记录节点输入输出）
+    """
     routing = state.get("routing") or {}
     fallback_context = routing.get("fallback_context")
     is_fallback = isinstance(fallback_context, dict) and bool(fallback_context)

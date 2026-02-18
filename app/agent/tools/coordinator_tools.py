@@ -272,6 +272,12 @@ _PLAN_EXAMPLES_BY_AGENT: dict[str, dict[str, Any]] = {
 def _normalize_agent_names(agent_names: list[str]) -> list[str]:
     """
     规范化节点名称列表，去重并保留顺序。
+
+    Args:
+        agent_names: 原始节点名列表。
+
+    Returns:
+        list[str]: 归一化后的节点名列表（小写、去空、去重且保序）。
     """
     normalized: list[str] = []
     seen: set[str] = set()
@@ -301,6 +307,18 @@ def get_agent_detail(
 ) -> dict[str, Any]:
     """
     返回 coordinator 规划所需的节点能力目录。
+
+    Args:
+        agent_names: 目标节点名列表，支持传 `["all"]` 查询全部。
+        include_tool_parameters: 是否包含工具参数说明。
+        include_coordination_guide: 是否包含编排协同建议。
+        include_plan_examples: 是否包含 DAG 片段示例。
+
+    Returns:
+        dict[str, Any]:
+            - `ok`: 是否成功
+            - `agent_details`: 节点能力详情
+            - 以及 requested/resolved/unsupported 等辅助字段
     """
     requested = _normalize_agent_names(agent_names)
     if not requested:

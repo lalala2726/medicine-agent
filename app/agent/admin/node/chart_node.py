@@ -57,6 +57,16 @@ _CHART_SYSTEM_PROMPT = (
 
 
 def _build_chart_input(state: AgentState, runtime: dict[str, Any]) -> dict[str, Any]:
+    """
+    构建 chart 节点输入载荷。
+
+    Args:
+        state: 当前全局状态，主要读取 `errors`。
+        runtime: `build_step_runtime` 输出，包含任务描述、上游输出与上下文开关。
+
+    Returns:
+        dict[str, Any]: 图表节点可直接序列化给模型的输入结构。
+    """
     # 图表节点仅消费任务描述、历史/用户输入开关、上游输出和错误信息。
     payload: dict[str, Any] = {
         "task_description": runtime.get("task_description") or "根据已有数据生成图表",
@@ -87,6 +97,15 @@ def _build_chart_input(state: AgentState, runtime: dict[str, Any]) -> dict[str, 
 )
 @traceable(name="Chart Agent Node", run_type="chain")
 def chart_agent(state: AgentState) -> dict:
+    """
+    执行图表节点，基于上游结构化数据生成图表配置。
+
+    Args:
+        state: 当前全局状态，包含步骤配置与上游输出。
+
+    Returns:
+        dict: 节点增量更新（results、step_outputs、execution_traces）。
+    """
     # 读取当前步骤配置（read_from、final_output、上下文开关）。
     runtime = build_step_runtime(
         state,

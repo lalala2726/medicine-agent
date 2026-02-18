@@ -89,6 +89,9 @@ def build_graph():
     - planner 按 DAG 规则选择下一批执行节点
     - 业务节点执行后回到 planner，直到无可执行节点并结束
 
+    Args:
+        无。
+
     Returns:
         已编译的 LangGraph，可直接通过 `invoke/stream` 执行。
     """

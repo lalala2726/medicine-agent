@@ -84,6 +84,13 @@ def _merge_step_outputs(
 ) -> dict[str, StepOutput]:
     """
     合并并行节点写入的 step_outputs。
+
+    Args:
+        left: 已有步骤输出字典（可能为空）。
+        right: 新增步骤输出字典（可能为空）。
+
+    Returns:
+        dict[str, StepOutput]: 合并后的步骤输出，`right` 中同名步骤会覆盖 `left`。
     """
     merged = dict(left or {})
     merged.update(right or {})
@@ -96,6 +103,13 @@ def _merge_results(
 ) -> dict[str, Any]:
     """
     合并并行节点写入的 results。
+
+    Args:
+        left: 已有结果字典（可能为空）。
+        right: 新增结果字典（可能为空）。
+
+    Returns:
+        dict[str, Any]: 合并后的结果字典，`right` 中同名 key 会覆盖 `left`。
     """
     merged = dict(left or {})
     merged.update(right or {})
@@ -108,6 +122,13 @@ def _merge_execution_traces(
 ) -> list[NodeExecutionTrace]:
     """
     合并并行节点写入的 execution_traces。
+
+    Args:
+        left: 已有节点追踪列表（可能为空）。
+        right: 新增节点追踪列表（可能为空）。
+
+    Returns:
+        list[NodeExecutionTrace]: 按写入顺序拼接后的追踪列表。
     """
     merged = list(left or [])
     merged.extend(list(right or []))

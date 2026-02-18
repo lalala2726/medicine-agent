@@ -346,6 +346,15 @@ _CHART_TEMPLATES: list[dict[str, Any]] = [
 
 
 def _find_template(name_or_type: str) -> dict[str, Any] | None:
+    """
+    按图表名称或类型查找模板定义。
+
+    Args:
+        name_or_type: 图表名称或类型关键字（如 `line`、`折线图`）。
+
+    Returns:
+        dict[str, Any] | None: 命中返回模板字典，否则返回 None。
+    """
     keyword = name_or_type.strip().lower()
     if not keyword:
         return None
@@ -368,6 +377,16 @@ def get_chart_sample_by_name(
     """
     根据图表名称或类型获取标准模板。
     返回的结构不可更改，生成图表时仅替换数据值。
+
+    Args:
+        explanation: 调用原因说明（用于审计和可观测性，不参与模板匹配）。
+        name_or_type: 图表名称或类型标识。
+
+    Returns:
+        dict[str, Any]: 图表模板 JSON（深拷贝对象，可安全修改数据字段）。
+
+    Raises:
+        ValueError: 当 `name_or_type` 为空或未找到匹配模板时抛出。
     """
     if not name_or_type or not name_or_type.strip():
         raise ValueError("图表名称/标识不能为空")

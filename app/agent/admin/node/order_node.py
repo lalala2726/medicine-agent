@@ -53,6 +53,23 @@ system_prompt = (
 )
 @traceable(name="Order Agent Node", run_type="chain")
 def order_agent(state: AgentState) -> dict:
+    """
+    执行订单领域节点。
+
+    作用：
+    - 读取当前步骤运行时配置（任务描述、依赖输出、上下文开关）；
+    - 构造订单域提示词并调用订单工具；
+    - 按统一结构回写 `results/step_outputs/execution_traces`。
+
+    Args:
+        state: 当前全局状态，包含 routing/plan/step_outputs 等上下文。
+
+    Returns:
+        dict: 节点增量更新，至少包含：
+            - `results["order"]`
+            - `step_outputs`（存在 step_id 时）
+            - `execution_traces`
+    """
     # 统一读取当前步骤运行时信息：
     # - task_description
     # - read_from 对应的上游输出

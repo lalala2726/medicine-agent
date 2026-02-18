@@ -108,6 +108,12 @@ _PLAN_REVIEW_RETRY_LIMIT = 2
 def _serialize_messages(messages: list[Any]) -> list[dict[str, Any]]:
     """
     序列化节点输入消息，供 execution_trace 落库。
+
+    Args:
+        messages: 原始消息列表。
+
+    Returns:
+        list[dict[str, Any]]: 序列化后的消息字典列表。
     """
     serialized: list[dict[str, Any]] = []
     for message in messages:
@@ -220,6 +226,15 @@ def _invoke_coordinator_payload(llm: Any, messages: list[Any]) -> tuple[dict[str
 
     优先使用工具模式（支持 bind_tools 的模型），让模型可按需调用 get_agent_detail；
     若模型不支持工具绑定，则回退为普通 invoke 调用。
+
+    Args:
+        llm: coordinator 模型实例。
+        messages: 输入消息列表。
+
+    Returns:
+        tuple[dict[str, Any], list[dict[str, Any]]]:
+            - payload: 解析后的 JSON 计划结果
+            - tool_calls: 工具调用明细（用于 execution_trace）
     """
     bind_tools = getattr(llm, "bind_tools", None)
     if callable(bind_tools):

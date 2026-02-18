@@ -38,6 +38,12 @@ class NodeExecutionResult:
 def _resolve_llm_model_name(llm: Any) -> str:
     """
     解析节点模型名，缺失时回退为 unknown。
+
+    Args:
+        llm: 模型实例对象。
+
+    Returns:
+        str: 解析到的模型名；未解析到时返回 `unknown`。
     """
     for attr in ("model_name", "model"):
         candidate = getattr(llm, attr, None)
@@ -49,6 +55,12 @@ def _resolve_llm_model_name(llm: Any) -> str:
 def _serialize_message(message: Any) -> dict[str, Any]:
     """
     将 LangChain 消息对象序列化为可落库字典。
+
+    Args:
+        message: 单条消息对象（支持 LangChain 消息及兼容对象）。
+
+    Returns:
+        dict[str, Any]: 统一结构消息字典，至少包含 `role` 与 `content`。
     """
     role = str(getattr(message, "type", "") or message.__class__.__name__).strip().lower()
     content = getattr(message, "content", "")
@@ -68,6 +80,12 @@ def _serialize_message(message: Any) -> dict[str, Any]:
 def _serialize_messages(messages: Sequence[Any]) -> list[dict[str, Any]]:
     """
     批量序列化节点输入消息。
+
+    Args:
+        messages: 消息序列。
+
+    Returns:
+        list[dict[str, Any]]: 序列化后的消息字典列表。
     """
     return [_serialize_message(item) for item in messages]
 
@@ -109,6 +127,12 @@ def _resolve_failure_policy(
 ) -> dict[str, Any]:
     """
     解析失败策略并补齐默认值。
+
+    Args:
+        policy: 原始失败策略，允许为空。
+
+    Returns:
+        dict[str, Any]: 完整且合法的失败策略配置。
     """
 
     raw = dict(policy or {})
@@ -149,6 +173,17 @@ def _evaluate_failure_by_policy(
 ) -> tuple[str, str | None, str]:
     """
     根据策略判定节点执行状态，并返回标准化文本。
+
+    Args:
+        content: 模型返回文本。
+        diagnostics: 工具调用诊断信息。
+        policy: 步骤失败策略。
+
+    Returns:
+        tuple[str, str | None, str]:
+            - status: `completed` 或 `failed`
+            - error: 失败原因（成功时为 None）
+            - normalized_text: 规范化后的输出文本
     """
 
     resolved = _resolve_failure_policy(policy)
@@ -187,6 +222,17 @@ def _build_step_output_update(
 ) -> dict[str, Any]:
     """
     基于 runtime.step_id 构建 step_outputs 增量更新。
+
+    Args:
+        runtime: 节点运行时上下文，需包含 `step_id`。
+        node_name: 节点名。
+        status: 节点状态。
+        text: 对用户可见文本。
+        output: 结构化输出载荷。
+        error: 失败原因。
+
+    Returns:
+        dict[str, Any]: step_outputs 增量更新；无 step_id 时返回空字典。
     """
 
     step_id = str(runtime.get("step_id") or "").strip()
@@ -210,6 +256,12 @@ def _build_failure_policy_kwargs(
 ) -> dict[str, Any]:
     """
     将步骤失败策略转换为 `invoke_with_policy` 调用参数。
+
+    Args:
+        failure_policy: 步骤失败策略配置。
+
+    Returns:
+        dict[str, Any]: `invoke_with_policy` 可直接消费的关键字参数。
     """
 
     policy = failure_policy or {}
@@ -230,6 +282,16 @@ def invoke_with_failure_policy(
 ) -> tuple[str, dict[str, Any]]:
     """
     按统一失败策略调用模型/工具执行。
+
+    Args:
+        llm: 模型实例。
+        messages: 输入消息列表。
+        tools: 工具列表（可空）。
+        enable_stream: 是否启用节点内部 stream 分支。
+        failure_policy: 步骤失败策略。
+
+    Returns:
+        tuple[str, dict[str, Any]]: `(content, diagnostics)`。
     """
 
     invoke_kwargs = _build_failure_policy_kwargs(failure_policy)
@@ -261,6 +323,18 @@ def execute_tool_node(
     - 统一调用失败策略封装；
     - 统一按策略判定 completed/failed；
     - 统一异常兜底输出。
+
+    Args:
+        llm: 工具节点模型实例。
+        messages: 节点输入消息。
+        tools: 节点可用工具集合。
+        enable_stream: 是否启用节点内部 stream。
+        failure_policy: 节点失败策略。
+        fallback_content: 异常时兜底输出文本。
+        fallback_error: 异常时错误前缀文案。
+
+    Returns:
+        NodeExecutionResult: 标准化执行结果，包含文本、状态、模型名和工具追踪。
     """
     model_name = _resolve_llm_model_name(llm)
     # 在模型调用前捕获输入消息，避免工具循环追加的中间消息污染“节点输入”定义。
@@ -312,6 +386,15 @@ def execute_text_node(
 ) -> NodeExecutionResult:
     """
     统一执行“纯文本节点”（无工具调用）。
+
+    Args:
+        llm: 文本节点模型实例。
+        messages: 输入消息列表。
+        fallback_content: 异常兜底文本。
+        fallback_error: 异常错误前缀。
+
+    Returns:
+        NodeExecutionResult: 标准化执行结果。
     """
     model_name = _resolve_llm_model_name(llm)
     serialized_inputs = _serialize_messages(messages)
@@ -350,6 +433,18 @@ def build_standard_node_update(
     统一构建节点写回结果：
     - `results[result_key]`
     - `step_outputs`（有 step_id 时）
+
+    Args:
+        state: 当前全局状态快照。
+        runtime: 节点运行时信息（包含 step_id 等）。
+        node_name: 当前节点名。
+        result_key: 写入 `results` 的 key。
+        execution_result: 节点执行结果。
+        is_end: 是否最终输出节点结束包标记。
+        step_output_payload: 可选自定义 step output 载荷。
+
+    Returns:
+        dict[str, Any]: 节点增量更新，包含 results/step_outputs/execution_traces。
     """
 
     results = dict(state.get("results") or {})

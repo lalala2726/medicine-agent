@@ -30,6 +30,16 @@ _SUMMARY_PROMPT = (
 
 
 def _build_summary_input(state: AgentState, runtime: dict[str, Any]) -> dict[str, Any]:
+    """
+    构建 summary 节点输入载荷。
+
+    Args:
+        state: 当前全局状态，主要读取 `errors`。
+        runtime: `build_step_runtime` 输出，包含任务描述、read_from、上游输出等。
+
+    Returns:
+        dict[str, Any]: 供 summary 模型消费的结构化输入。
+    """
     # summary 仅基于 DAG read_from 注入的上游输出做汇总，不再兼容旧直连上下文字段。
     payload: dict[str, Any] = {
         "task_description": runtime.get("task_description") or "汇总已有结果并生成最终结论",
@@ -55,6 +65,15 @@ def _build_summary_input(state: AgentState, runtime: dict[str, Any]) -> dict[str
 )
 @traceable(name="Summary Agent Node", run_type="chain")
 def summary_agent(state: AgentState) -> dict:
+    """
+    执行汇总节点，生成最终可读结论。
+
+    Args:
+        state: 当前全局状态，包含步骤运行上下文与上游节点输出。
+
+    Returns:
+        dict: 节点增量更新（results、step_outputs、execution_traces）。
+    """
     # runtime 包含当前步骤 task/read_from/final_output/context 开关。
     runtime = build_step_runtime(
         state,
