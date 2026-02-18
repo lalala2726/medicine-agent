@@ -65,6 +65,8 @@ class _DummyCollection:
 
 
 def test_add_message_inserts_expected_document(monkeypatch):
+    """验证 add_message：user 消息入库成功，且自动补齐 token_usage。"""
+
     collection = _DummyCollection()
     monkeypatch.setattr(
         service_module,
@@ -79,7 +81,6 @@ def test_add_message_inserts_expected_document(monkeypatch):
             prompt_tokens=3,
             completion_tokens=0,
             total_tokens=3,
-            intermediate_tokens=None,
             breakdown=None,
         ),
     )
@@ -102,7 +103,6 @@ def test_add_message_inserts_expected_document(monkeypatch):
         "prompt_tokens": 3,
         "completion_tokens": 0,
         "total_tokens": 3,
-        "intermediate_tokens": None,
         "breakdown": None,
     }
     assert isinstance(collection.last_inserted["created_at"], datetime.datetime)
@@ -110,6 +110,8 @@ def test_add_message_inserts_expected_document(monkeypatch):
 
 
 def test_get_message_by_uuid_returns_typed_model(monkeypatch):
+    """验证 get_message_by_uuid：查询结果会被转换为 AdminMessageDocument。"""
+
     collection = _DummyCollection()
     collection.find_one_result = {
         "_id": ObjectId("507f1f77bcf86cd799439012"),
@@ -137,6 +139,8 @@ def test_get_message_by_uuid_returns_typed_model(monkeypatch):
 
 
 def test_list_messages_returns_typed_models(monkeypatch):
+    """验证 list_messages：按会话查询并返回类型化消息列表。"""
+
     collection = _DummyCollection()
     collection.find_rows = [
         {
@@ -181,6 +185,8 @@ def test_list_messages_returns_typed_models(monkeypatch):
 
 
 def test_add_message_rejects_invalid_conversation_id(monkeypatch):
+    """验证 add_message：非法 conversation_id 会返回 BAD_REQUEST。"""
+
     collection = _DummyCollection()
     monkeypatch.setattr(
         service_module,
@@ -200,6 +206,8 @@ def test_add_message_rejects_invalid_conversation_id(monkeypatch):
 
 
 def test_add_message_persists_assistant_usage(monkeypatch):
+    """验证 add_message：assistant 自定义 token_usage（含 model_name）可完整落库。"""
+
     collection = _DummyCollection()
     monkeypatch.setattr(
         service_module,
@@ -215,11 +223,11 @@ def test_add_message_persists_assistant_usage(monkeypatch):
         token_usage={
             "prompt_tokens": 20,
             "completion_tokens": 5,
-            "intermediate_tokens": 7,
-            "total_tokens": 32,
+            "total_tokens": 25,
             "breakdown": [
                 {
                     "node_name": "chat_agent",
+                    "model_name": "qwen-max",
                     "prompt_tokens": 20,
                     "completion_tokens": 5,
                     "total_tokens": 25,
@@ -232,11 +240,11 @@ def test_add_message_persists_assistant_usage(monkeypatch):
     assert collection.last_inserted["token_usage"] == {
         "prompt_tokens": 20,
         "completion_tokens": 5,
-        "total_tokens": 32,
-        "intermediate_tokens": 7,
+        "total_tokens": 25,
         "breakdown": [
             {
                 "node_name": "chat_agent",
+                "model_name": "qwen-max",
                 "prompt_tokens": 20,
                 "completion_tokens": 5,
                 "total_tokens": 25,
@@ -246,6 +254,8 @@ def test_add_message_persists_assistant_usage(monkeypatch):
 
 
 def test_get_history_maps_role_to_langchain_messages(monkeypatch):
+    """验证 get_history：能按 role 正确映射为 HumanMessage/AIMessage。"""
+
     collection = _DummyCollection()
     collection.find_rows = [
         {

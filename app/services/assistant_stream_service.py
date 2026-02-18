@@ -28,7 +28,11 @@ from fastapi.responses import StreamingResponse
 
 from app.core.assistant_status import reset_status_emitter, set_status_emitter
 from app.schemas.sse_response import AssistantResponse, Content, MessageType
-from app.services.token_usage_service import build_token_usage, normalize_token_usage
+from app.services.token_usage_service import (
+    UNKNOWN_MODEL_NAME,
+    build_token_usage,
+    normalize_token_usage,
+)
 from app.utils.streaming_utils import extract_text
 
 StreamEvent = tuple[str, Any]
@@ -82,8 +86,8 @@ class AssistantStreamConfig:
     invoke_sync: Callable[[dict[str, Any]], dict[str, Any]]
     # 异常映射器：把内部异常转成统一错误文案。
     map_exception: Callable[[Exception], str]
-    # 可选收尾回调：在流结束时回调完整 answer 文本与 token 汇总（第二参数可选）。
-    on_answer_completed: Callable[..., None | Awaitable[None]] | None = None
+    # 可选收尾回调：在流结束时回调完整 answer 文本与 token 汇总。
+    on_answer_completed: Callable[[str, dict[str, Any] | None], None | Awaitable[None]] | None = None
     # 流开始前注入的事件列表（例如会话创建成功事件），会按给定顺序输出。
     initial_emitted_events: tuple[InitialEmittedEvent, ...] = field(
         default_factory=tuple
@@ -109,9 +113,8 @@ class StreamTokenUsageState:
 
     prompt_tokens: int = 0
     completion_tokens: int = 0
-    intermediate_tokens: int = 0
-    breakdown_by_node: dict[str, dict[str, int]] = field(default_factory=dict)
-    # provider usage 可能是累计值，按 message_id + node 做快照去重，避免重复累计。
+    breakdown_by_node_model: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # provider usage 可能是累计值，按 message_id + node + model 做快照去重，避免重复累计。
     snapshot_by_message_node: dict[str, dict[str, int]] = field(default_factory=dict)
 
 
@@ -328,10 +331,22 @@ def _resolve_chunk_usage_payload(message_chunk: Any) -> dict[str, Any] | None:
 def _build_snapshot_key(
         *,
         stream_node: str | None,
+        model_name: str,
         message_chunk: Any,
         metadata: dict[str, Any] | None,
 ) -> str | None:
-    """按 message_id + node 生成 usage 去重快照键。"""
+    """
+    按 `message_id + node + model` 生成 usage 去重快照键。
+
+    Args:
+        stream_node: 当前事件对应的节点名。
+        model_name: 当前节点使用的模型名。
+        message_chunk: 消息 chunk 对象（优先读取其 id）。
+        metadata: 事件 metadata（用于兼容读取 message_id/id）。
+
+    Returns:
+        str | None: 可用时返回去重键；无法确定 message_id 时返回 None。
+    """
 
     message_id = getattr(message_chunk, "id", None)
     if message_id is None and isinstance(metadata, dict):
@@ -342,7 +357,35 @@ def _build_snapshot_key(
         return None
 
     resolved_node = str(stream_node or UNKNOWN_STREAM_NODE)
-    return f"{resolved_node}::{resolved_message_id}"
+    return f"{resolved_node}::{model_name}::{resolved_message_id}"
+
+
+def _resolve_model_name_from_chunk(message_chunk: Any) -> str:
+    """
+    从 chunk 元数据中解析模型名。
+
+    Args:
+        message_chunk: 流式消息 chunk。
+
+    Returns:
+        str: 解析到的模型名；无法识别时返回 `unknown`。
+    """
+
+    response_metadata = getattr(message_chunk, "response_metadata", None)
+    if isinstance(response_metadata, dict):
+        for key in ("model_name", "model", "model_id"):
+            candidate = response_metadata.get(key)
+            if isinstance(candidate, str) and candidate.strip():
+                return candidate.strip()
+
+        nested_usage = response_metadata.get("usage")
+        if isinstance(nested_usage, dict):
+            for key in ("model_name", "model", "model_id"):
+                candidate = nested_usage.get(key)
+                if isinstance(candidate, str) and candidate.strip():
+                    return candidate.strip()
+
+    return UNKNOWN_MODEL_NAME
 
 
 def _build_usage_snapshot(token_usage: Any) -> dict[str, int]:
@@ -384,14 +427,30 @@ def _accumulate_breakdown(
         *,
         runtime_state: StreamRuntimeState,
         stream_node: str | None,
+        model_name: str,
         usage_delta: dict[str, int],
 ) -> None:
-    """累计节点级 breakdown。"""
+    """
+    累计节点级 breakdown。
+
+    Args:
+        runtime_state: 运行时状态对象。
+        stream_node: 节点名。
+        model_name: 模型名。
+        usage_delta: 当前增量 usage。
+    """
 
     node_name = str(stream_node or UNKNOWN_STREAM_NODE)
-    node_usage = runtime_state.token_usage.breakdown_by_node.setdefault(
-        node_name,
-        {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+    breakdown_key = f"{node_name}::{model_name}"
+    node_usage = runtime_state.token_usage.breakdown_by_node_model.setdefault(
+        breakdown_key,
+        {
+            "node_name": node_name,
+            "model_name": model_name,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+        },
     )
     node_usage["prompt_tokens"] += usage_delta["prompt_tokens"]
     node_usage["completion_tokens"] += usage_delta["completion_tokens"]
@@ -403,10 +462,17 @@ def _collect_chunk_usage(
         message_chunk: Any,
         metadata: dict[str, Any] | None,
         stream_node: str | None,
-        should_emit_to_user: bool,
         runtime_state: StreamRuntimeState,
 ) -> None:
-    """采集单个 chunk 的 token usage 并更新运行时汇总。"""
+    """
+    采集单个 chunk 的 token usage 并更新运行时汇总。
+
+    Args:
+        message_chunk: 当前消息 chunk。
+        metadata: 事件元数据。
+        stream_node: 当前节点名。
+        runtime_state: 流式运行时状态。
+    """
 
     raw_usage_payload = _resolve_chunk_usage_payload(message_chunk)
     normalized_usage = normalize_token_usage(raw_usage_payload)
@@ -421,8 +487,10 @@ def _collect_chunk_usage(
     ):
         return
 
+    model_name = _resolve_model_name_from_chunk(message_chunk)
     snapshot_key = _build_snapshot_key(
         stream_node=stream_node,
+        model_name=model_name,
         message_chunk=message_chunk,
         metadata=metadata,
     )
@@ -447,41 +515,37 @@ def _collect_chunk_usage(
     _accumulate_breakdown(
         runtime_state=runtime_state,
         stream_node=stream_node,
+        model_name=model_name,
         usage_delta=usage_delta,
     )
 
-    if should_emit_to_user:
-        runtime_state.token_usage.prompt_tokens += usage_delta["prompt_tokens"]
-        runtime_state.token_usage.completion_tokens += usage_delta["completion_tokens"]
-    else:
-        runtime_state.token_usage.intermediate_tokens += usage_delta["total_tokens"]
+    runtime_state.token_usage.prompt_tokens += usage_delta["prompt_tokens"]
+    runtime_state.token_usage.completion_tokens += usage_delta["completion_tokens"]
 
 
 def _build_token_usage_summary(runtime_state: StreamRuntimeState) -> dict[str, Any] | None:
-    """输出回调使用的 token usage 汇总结构。"""
+    """
+    输出回调使用的 token usage 汇总结构。
+
+    Args:
+        runtime_state: 当前流式运行状态。
+
+    Returns:
+        dict[str, Any] | None: 有效 usage 时返回汇总对象；无统计数据返回 None。
+    """
 
     usage_state = runtime_state.token_usage
     if (
             usage_state.prompt_tokens == 0
             and usage_state.completion_tokens == 0
-            and usage_state.intermediate_tokens == 0
-            and not usage_state.breakdown_by_node
+            and not usage_state.breakdown_by_node_model
     ):
         return None
 
-    breakdown = [
-        {
-            "node_name": node_name,
-            "prompt_tokens": values["prompt_tokens"],
-            "completion_tokens": values["completion_tokens"],
-            "total_tokens": values["total_tokens"],
-        }
-        for node_name, values in usage_state.breakdown_by_node.items()
-    ]
+    breakdown = list(usage_state.breakdown_by_node_model.values())
     token_usage = build_token_usage(
         prompt_tokens=usage_state.prompt_tokens,
         completion_tokens=usage_state.completion_tokens,
-        intermediate_tokens=usage_state.intermediate_tokens,
         breakdown=breakdown,
     )
     return token_usage.model_dump(mode="python", exclude_none=True)
@@ -520,7 +584,6 @@ def handle_graph_message_chunk(
         message_chunk=message_chunk,
         metadata=metadata if isinstance(metadata, dict) else None,
         stream_node=stream_node,
-        should_emit_to_user=should_emit,
         runtime_state=runtime_state,
     )
     if not should_emit:
@@ -725,7 +788,7 @@ async def _finalize_stream(emitter_token: Any, producer_task: asyncio.Task[Any])
 
 
 async def _invoke_answer_completed_callback(
-        callback: Callable[..., None | Awaitable[None]] | None,
+        callback: Callable[[str, dict[str, Any] | None], None | Awaitable[None]] | None,
         answer_text: str,
         token_usage: dict[str, Any] | None,
 ) -> None:
@@ -733,37 +796,17 @@ async def _invoke_answer_completed_callback(
     执行“回答完成”回调。
 
     允许回调为同步函数或异步函数；回调异常会被调用方兜底，不影响主流输出。
+
+    Args:
+        callback: 结束回调函数。
+        answer_text: 聚合后的完整回答文本。
+        token_usage: 汇总后的 token usage。
     """
 
     if callback is None:
         return
 
-    callback_result: Any
-    try:
-        callback_signature = inspect.signature(callback)
-        accepts_token_usage = any(
-            parameter.kind == inspect.Parameter.VAR_POSITIONAL
-            for parameter in callback_signature.parameters.values()
-        ) or (
-            len(
-                [
-                    parameter
-                    for parameter in callback_signature.parameters.values()
-                    if parameter.kind in (
-                        inspect.Parameter.POSITIONAL_ONLY,
-                        inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                    )
-                ]
-            )
-            >= 2
-        )
-    except (TypeError, ValueError):
-        accepts_token_usage = False
-
-    if accepts_token_usage:
-        callback_result = callback(answer_text, token_usage)
-    else:
-        callback_result = callback(answer_text)
+    callback_result = callback(answer_text, token_usage)
     if inspect.isawaitable(callback_result):
         await callback_result
 

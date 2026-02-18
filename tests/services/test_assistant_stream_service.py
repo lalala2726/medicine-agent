@@ -80,7 +80,7 @@ def _build_config(
         extract_final_content: Callable[[dict[str, Any]], str] | None = None,
         map_exception: Callable[[Exception], str] | None = None,
         initial_emitted_events: tuple[AssistantResponse, ...] = (),
-        on_answer_completed: Callable[..., None] | None = None,
+        on_answer_completed: Callable[[str, dict[str, Any] | None], None] | None = None,
 ) -> AssistantStreamConfig:
     return AssistantStreamConfig(
         workflow=workflow,
@@ -270,6 +270,8 @@ def test_stream_service_uses_fallback_when_no_tokens():
 
 
 def test_stream_service_calls_answer_completed_callback_with_aggregated_text():
+    """验证流结束回调：answer_text 为流式 token 聚合后的完整文本。"""
+
     graph = _DummyAsyncGraph(
         events=[
             ("messages", (_DummyMessageChunk("你"), {"langgraph_node": "chat_agent"})),
@@ -281,7 +283,7 @@ def test_stream_service_calls_answer_completed_callback_with_aggregated_text():
     payloads = _stream_with_config(
         _build_config(
             graph,
-            on_answer_completed=lambda text: completed_payloads.append(text),
+            on_answer_completed=lambda text, _usage: completed_payloads.append(text),
         )
     )
 
@@ -292,6 +294,8 @@ def test_stream_service_calls_answer_completed_callback_with_aggregated_text():
 
 
 def test_stream_service_collects_token_usage_summary_for_callback():
+    """验证 token 汇总：顶层为全流程总量，breakdown 按 node+model 聚合并支持 unknown。"""
+
     graph = _DummyAsyncGraph(
         events=[
             ("values", {"routing": {}, "plan": []}),
@@ -324,6 +328,7 @@ def test_stream_service_collects_token_usage_summary_for_callback():
                         "你",
                         chunk_id="chat-1",
                         usage_metadata={"input_tokens": 20, "output_tokens": 4, "total_tokens": 24},
+                        response_metadata={"model_name": "qwen-plus"},
                     ),
                     {"langgraph_node": "chat_agent"},
                 ),
@@ -335,6 +340,7 @@ def test_stream_service_collects_token_usage_summary_for_callback():
                         "好",
                         chunk_id="chat-1",
                         usage_metadata={"input_tokens": 20, "output_tokens": 6, "total_tokens": 26},
+                        response_metadata={"model_name": "qwen-plus"},
                     ),
                     {"langgraph_node": "chat_agent"},
                 ),
@@ -344,7 +350,7 @@ def test_stream_service_collects_token_usage_summary_for_callback():
     )
     callback_payloads: list[dict[str, Any]] = []
 
-    def _callback(answer_text: str, token_usage: dict[str, Any] | None = None) -> None:
+    def _callback(answer_text: str, token_usage: dict[str, Any] | None) -> None:
         callback_payloads.append({"answer_text": answer_text, "token_usage": token_usage})
 
     payloads = _stream_with_config(
@@ -362,20 +368,23 @@ def test_stream_service_collects_token_usage_summary_for_callback():
     assert callback_payloads[0]["answer_text"] == "你好"
     usage = callback_payloads[0]["token_usage"]
     assert usage is not None
-    assert usage["prompt_tokens"] == 20
-    assert usage["completion_tokens"] == 6
-    assert usage["intermediate_tokens"] == 15
+    assert usage["prompt_tokens"] == 30
+    assert usage["completion_tokens"] == 11
     assert usage["total_tokens"] == 41
 
-    breakdown_by_node = {item["node_name"]: item for item in usage["breakdown"]}
-    assert breakdown_by_node["order_agent"] == {
+    breakdown_by_node_model = {
+        f"{item['node_name']}::{item['model_name']}": item for item in usage["breakdown"]
+    }
+    assert breakdown_by_node_model["order_agent::unknown"] == {
         "node_name": "order_agent",
+        "model_name": "unknown",
         "prompt_tokens": 10,
         "completion_tokens": 5,
         "total_tokens": 15,
     }
-    assert breakdown_by_node["chat_agent"] == {
+    assert breakdown_by_node_model["chat_agent::qwen-plus"] == {
         "node_name": "chat_agent",
+        "model_name": "qwen-plus",
         "prompt_tokens": 20,
         "completion_tokens": 6,
         "total_tokens": 26,

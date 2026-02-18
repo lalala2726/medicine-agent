@@ -20,6 +20,8 @@ class _DummyGraph:
 
 
 def test_invoke_admin_workflow_passes_langsmith_config(monkeypatch):
+    """验证 _invoke_admin_workflow：会透传 LangSmith runnable config。"""
+
     graph = _DummyGraph(final_state={"results": {"chat": {"content": "ok"}}})
     monkeypatch.setattr(service_module, "ADMIN_WORKFLOW", graph)
     monkeypatch.setattr(
@@ -41,6 +43,8 @@ def test_invoke_admin_workflow_passes_langsmith_config(monkeypatch):
 
 
 def test_assistant_chat_delegates_to_stream_service(monkeypatch):
+    """验证 assistant_chat 旧会话路径：用户先落库，流结束后 assistant 携带新 token_usage 落库。"""
+
     captured: dict = {}
     scheduled_calls: list[dict] = []
     saved_messages: list[dict] = []
@@ -130,11 +134,11 @@ def test_assistant_chat_delegates_to_stream_service(monkeypatch):
                 {
                     "prompt_tokens": 11,
                     "completion_tokens": 7,
-                    "intermediate_tokens": 3,
-                    "total_tokens": 21,
+                    "total_tokens": 18,
                     "breakdown": [
                         {
                             "node_name": "chat_agent",
+                            "model_name": "qwen-max",
                             "prompt_tokens": 11,
                             "completion_tokens": 7,
                             "total_tokens": 18,
@@ -182,7 +186,6 @@ def test_assistant_chat_delegates_to_stream_service(monkeypatch):
             {
                 "prompt_tokens": 100,
                 "completion_tokens": 20,
-                "intermediate_tokens": 10,
                 "total_tokens": 130,
             },
         )
@@ -192,7 +195,6 @@ def test_assistant_chat_delegates_to_stream_service(monkeypatch):
             "stream_token_usage": {
                 "prompt_tokens": 100,
                 "completion_tokens": 20,
-                "intermediate_tokens": 10,
                 "total_tokens": 130,
             },
             "prompt_text": "代理测试",
@@ -206,11 +208,11 @@ def test_assistant_chat_delegates_to_stream_service(monkeypatch):
         "token_usage": {
             "prompt_tokens": 11,
             "completion_tokens": 7,
-            "intermediate_tokens": 3,
-            "total_tokens": 21,
+            "total_tokens": 18,
             "breakdown": [
                 {
                     "node_name": "chat_agent",
+                    "model_name": "qwen-max",
                     "prompt_tokens": 11,
                     "completion_tokens": 7,
                     "total_tokens": 18,
@@ -221,6 +223,8 @@ def test_assistant_chat_delegates_to_stream_service(monkeypatch):
 
 
 def test_assistant_chat_new_conversation_injects_created_session_event(monkeypatch):
+    """验证 assistant_chat 新会话路径：会注入创建事件并在完成回调写入 assistant usage。"""
+
     captured: dict = {}
     scheduled_calls: list[dict] = []
     saved_messages: list[dict] = []
@@ -278,7 +282,6 @@ def test_assistant_chat_new_conversation_injects_created_session_event(monkeypat
                 {
                     "prompt_tokens": 6,
                     "completion_tokens": 4,
-                    "intermediate_tokens": 0,
                     "total_tokens": 10,
                     "breakdown": None,
                 },
@@ -322,7 +325,7 @@ def test_assistant_chat_new_conversation_injects_created_session_event(monkeypat
     assert stream_config.build_initial_state("x")["history_messages"] == []
 
     assert stream_config.on_answer_completed is not None
-    asyncio.run(stream_config.on_answer_completed("AI结束回复"))
+    asyncio.run(stream_config.on_answer_completed("AI结束回复", None))
     assert merge_usage_calls == [
         {
             "stream_token_usage": None,
@@ -337,7 +340,6 @@ def test_assistant_chat_new_conversation_injects_created_session_event(monkeypat
         "token_usage": {
             "prompt_tokens": 6,
             "completion_tokens": 4,
-            "intermediate_tokens": 0,
             "total_tokens": 10,
             "breakdown": None,
         },
@@ -345,6 +347,8 @@ def test_assistant_chat_new_conversation_injects_created_session_event(monkeypat
 
 
 def test_load_history_reads_latest_window_and_returns_chronological(monkeypatch):
+    """验证 load_history：读取倒序窗口后会反转为时间正序。"""
+
     captured: dict = {}
 
     def _fake_get_history(*, conversation_id: str, limit: int, ascending: bool):

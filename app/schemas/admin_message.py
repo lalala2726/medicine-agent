@@ -21,6 +21,7 @@ class TokenUsageBreakdownItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     node_name: str = Field(..., min_length=1, description="节点名称")
+    model_name: str = Field(..., min_length=1, description="模型名称")
     prompt_tokens: int = Field(default=0, ge=0, description="输入 Token 数")
     completion_tokens: int = Field(default=0, ge=0, description="输出 Token 数")
     total_tokens: int = Field(default=0, ge=0, description="节点总 Token 数")
@@ -34,11 +35,6 @@ class TokenUsage(BaseModel):
     prompt_tokens: int = Field(default=0, ge=0, description="输入 Token 数")
     completion_tokens: int = Field(default=0, ge=0, description="输出 Token 数")
     total_tokens: int = Field(default=0, ge=0, description="总 Token 数")
-    intermediate_tokens: int | None = Field(
-        default=None,
-        ge=0,
-        description="中间流程 Token 数",
-    )
     breakdown: list[TokenUsageBreakdownItem] | None = Field(
         default=None,
         description="节点级 Token 明细",
