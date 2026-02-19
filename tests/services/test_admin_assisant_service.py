@@ -70,8 +70,7 @@ def test_prepare_new_conversation_returns_context_with_created_event(monkeypatch
     assert context.is_new_conversation is True
     assert len(context.initial_emitted_events) == 1
     session_event = context.initial_emitted_events[0]
-    assert session_event.type == MessageType.STATUS
-    assert session_event.content.node == "conversation"
+    assert session_event.type == MessageType.NOTICE
     assert session_event.content.state == "created"
     assert session_event.meta == {"conversation_uuid": "new-conv-uuid"}
     assert scheduled_title_calls == [{"conversation_uuid": "new-conv-uuid", "question": "新建会话"}]
@@ -103,12 +102,18 @@ def test_prepare_existing_conversation_returns_context_with_history(monkeypatch)
     context = service_module._prepare_existing_conversation(
         conversation_uuid="conv-1",
         user_id=100,
+        question="本轮问题",
     )
 
     assert isinstance(context, service_module.ConversationContext)
     assert context.conversation_uuid == "conv-1"
     assert context.conversation_id == "507f1f77bcf86cd799439011"
-    assert context.history_messages == expected_history
+    assert [message.content for message in context.history_messages] == [
+        "历史问题",
+        "历史回答",
+        "本轮问题",
+    ]
+    assert isinstance(context.history_messages[-1], HumanMessage)
     assert context.initial_emitted_events == ()
     assert context.is_new_conversation is False
     assert captured == {
@@ -149,8 +154,13 @@ def test_prepare_conversation_context_routes_by_conversation_uuid(monkeypatch):
     monkeypatch.setattr(
         service_module,
         "_prepare_existing_conversation",
-        lambda *, conversation_uuid, user_id: (
-            call_order.append(("existing", {"conversation_uuid": conversation_uuid, "user_id": user_id})),
+        lambda *, conversation_uuid, user_id, question: (
+            call_order.append(
+                (
+                    "existing",
+                    {"conversation_uuid": conversation_uuid, "user_id": user_id, "question": question},
+                )
+            ),
             existing_context,
         )[-1],
     )
@@ -170,7 +180,7 @@ def test_prepare_conversation_context_routes_by_conversation_uuid(monkeypatch):
     assert context_existing is existing_context
     assert call_order == [
         ("new", {"question": "问题A", "user_id": 100}),
-        ("existing", {"conversation_uuid": "conv-1", "user_id": 101}),
+        ("existing", {"conversation_uuid": "conv-1", "user_id": 101, "question": "问题B"}),
     ]
 
 
@@ -246,6 +256,11 @@ def test_assistant_chat_schedules_user_persist_without_blocking_main_flow(monkey
     assert captured["question"] == "代理测试"
     stream_config = captured["config"]
     assert stream_config.build_initial_state("x")["execution_traces"] == []
+    assert [message.content for message in stream_config.build_initial_state("x")["history_messages"]] == [
+        "历史问题",
+        "历史回答",
+        "代理测试",
+    ]
     assert call_order == ["load_history", "add_user"]
     assert background_calls == [
         {
@@ -434,8 +449,7 @@ def test_assistant_chat_new_conversation_injects_created_session_event(monkeypat
     stream_config = captured["config"]
     assert len(stream_config.initial_emitted_events) == 1
     session_event = stream_config.initial_emitted_events[0]
-    assert session_event.type == MessageType.STATUS
-    assert session_event.content.node == "conversation"
+    assert session_event.type == MessageType.NOTICE
     assert session_event.content.state == "created"
     assert session_event.meta == {"conversation_uuid": "new-conv-uuid"}
     assert scheduled_title_calls == [{"conversation_uuid": "new-conv-uuid", "question": "新建会话"}]

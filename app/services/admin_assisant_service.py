@@ -398,6 +398,7 @@ def _prepare_existing_conversation(
         *,
         conversation_uuid: str,
         user_id: int,
+        question: str,
 ) -> ConversationContext:
     """
     准备已存在会话上下文。
@@ -405,9 +406,11 @@ def _prepare_existing_conversation(
     Args:
         conversation_uuid: 会话 UUID。
         user_id: 当前用户 ID（用于会话归属校验）。
+        question: 当前用户问题文本，会追加到历史末尾供模型推理。
 
     Returns:
-        ConversationContext: 已存在会话上下文（不含会话创建事件）。
+        ConversationContext: 已存在会话上下文（不含会话创建事件），
+            其中 `history_messages` 末尾包含本轮用户问题。
 
     Raises:
         ServiceException: 当会话不存在、无权限或数据库异常时抛出。
@@ -421,6 +424,8 @@ def _prepare_existing_conversation(
         conversation_id=conversation_id,
         limit=50,
     )
+    # 旧会话场景需显式注入本轮用户输入，避免模型只基于上一轮历史作答。
+    history_messages = [*history_messages, HumanMessage(content=question)]
     return ConversationContext(
         conversation_uuid=conversation_uuid,
         conversation_id=conversation_id,
@@ -459,6 +464,7 @@ def _prepare_conversation_context(
     return _prepare_existing_conversation(
         conversation_uuid=conversation_uuid,
         user_id=user_id,
+        question=question,
     )
 
 
