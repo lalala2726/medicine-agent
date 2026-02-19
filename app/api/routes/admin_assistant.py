@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.core.pre_authorize import RoleCode, has_permission, has_role, pre_authorize
 from app.schemas.base_request import PageRequest
 from app.schemas.response import ApiResponse, PageResponse
 from app.services.admin_assisant_service import assistant_chat, chat_list
@@ -31,6 +32,9 @@ class AssistantChatListRequest(BaseModel):
 
 
 @router.post("/chat", summary="普通对话")
+@pre_authorize(
+    lambda: has_role(RoleCode.ADMIN) or has_permission("admin:assistant:access")
+)
 async def assistant(request: AssistantRequest) -> StreamingResponse:
     """管理助手聊天接口（SSE 流式返回）。"""
 
@@ -41,6 +45,9 @@ async def assistant(request: AssistantRequest) -> StreamingResponse:
 
 
 @router.get("/chat/list", summary="管理助手会话列表")
+@pre_authorize(
+    lambda: has_role(RoleCode.ADMIN) or has_permission("admin:assistant:access")
+)
 async def assistant_chat_list(
         request: AssistantChatListRequest = Depends(),
 ) -> ApiResponse[PageResponse[dict[str, str]]]:
