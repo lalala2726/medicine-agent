@@ -5,16 +5,17 @@ from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from app.agent.admin.agent_state import AgentState
-from app.agent.admin.node.runtime_context import (
-    build_step_output_update,
-    build_step_runtime,
+from app.agent.admin.agent_utils import (
+    NodeExecutionResult,
+    build_standard_node_update,
+    execute_text_node,
 )
+from app.agent.admin.agent_state import AgentState
+from app.agent.admin.node.runtime_context import build_step_runtime
 from app.core.assistant_status import status_node
 from app.core.langsmith import traceable
 from app.core.llm import create_chat_model
 from app.schemas.prompt import base_prompt
-from app.utils.streaming_utils import invoke
 
 _SUMMARY_PROMPT = (
         """
@@ -29,8 +30,17 @@ _SUMMARY_PROMPT = (
 
 
 def _build_summary_input(state: AgentState, runtime: dict[str, Any]) -> dict[str, Any]:
-    # summary 在 coordinator 模式下优先基于 read_from 读取上游步骤输出，
-    # 只在直连模式下兼容读取旧字段（order_context/results 等）。
+    """
+    构建 summary 节点输入载荷。
+
+    Args:
+        state: 当前全局状态，主要读取 `errors`。
+        runtime: `build_step_runtime` 输出，包含任务描述、read_from、上游输出等。
+
+    Returns:
+        dict[str, Any]: 供 summary 模型消费的结构化输入。
+    """
+    # summary 仅基于 DAG read_from 注入的上游输出做汇总，不再兼容旧直连上下文字段。
     payload: dict[str, Any] = {
         "task_description": runtime.get("task_description") or "汇总已有结果并生成最终结论",
         "upstream_outputs": runtime.get("upstream_outputs") or {},
@@ -41,15 +51,10 @@ def _build_summary_input(state: AgentState, runtime: dict[str, Any]) -> dict[str
     if isinstance(user_input, str) and user_input:
         payload["user_input"] = user_input
 
-    history_messages = runtime.get("history_messages")
+    history_messages = runtime.get("history_messages_serialized")
     if isinstance(history_messages, list) and history_messages:
         payload["history_messages"] = history_messages
 
-    if not runtime.get("coordinator_mode"):
-        payload["order_context"] = state.get("order_context") or {}
-        payload["excel_context"] = state.get("excel_context") or {}
-        payload["aftersale_context"] = state.get("aftersale_context") or {}
-        payload["results"] = state.get("results") or {}
     return payload
 
 
@@ -60,6 +65,15 @@ def _build_summary_input(state: AgentState, runtime: dict[str, Any]) -> dict[str
 )
 @traceable(name="Summary Agent Node", run_type="chain")
 def summary_agent(state: AgentState) -> dict:
+    """
+    执行汇总节点，生成最终可读结论。
+
+    Args:
+        state: 当前全局状态，包含步骤运行上下文与上游节点输出。
+
+    Returns:
+        dict: 节点增量更新（results、step_outputs、execution_traces）。
+    """
     # runtime 包含当前步骤 task/read_from/final_output/context 开关。
     runtime = build_step_runtime(
         state,
@@ -68,60 +82,45 @@ def summary_agent(state: AgentState) -> dict:
     )
     summary_input = _build_summary_input(state, runtime)
     task_description = runtime.get("task_description") or "汇总已有结果并生成最终结论"
+    final_output = bool(runtime.get("final_output"))
     has_data = bool(
         summary_input.get("upstream_outputs")
-        or summary_input.get("order_context")
-        or summary_input.get("excel_context")
-        or summary_input.get("results")
     )
     if not has_data and not summary_input["errors"]:
-        # 早返回也要写 step_outputs，避免 planner 误判该步骤未执行。
-        content = "当前没有可汇总的业务结果。请先提供明确任务或先执行业务节点。"
-        results = dict(state.get("results") or {})
-        results["summary"] = {"content": content}
-        result = {"results": results}
-        result.update(
-            build_step_output_update(
-                runtime,
-                node_name="summary_agent",
-                status="completed",
-                text=content,
-                output={"summary": results["summary"]},
-            )
+        execution_result = NodeExecutionResult(
+            content="当前没有可汇总的业务结果。请先提供明确任务或先执行业务节点。",
+            status="completed",
         )
-        return result
-
-    failed_error: str | None = None
-    try:
-        llm = create_chat_model(model="qwen-plus", temperature=0.2)
-        messages = [
-            SystemMessage(content=_SUMMARY_PROMPT),
-            HumanMessage(
-                content=(
-                    f"总结任务：{task_description}\n\n"
-                    f"输入数据：\n{json.dumps(summary_input, ensure_ascii=False)}"
-                )
-            ),
-        ]
-        content = invoke(llm, messages)
-        step_status = "completed"
-    except Exception:
-        content = "总结节点暂时不可用，请稍后重试。"
-        step_status = "failed"
-        failed_error = "summary_agent 执行失败"
-
-    results = dict(state.get("results") or {})
-    results["summary"] = {"content": content}
-    # 标准化写回 step_outputs，供后续调度或最终兜底输出使用。
-    result: dict[str, Any] = {"results": results}
-    result.update(
-        build_step_output_update(
-            runtime,
+        return build_standard_node_update(
+            state=state,
+            runtime=runtime,
             node_name="summary_agent",
-            status=step_status,
-            text=content,
-            output={"summary": results["summary"]},
-            error=failed_error,
+            result_key="summary",
+            execution_result=execution_result,
+            is_end=final_output,
         )
+
+    llm = create_chat_model(model="qwen-plus", temperature=0.2)
+    messages = [
+        SystemMessage(content=_SUMMARY_PROMPT),
+        HumanMessage(
+            content=(
+                f"总结任务：{task_description}\n\n"
+                f"输入数据：\n{json.dumps(summary_input, ensure_ascii=False)}"
+            )
+        ),
+    ]
+    execution_result = execute_text_node(
+        llm=llm,
+        messages=messages,
+        fallback_content="总结节点暂时不可用，请稍后重试。",
+        fallback_error="summary_agent 执行失败",
     )
-    return result
+    return build_standard_node_update(
+        state=state,
+        runtime=runtime,
+        node_name="summary_agent",
+        result_key="summary",
+        execution_result=execution_result,
+        is_end=final_output,
+    )

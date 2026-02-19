@@ -1,18 +1,20 @@
 from langchain_core.prompts import SystemMessagePromptTemplate
 
+from app.agent.admin.agent_utils import (
+    build_standard_node_update,
+    execute_tool_node,
+)
 from app.agent.admin.agent_state import AgentState
 from app.agent.admin.node.runtime_context import (
     build_instruction_with_failure_policy,
-    build_step_output_update,
     build_step_runtime,
-    evaluate_failure_by_policy,
 )
 from app.agent.tools.admin_tools import get_product_list, get_product_detail
 from app.core.assistant_status import status_node
 from app.core.langsmith import traceable
 from app.core.llm import create_chat_model
 from app.schemas.prompt import base_prompt
-from app.utils.streaming_utils import invoke_with_policy, is_final_node
+from app.utils.streaming_utils import is_final_node
 
 system_prompt = (
         """
@@ -48,6 +50,20 @@ system_prompt = (
 )
 @traceable(name="Product Agent Node", run_type="chain")
 def product_agent(state: AgentState) -> dict:
+    """
+    执行商品领域节点。
+
+    作用：
+    - 基于步骤配置构造商品查询任务；
+    - 调用商品工具（列表/详情）完成业务处理；
+    - 输出标准化节点结果与执行追踪。
+
+    Args:
+        state: 当前全局状态，含步骤映射、上游输出与上下文开关。
+
+    Returns:
+        dict: 节点增量更新（results、step_outputs、execution_traces）。
+    """
     # 从 planner 当前步骤中读取运行时配置与上游可读输出。
     runtime = build_step_runtime(
         state,
@@ -66,54 +82,27 @@ def product_agent(state: AgentState) -> dict:
     tools = [get_product_list, get_product_detail]
     # 只有最终输出步骤才开启 stream 分支。
     final_output = is_final_node(state, "product_agent")
-    try:
-        content, diagnostics = invoke_with_policy(
-            llm,
-            messages,
-            tools=tools,
-            enable_stream=final_output,
-            error_marker_prefix=str(
-                failure_policy.get("error_marker_prefix") or "__ERROR__:"
-            ),
-            tool_error_counting=str(
-                failure_policy.get("tool_error_counting") or "consecutive"
-            ),
-            max_tool_errors=int(failure_policy.get("max_tool_errors") or 2),
-        )
-        stream_chunks = list(diagnostics.get("stream_chunks") or [])
-        step_status, failed_error, content = evaluate_failure_by_policy(
-            content,
-            diagnostics,
-            failure_policy,
-        )
-    except Exception as exc:
-        content = "商品服务暂时不可用，请稍后重试。"
-        stream_chunks = []
-        step_status = "failed"
-        failed_error = f"product_agent 执行失败: {exc}"
-
-    # 兼容保留原 product_context 输出结构。
-    product_context = dict(state.get("product_context") or {})
-    product_context["result"] = {
-        "content": content,
-        "is_end": final_output,
-    }
-    if stream_chunks:
-        product_context["stream_chunks"] = stream_chunks
-    else:
-        product_context.pop("stream_chunks", None)
-    product_context["status"] = "COMPLETED" if step_status == "completed" else "FAILED"
-
-    # 写入 step_outputs，驱动 DAG 调度与故障传播。
-    result = {"product_context": product_context}
-    result.update(
-        build_step_output_update(
-            runtime,
-            node_name="product_agent",
-            status=step_status,
-            text=content,
-            output={"result": product_context["result"]},
-            error=failed_error,
-        )
+    execution_result = execute_tool_node(
+        llm=llm,
+        messages=messages,
+        tools=tools,
+        enable_stream=final_output,
+        failure_policy=failure_policy,
+        fallback_content="商品服务暂时不可用，请稍后重试。",
+        fallback_error="product_agent 执行失败",
     )
-    return result
+
+    return build_standard_node_update(
+        state=state,
+        runtime=runtime,
+        node_name="product_agent",
+        result_key="product",
+        execution_result=execution_result,
+        is_end=final_output,
+        step_output_payload={
+            "product": {
+                "content": execution_result.content,
+                "is_end": final_output,
+            }
+        },
+    )

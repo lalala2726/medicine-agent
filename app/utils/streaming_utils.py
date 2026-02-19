@@ -54,6 +54,7 @@ def _empty_policy_diagnostics() -> dict[str, Any]:
         "threshold_hit": False,
         "threshold_reason": "",
         "tool_error_messages": [],
+        "tool_call_details": [],
         "stream_chunks": [],
     }
 
@@ -340,7 +341,8 @@ def _invoke_with_tools_with_diagnostics(
 
         for tc in tool_calls:
             diagnostics["tool_calls"] = int(diagnostics["tool_calls"]) + 1
-            result, is_error, error_message = _exec_tool_with_meta(tc, tool_map, log_enabled)
+            result, is_error, error_message, tool_detail = _exec_tool_with_meta(tc, tool_map, log_enabled)
+            diagnostics["tool_call_details"].append(tool_detail)
             messages.append(ToolMessage(content=result, tool_call_id=tc["id"]))
             if is_error:
                 diagnostics["tool_errors_total"] = int(diagnostics["tool_errors_total"]) + 1
@@ -415,7 +417,7 @@ def _exec_tool(
     Returns:
         str: JSON 格式的执行结果或错误信息
     """
-    result, _, _ = _exec_tool_with_meta(tool_call, tool_map, log_enabled)
+    result, _, _, _ = _exec_tool_with_meta(tool_call, tool_map, log_enabled)
     return result
 
 
@@ -423,12 +425,12 @@ def _exec_tool_with_meta(
         tool_call: dict,
         tool_map: dict[str, Any],
         log_enabled: bool | None = None,
-) -> tuple[str, bool, str]:
+) -> tuple[str, bool, str, dict[str, Any]]:
     """
     执行单个工具调用并返回执行诊断元信息。
 
     Returns:
-        (result_text, is_error, error_message)
+        (result_text, is_error, error_message, tool_detail)
     """
     name = tool_call["name"]
     args = tool_call.get("args", {})
@@ -454,7 +456,18 @@ def _exec_tool_with_meta(
         )
         if log_enabled:
             logger.warning("未知工具: {}", name)
-        return json.dumps({"error": unknown_message}, ensure_ascii=False), True, unknown_message
+        return (
+            json.dumps({"error": unknown_message}, ensure_ascii=False),
+            True,
+            unknown_message,
+            {
+                "tool_name": name,
+                "tool_input": args,
+                "tool_output": {"error": unknown_message},
+                "is_error": True,
+                "error_message": unknown_message,
+            },
+        )
 
     if log_enabled:
         logger.info("工具调用: name={} args={}", name, args)
@@ -474,9 +487,31 @@ def _exec_tool_with_meta(
         )
         is_error = isinstance(result, dict) and "error" in result
         error_message = str(result.get("error") or "").strip() if isinstance(result, dict) else ""
-        return result_text, is_error, error_message
+        return (
+            result_text,
+            is_error,
+            error_message,
+            {
+                "tool_name": name,
+                "tool_input": args,
+                "tool_output": result,
+                "is_error": is_error,
+                "error_message": error_message,
+            },
+        )
     except Exception as exc:
         if log_enabled:
             logger.error("工具执行失败: name={} error={}", name, exc)
         message = f"工具执行失败: {name}, {exc}"
-        return json.dumps({"error": message}, ensure_ascii=False), True, message
+        return (
+            json.dumps({"error": message}, ensure_ascii=False),
+            True,
+            message,
+            {
+                "tool_name": name,
+                "tool_input": args,
+                "tool_output": {"error": message},
+                "is_error": True,
+                "error_message": message,
+            },
+        )

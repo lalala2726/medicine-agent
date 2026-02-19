@@ -32,3 +32,4 @@ def test_create_chat_model_passes_kwargs(monkeypatch):
     assert model.kwargs["api_key"].get_secret_value() == "test-key"
     assert model.kwargs["base_url"] == "https://example.test"
     assert model.kwargs["model_kwargs"] == {"response_format": {"type": "json_object"}}
+    assert model.kwargs["stream_usage"] is True

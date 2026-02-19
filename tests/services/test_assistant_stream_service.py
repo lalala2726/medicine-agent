@@ -16,8 +16,18 @@ from app.services.assistant_stream_service import (
 
 
 class _DummyMessageChunk:
-    def __init__(self, content: str):
+    def __init__(
+            self,
+            content: str,
+            *,
+            chunk_id: str | None = None,
+            usage_metadata: dict[str, int] | None = None,
+            response_metadata: dict[str, Any] | None = None,
+    ):
         self.content = content
+        self.id = chunk_id
+        self.usage_metadata = usage_metadata
+        self.response_metadata = response_metadata
 
 
 class _DummyAsyncGraph:
@@ -70,6 +80,7 @@ def _build_config(
         extract_final_content: Callable[[dict[str, Any]], str] | None = None,
         map_exception: Callable[[Exception], str] | None = None,
         initial_emitted_events: tuple[AssistantResponse, ...] = (),
+        on_answer_completed: Callable[[str, dict[str, Any] | None, list[dict[str, Any]] | None], None] | None = None,
 ) -> AssistantStreamConfig:
     return AssistantStreamConfig(
         workflow=workflow,
@@ -78,12 +89,14 @@ def _build_config(
             "routing": {},
             "plan": [],
             "final": "fallback",
+            "execution_traces": [],
         },
         extract_final_content=extract_final_content or (lambda state: state.get("final", "")),
         should_stream_token=should_stream_token or (lambda stream_node, _state: stream_node == "chat_agent"),
         build_stream_config=lambda: {"trace_id": "demo"},
         invoke_sync=lambda state: workflow.invoke(state),
         map_exception=map_exception or (lambda exc: f"处理失败: {exc}"),
+        on_answer_completed=on_answer_completed,
         initial_emitted_events=initial_emitted_events,
     )
 
@@ -255,6 +268,258 @@ def test_stream_service_uses_fallback_when_no_tokens():
     non_end_texts = [item["content"]["text"] for item in answer_payloads if not item["is_end"]]
     assert non_end_texts == ["fallback text"]
     assert answer_payloads[-1]["is_end"] is True
+
+
+def test_stream_service_calls_answer_completed_callback_with_aggregated_text():
+    """测试目标：流结束回调输出完整 answer；成功标准：回调收到拼接后的文本。"""
+
+    graph = _DummyAsyncGraph(
+        events=[
+            ("messages", (_DummyMessageChunk("你"), {"langgraph_node": "chat_agent"})),
+            ("messages", (_DummyMessageChunk("好"), {"langgraph_node": "chat_agent"})),
+            ("values", {"final": "不会走兜底"}),
+        ]
+    )
+    completed_payloads: list[dict[str, Any]] = []
+    payloads = _stream_with_config(
+        _build_config(
+            graph,
+            on_answer_completed=lambda text, _usage, trace: completed_payloads.append(
+                {"text": text, "trace": trace}
+            ),
+        )
+    )
+
+    answer_payloads = [item for item in payloads if item["type"] == "answer"]
+    non_end_texts = [item["content"]["text"] for item in answer_payloads if not item["is_end"]]
+    assert non_end_texts == ["你", "好"]
+    assert completed_payloads[0]["text"] == "你好"
+    assert completed_payloads[0]["trace"] is None
+
+
+def test_stream_service_collects_token_usage_summary_for_callback():
+    """测试目标：token 汇总按全流程聚合；成功标准：unknown 模型名可由 execution_trace 补齐。"""
+
+    graph = _DummyAsyncGraph(
+        events=[
+            ("values", {"routing": {}, "plan": []}),
+            (
+                "messages",
+                (
+                    _DummyMessageChunk(
+                        "",
+                        chunk_id="order-1",
+                        usage_metadata={"input_tokens": 10, "output_tokens": 2, "total_tokens": 12},
+                    ),
+                    {"langgraph_node": "order_agent"},
+                ),
+            ),
+            (
+                "messages",
+                (
+                    _DummyMessageChunk(
+                        "",
+                        chunk_id="order-1",
+                        usage_metadata={"input_tokens": 10, "output_tokens": 5, "total_tokens": 15},
+                    ),
+                    {"langgraph_node": "order_agent"},
+                ),
+            ),
+            (
+                "messages",
+                (
+                    _DummyMessageChunk(
+                        "你",
+                        chunk_id="chat-1",
+                        usage_metadata={"input_tokens": 20, "output_tokens": 4, "total_tokens": 24},
+                        response_metadata={"model_name": "qwen-plus"},
+                    ),
+                    {"langgraph_node": "chat_agent"},
+                ),
+            ),
+            (
+                "messages",
+                (
+                    _DummyMessageChunk(
+                        "好",
+                        chunk_id="chat-1",
+                        usage_metadata={"input_tokens": 20, "output_tokens": 6, "total_tokens": 26},
+                        response_metadata={"model_name": "qwen-plus"},
+                    ),
+                    {"langgraph_node": "chat_agent"},
+                ),
+            ),
+            (
+                "values",
+                {
+                    "final": "",
+                    "execution_traces": [
+                        {
+                            "node_name": "order_agent",
+                            "model_name": "qwen3-max",
+                            "input_messages": [],
+                            "output_text": "订单节点输出",
+                            "tool_calls": [],
+                        },
+                        {
+                            "node_name": "chat_agent",
+                            "model_name": "qwen-plus",
+                            "input_messages": [],
+                            "output_text": "聊天节点输出",
+                            "tool_calls": [],
+                        },
+                    ],
+                },
+            ),
+        ]
+    )
+    callback_payloads: list[dict[str, Any]] = []
+
+    def _callback(
+            answer_text: str,
+            token_usage: dict[str, Any] | None,
+            execution_trace: list[dict[str, Any]] | None,
+    ) -> None:
+        callback_payloads.append(
+            {
+                "answer_text": answer_text,
+                "token_usage": token_usage,
+                "execution_trace": execution_trace,
+            }
+        )
+
+    payloads = _stream_with_config(
+        _build_config(
+            graph,
+            on_answer_completed=_callback,
+        )
+    )
+
+    answer_payloads = [item for item in payloads if item["type"] == "answer"]
+    non_end_texts = [item["content"]["text"] for item in answer_payloads if not item["is_end"]]
+    assert non_end_texts == ["你", "好"]
+
+    assert len(callback_payloads) == 1
+    assert callback_payloads[0]["answer_text"] == "你好"
+    usage = callback_payloads[0]["token_usage"]
+    assert usage is not None
+    assert usage["prompt_tokens"] == 30
+    assert usage["completion_tokens"] == 11
+    assert usage["total_tokens"] == 41
+
+    breakdown_by_node_model = {
+        f"{item['node_name']}::{item['model_name']}": item for item in usage["breakdown"]
+    }
+    assert breakdown_by_node_model["order_agent::qwen3-max"] == {
+        "node_name": "order_agent",
+        "model_name": "qwen3-max",
+        "prompt_tokens": 10,
+        "completion_tokens": 5,
+        "total_tokens": 15,
+    }
+    assert breakdown_by_node_model["chat_agent::qwen-plus"] == {
+        "node_name": "chat_agent",
+        "model_name": "qwen-plus",
+        "prompt_tokens": 20,
+        "completion_tokens": 6,
+        "total_tokens": 26,
+    }
+    assert callback_payloads[0]["execution_trace"] is not None
+
+
+def test_on_answer_completed_receives_three_args():
+    """测试目标：回调参数统一三参；成功标准：回调可拿到 answer/token_usage/execution_trace。"""
+
+    graph = _DummyAsyncGraph(
+        events=[
+            ("messages", (_DummyMessageChunk("好"), {"langgraph_node": "chat_agent"})),
+            (
+                "values",
+                {
+                    "final": "",
+                    "execution_traces": [
+                        {
+                            "node_name": "chat_agent",
+                            "model_name": "qwen-flash",
+                            "input_messages": [{"role": "human", "content": "hello"}],
+                            "output_text": "好",
+                            "tool_calls": [],
+                        }
+                    ],
+                },
+            ),
+        ]
+    )
+
+    callback_args: list[dict[str, Any]] = []
+
+    def _callback(
+            answer_text: str,
+            token_usage: dict[str, Any] | None,
+            execution_trace: list[dict[str, Any]] | None,
+    ) -> None:
+        callback_args.append(
+            {
+                "answer_text": answer_text,
+                "token_usage": token_usage,
+                "execution_trace": execution_trace,
+            }
+        )
+
+    _stream_with_config(_build_config(graph, on_answer_completed=_callback))
+
+    assert len(callback_args) == 1
+    assert callback_args[0]["answer_text"] == "好"
+    assert isinstance(callback_args[0]["execution_trace"], list)
+
+
+def test_execution_trace_summary_reads_full_graph_nodes():
+    """测试目标：execution_trace 汇总覆盖全图节点；成功标准：含非 LLM 节点并保持空输入/空工具。"""
+
+    graph = _DummyAsyncGraph(
+        events=[
+            (
+                "values",
+                {
+                    "final": "",
+                    "execution_traces": [
+                        {
+                            "node_name": "gateway_router",
+                            "model_name": "unknown",
+                            "input_messages": [],
+                            "output_text": "{\"routing\": {}}",
+                            "tool_calls": [],
+                        },
+                        {
+                            "node_name": "planner",
+                            "model_name": "unknown",
+                            "input_messages": [],
+                            "output_text": "{\"routing\": {\"next_nodes\": []}}",
+                            "tool_calls": [],
+                        },
+                    ],
+                },
+            ),
+        ]
+    )
+    callback_payloads: list[list[dict[str, Any]] | None] = []
+
+    def _callback(
+            _answer_text: str,
+            _token_usage: dict[str, Any] | None,
+            execution_trace: list[dict[str, Any]] | None,
+    ) -> None:
+        callback_payloads.append(execution_trace)
+
+    _stream_with_config(_build_config(graph, should_stream_token=lambda *_: False, on_answer_completed=_callback))
+
+    assert callback_payloads
+    trace = callback_payloads[0]
+    assert trace is not None
+    assert trace[0]["node_name"] == "gateway_router"
+    assert trace[0]["input_messages"] == []
+    assert trace[0]["tool_calls"] == []
+    assert trace[1]["node_name"] == "planner"
 
 
 def test_stream_service_maps_exception_to_answer():

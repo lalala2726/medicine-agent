@@ -1,4 +1,5 @@
 import app.agent.admin.node.order_node as order_module
+from app.agent.admin.agent_utils import NodeExecutionResult
 from app.core.assistant_status import reset_status_emitter, set_status_emitter
 
 
@@ -52,10 +53,6 @@ def _build_state(routing: dict, plan: list | None = None) -> dict:
         "user_intent": {},
         "plan": plan or [],
         "routing": routing,
-        "order_context": {},
-        "product_context": {},
-        "aftersale_context": {},
-        "excel_context": {},
         "history_messages": [],
         "step_outputs": {},
         "shared_memory": {},
@@ -72,9 +69,9 @@ def test_order_agent_streams_when_gateway_routes_directly(monkeypatch):
     result = order_module.order_agent(state)
 
     assert model.stream_called is True
-    assert result["order_context"]["result"]["is_end"] is True
-    assert result["order_context"]["result"]["content"] == "hello order"
-    assert result["order_context"]["stream_chunks"] == ["hello ", "order"]
+    assert result["results"]["order"]["is_end"] is True
+    assert result["results"]["order"]["content"] == "hello order"
+    assert result["results"]["order"]["stream_chunks"] == ["hello ", "order"]
     assert "step_outputs" not in result
 
 
@@ -94,7 +91,7 @@ def test_order_agent_streams_when_current_step_marked_final(monkeypatch):
     result = order_module.order_agent(state)
 
     assert model.stream_called is True
-    assert result["order_context"]["result"]["is_end"] is True
+    assert result["results"]["order"]["is_end"] is True
     assert result["step_outputs"]["s1"]["status"] == "completed"
     assert result["step_outputs"]["s1"]["node_name"] == "order_agent"
 
@@ -116,9 +113,9 @@ def test_order_agent_uses_non_stream_when_not_final(monkeypatch):
 
     assert model.stream_called is False
     assert model.invoke_called is True
-    assert result["order_context"]["result"]["is_end"] is False
-    assert result["order_context"]["result"]["content"] == "hello order"
-    assert "stream_chunks" not in result["order_context"]
+    assert result["results"]["order"]["is_end"] is False
+    assert result["results"]["order"]["content"] == "hello order"
+    assert "stream_chunks" not in result["results"]["order"]
     assert result["step_outputs"]["s1"]["status"] == "completed"
 
 
@@ -172,11 +169,14 @@ def test_order_agent_status_visible_when_route_is_coordinator(monkeypatch):
 
 
 def test_order_agent_marks_failed_when_model_returns_error_marker(monkeypatch):
-    monkeypatch.setattr(order_module, "create_chat_model", lambda *args, **kwargs: object())
     monkeypatch.setattr(
         order_module,
-        "invoke_with_policy",
-        lambda *_args, **_kwargs: ("__ERROR__: 订单数据不可信", {"stream_chunks": []}),
+        "execute_tool_node",
+        lambda **_kwargs: NodeExecutionResult(
+            content="订单数据不可信",
+            status="failed",
+            error="订单数据不可信",
+        ),
     )
 
     step = _build_step(final_output=False)
@@ -191,21 +191,17 @@ def test_order_agent_marks_failed_when_model_returns_error_marker(monkeypatch):
     result = order_module.order_agent(state)
     assert result["step_outputs"]["s1"]["status"] == "failed"
     assert result["step_outputs"]["s1"]["error"] == "订单数据不可信"
-    assert result["order_context"]["result"]["content"] == "订单数据不可信"
+    assert result["results"]["order"]["content"] == "订单数据不可信"
 
 
 def test_order_agent_marks_failed_when_tool_threshold_hit(monkeypatch):
-    monkeypatch.setattr(order_module, "create_chat_model", lambda *args, **kwargs: object())
     monkeypatch.setattr(
         order_module,
-        "invoke_with_policy",
-        lambda *_args, **_kwargs: (
-            "工具失败达到阈值",
-            {
-                "stream_chunks": [],
-                "threshold_hit": True,
-                "threshold_reason": "工具失败达到阈值",
-            },
+        "execute_tool_node",
+        lambda **_kwargs: NodeExecutionResult(
+            content="工具失败达到阈值",
+            status="failed",
+            error="工具失败达到阈值",
         ),
     )
 

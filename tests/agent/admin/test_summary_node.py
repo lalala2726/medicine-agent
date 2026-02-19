@@ -1,3 +1,5 @@
+from langchain_core.messages import AIMessage
+
 import app.agent.admin.node.summary_node as summary_module
 
 
@@ -44,11 +46,7 @@ def _build_state(step: dict) -> dict:
             "next_nodes": ["summary_agent"],
             "current_step_map": {"summary_agent": step},
         },
-        "order_context": {},
-        "product_context": {},
-        "aftersale_context": {},
-        "excel_context": {},
-        "history_messages": [{"role": "assistant", "content": "上次回答"}],
+        "history_messages": [AIMessage(content="上次回答")],
         "step_outputs": {
             "s1": {
                 "step_id": "s1",

@@ -126,6 +126,12 @@ async def get_user_info() -> dict:
     """
     获取当前登录用户的基本信息。
     当用户询问“我是谁”、“我的账户信息”或需要用户ID进行后续操作时调用。
+
+    Args:
+        无。
+
+    Returns:
+        dict: 用户信息字典（由后端 `/agent/info` 返回并解析）。
     """
     async with HttpClient() as client:
         response = await client.get(url="/agent/info")
@@ -153,6 +159,19 @@ async def get_product_list(
 ) -> dict:
     """
     搜索商城商品列表。可以根据名称、价格区间、分类等条件进行组合筛选。
+
+    Args:
+        page_num: 页码（从 1 开始）。
+        page_size: 每页数量。
+        id: 商品 ID 精确筛选。
+        name: 商品名称关键词。
+        category_id: 分类 ID。
+        status: 上下架状态（1 上架，0 下架）。
+        min_price: 最低价格。
+        max_price: 最高价格。
+
+    Returns:
+        dict: 商品列表查询结果字典。
     """
     async with HttpClient() as client:
         # 将 Python 的 snake_case 映射为 API 预期的参数名
@@ -182,6 +201,12 @@ async def get_product_detail(product_id: list[str]) -> dict:
     """
     根据商品ID获取详细信息，支持批量查询。
     后端路径格式：`/agent/products/{ids}`，例如 `/agent/products/1001,1002`。
+
+    Args:
+        product_id: 商品 ID 列表（支持批量）。
+
+    Returns:
+        dict: 商品详情结果字典。
     """
     ids_str = format_ids_to_string(product_id)
     async with HttpClient() as client:
@@ -201,6 +226,12 @@ async def get_drug_detail(product_id: list[str]) -> dict:
     """
     根据药品商品ID获取详细药品信息，包括药品说明书、适应症、用法用量等。
     支持批量查询多个药品。
+
+    Args:
+        product_id: 药品商品 ID 列表。
+
+    Returns:
+        dict: 药品详情结果字典。
     """
     ids_str = format_ids_to_string(product_id)
     async with HttpClient() as client:
@@ -229,6 +260,19 @@ async def get_order_list(
 ) -> dict:
     """
     获取订单列表。可以根据订单号、状态、收货人信息进行查询。
+
+    Args:
+        page_num: 页码（从 1 开始）。
+        page_size: 每页数量。
+        order_no: 订单编号。
+        pay_type: 支付方式编码。
+        order_status: 订单状态编码。
+        delivery_type: 配送方式编码。
+        receiver_name: 收货人姓名。
+        receiver_phone: 收货人手机号。
+
+    Returns:
+        dict: 订单列表查询结果字典。
     """
     async with HttpClient() as client:
         params = {
@@ -257,6 +301,12 @@ async def get_orders_detail(order_id: list[str]) -> dict:
     """
     获取订单详情，支持批量查询。
     后端路径格式：`/agent/orders/{ids}`，例如 `/agent/orders/1,2,3`。
+
+    Args:
+        order_id: 订单 ID 列表（支持批量）。
+
+    Returns:
+        dict: 订单详情结果字典。
     """
     ids_str = format_ids_to_string(order_id)
     async with HttpClient() as client:

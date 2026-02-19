@@ -1,6 +1,9 @@
 import json
 
+from langchain_core.messages import AIMessage
+
 import app.agent.admin.node.chart_node as chart_node_module
+from app.agent.admin.agent_utils import NodeExecutionResult
 from app.core.assistant_status import reset_status_emitter, set_status_emitter
 
 
@@ -39,11 +42,7 @@ def _build_state(
             "next_nodes": ["chart_agent"],
             "current_step_map": {"chart_agent": step},
         },
-        "order_context": {"result": {"content": "订单趋势数据"}},
-        "product_context": {},
-        "aftersale_context": {},
-        "excel_context": {},
-        "history_messages": [{"role": "assistant", "content": "上一轮建议"}],
+        "history_messages": [AIMessage(content="上一轮建议")],
         "step_outputs": step_outputs
         or {
             "s0": {
@@ -63,13 +62,17 @@ def _build_state(
 def test_chart_agent_uses_chart_tools_and_writes_result(monkeypatch):
     captured: dict = {}
 
-    def fake_invoke_with_policy(_llm, messages, *, tools=None, **_kwargs):
-        captured["tools"] = tools
-        captured["messages"] = messages
-        return '{"type":"line","data":[{"time":"2024-01","value":10}]}', {}
+    def fake_execute_tool_node(**kwargs):
+        captured["tools"] = kwargs["tools"]
+        captured["messages"] = kwargs["messages"]
+        _ = kwargs["llm"]
+        return NodeExecutionResult(
+            content='{"type":"line","data":[{"time":"2024-01","value":10}]}',
+            status="completed",
+        )
 
     monkeypatch.setattr(chart_node_module, "create_chat_model", lambda **_kwargs: object())
-    monkeypatch.setattr(chart_node_module, "invoke_with_policy", fake_invoke_with_policy)
+    monkeypatch.setattr(chart_node_module, "execute_tool_node", fake_execute_tool_node)
 
     result = chart_node_module.chart_agent(_build_state())
     assert captured["tools"] == chart_node_module.CHART_TOOLS
@@ -87,12 +90,16 @@ def test_chart_agent_uses_chart_tools_and_writes_result(monkeypatch):
 def test_chart_agent_can_include_user_and_history_when_enabled(monkeypatch):
     captured: dict = {}
 
-    def fake_invoke_with_policy(_llm, messages, *, tools=None, **_kwargs):
-        captured["messages"] = messages
-        return '{"type":"line","data":[]}', {}
+    def fake_execute_tool_node(**kwargs):
+        _ = kwargs["llm"]
+        captured["messages"] = kwargs["messages"]
+        return NodeExecutionResult(
+            content='{"type":"line","data":[]}',
+            status="completed",
+        )
 
     monkeypatch.setattr(chart_node_module, "create_chat_model", lambda **_kwargs: object())
-    monkeypatch.setattr(chart_node_module, "invoke_with_policy", fake_invoke_with_policy)
+    monkeypatch.setattr(chart_node_module, "execute_tool_node", fake_execute_tool_node)
 
     step = _build_step(include_user_input=True, include_chat_history=True)
     chart_node_module.chart_agent(_build_state(step=step))
@@ -103,11 +110,15 @@ def test_chart_agent_can_include_user_and_history_when_enabled(monkeypatch):
 
 
 def test_chart_agent_returns_fallback_and_failed_step_output_when_llm_fails(monkeypatch):
-    def fake_invoke_with_policy(*_args, **_kwargs):
-        raise RuntimeError("boom")
+    def fake_execute_tool_node(**_kwargs):
+        return NodeExecutionResult(
+            content="图表服务暂时不可用，请稍后重试。",
+            status="failed",
+            error="chart_agent 执行失败: boom",
+        )
 
     monkeypatch.setattr(chart_node_module, "create_chat_model", lambda **_kwargs: object())
-    monkeypatch.setattr(chart_node_module, "invoke_with_policy", fake_invoke_with_policy)
+    monkeypatch.setattr(chart_node_module, "execute_tool_node", fake_execute_tool_node)
 
     result = chart_node_module.chart_agent(_build_state())
     assert result["results"]["chart"]["content"] == "图表服务暂时不可用，请稍后重试。"
@@ -115,12 +126,17 @@ def test_chart_agent_returns_fallback_and_failed_step_output_when_llm_fails(monk
 
 
 def test_chart_agent_marks_non_final_stage_is_end_false(monkeypatch):
-    def fake_invoke_with_policy(_llm, _messages, *, tools=None, **_kwargs):
-        assert tools == chart_node_module.CHART_TOOLS
-        return '{"type":"column","data":[{"category":"A","value":1}]}', {}
+    def fake_execute_tool_node(**kwargs):
+        _ = kwargs["llm"]
+        _ = kwargs["messages"]
+        assert kwargs["tools"] == chart_node_module.CHART_TOOLS
+        return NodeExecutionResult(
+            content='{"type":"column","data":[{"category":"A","value":1}]}',
+            status="completed",
+        )
 
     monkeypatch.setattr(chart_node_module, "create_chat_model", lambda **_kwargs: object())
-    monkeypatch.setattr(chart_node_module, "invoke_with_policy", fake_invoke_with_policy)
+    monkeypatch.setattr(chart_node_module, "execute_tool_node", fake_execute_tool_node)
 
     step = _build_step(final_output=False)
     result = chart_node_module.chart_agent(_build_state(step=step))
@@ -128,12 +144,17 @@ def test_chart_agent_marks_non_final_stage_is_end_false(monkeypatch):
 
 
 def test_chart_agent_status_hidden_when_route_not_coordinator(monkeypatch):
-    def fake_invoke_with_policy(_llm, _messages, *, tools=None, **_kwargs):
-        assert tools == chart_node_module.CHART_TOOLS
-        return '{"type":"line","data":[]}', {}
+    def fake_execute_tool_node(**kwargs):
+        _ = kwargs["llm"]
+        _ = kwargs["messages"]
+        assert kwargs["tools"] == chart_node_module.CHART_TOOLS
+        return NodeExecutionResult(
+            content='{"type":"line","data":[]}',
+            status="completed",
+        )
 
     monkeypatch.setattr(chart_node_module, "create_chat_model", lambda **_kwargs: object())
-    monkeypatch.setattr(chart_node_module, "invoke_with_policy", fake_invoke_with_policy)
+    monkeypatch.setattr(chart_node_module, "execute_tool_node", fake_execute_tool_node)
 
     events: list[dict] = []
     token = set_status_emitter(events.append)
@@ -147,12 +168,17 @@ def test_chart_agent_status_hidden_when_route_not_coordinator(monkeypatch):
 
 
 def test_chart_agent_status_visible_when_route_is_coordinator(monkeypatch):
-    def fake_invoke_with_policy(_llm, _messages, *, tools=None, **_kwargs):
-        assert tools == chart_node_module.CHART_TOOLS
-        return '{"type":"line","data":[]}', {}
+    def fake_execute_tool_node(**kwargs):
+        _ = kwargs["llm"]
+        _ = kwargs["messages"]
+        assert kwargs["tools"] == chart_node_module.CHART_TOOLS
+        return NodeExecutionResult(
+            content='{"type":"line","data":[]}',
+            status="completed",
+        )
 
     monkeypatch.setattr(chart_node_module, "create_chat_model", lambda **_kwargs: object())
-    monkeypatch.setattr(chart_node_module, "invoke_with_policy", fake_invoke_with_policy)
+    monkeypatch.setattr(chart_node_module, "execute_tool_node", fake_execute_tool_node)
 
     events: list[dict] = []
     token = set_status_emitter(events.append)
@@ -175,11 +201,14 @@ def test_chart_agent_status_visible_when_route_is_coordinator(monkeypatch):
 
 
 def test_chart_agent_marks_failed_when_model_returns_error_marker(monkeypatch):
-    monkeypatch.setattr(chart_node_module, "create_chat_model", lambda **_kwargs: object())
     monkeypatch.setattr(
         chart_node_module,
-        "invoke_with_policy",
-        lambda *_args, **_kwargs: ("__ERROR__: 图表数据不足", {}),
+        "execute_tool_node",
+        lambda **_kwargs: NodeExecutionResult(
+            content="图表数据不足",
+            status="failed",
+            error="图表数据不足",
+        ),
     )
     result = chart_node_module.chart_agent(_build_state())
     assert result["step_outputs"]["s1"]["status"] == "failed"
@@ -187,13 +216,13 @@ def test_chart_agent_marks_failed_when_model_returns_error_marker(monkeypatch):
 
 
 def test_chart_agent_marks_failed_when_tool_threshold_hit(monkeypatch):
-    monkeypatch.setattr(chart_node_module, "create_chat_model", lambda **_kwargs: object())
     monkeypatch.setattr(
         chart_node_module,
-        "invoke_with_policy",
-        lambda *_args, **_kwargs: (
-            "工具失败达到阈值",
-            {"threshold_hit": True, "threshold_reason": "工具失败达到阈值"},
+        "execute_tool_node",
+        lambda **_kwargs: NodeExecutionResult(
+            content="工具失败达到阈值",
+            status="failed",
+            error="工具失败达到阈值",
         ),
     )
     result = chart_node_module.chart_agent(_build_state())

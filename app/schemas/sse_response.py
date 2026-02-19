@@ -21,6 +21,7 @@ class MessageType(str, Enum):
     FUNCTION_CALL = "function_call"
     TOOL_RESPONSE = "tool_response"
     STATUS = "status"
+    NOTICE = "notice"
 
 
 class AssistantResponse(BaseModel):

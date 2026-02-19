@@ -1,18 +1,20 @@
 from langchain_core.prompts import SystemMessagePromptTemplate
 
+from app.agent.admin.agent_utils import (
+    build_standard_node_update,
+    execute_tool_node,
+)
 from app.agent.admin.agent_state import AgentState
 from app.agent.admin.node.runtime_context import (
     build_instruction_with_failure_policy,
-    build_step_output_update,
     build_step_runtime,
-    evaluate_failure_by_policy,
 )
 from app.agent.tools.admin_tools import get_orders_detail, get_order_list
 from app.core.assistant_status import status_node
 from app.core.langsmith import traceable
 from app.core.llm import create_chat_model
 from app.schemas.prompt import base_prompt
-from app.utils.streaming_utils import invoke_with_policy, is_final_node
+from app.utils.streaming_utils import is_final_node
 
 system_prompt = (
         """
@@ -51,6 +53,23 @@ system_prompt = (
 )
 @traceable(name="Order Agent Node", run_type="chain")
 def order_agent(state: AgentState) -> dict:
+    """
+    执行订单领域节点。
+
+    作用：
+    - 读取当前步骤运行时配置（任务描述、依赖输出、上下文开关）；
+    - 构造订单域提示词并调用订单工具；
+    - 按统一结构回写 `results/step_outputs/execution_traces`。
+
+    Args:
+        state: 当前全局状态，包含 routing/plan/step_outputs 等上下文。
+
+    Returns:
+        dict: 节点增量更新，至少包含：
+            - `results["order"]`
+            - `step_outputs`（存在 step_id 时）
+            - `execution_traces`
+    """
     # 统一读取当前步骤运行时信息：
     # - task_description
     # - read_from 对应的上游输出
@@ -72,54 +91,27 @@ def order_agent(state: AgentState) -> dict:
     tools = [get_orders_detail, get_order_list]
     # final_output=true 时允许节点内部 stream（用于最终对用户输出的节点）。
     final_output = is_final_node(state, "order_agent")
-    try:
-        content, diagnostics = invoke_with_policy(
-            llm,
-            messages,
-            tools=tools,
-            enable_stream=final_output,
-            error_marker_prefix=str(
-                failure_policy.get("error_marker_prefix") or "__ERROR__:"
-            ),
-            tool_error_counting=str(
-                failure_policy.get("tool_error_counting") or "consecutive"
-            ),
-            max_tool_errors=int(failure_policy.get("max_tool_errors") or 2),
-        )
-        stream_chunks = list(diagnostics.get("stream_chunks") or [])
-        step_status, failed_error, content = evaluate_failure_by_policy(
-            content,
-            diagnostics,
-            failure_policy,
-        )
-    except Exception as exc:
-        content = "订单服务暂时不可用，请稍后重试。"
-        stream_chunks = []
-        step_status = "failed"
-        failed_error = f"order_agent 执行失败: {exc}"
-
-    # 保留原有 order_context 结构，避免影响现有调用方。
-    order_context = dict(state.get("order_context") or {})
-    order_context["result"] = {
-        "content": content,
-        "is_end": final_output,
-    }
-    if stream_chunks:
-        order_context["stream_chunks"] = stream_chunks
-    else:
-        order_context.pop("stream_chunks", None)
-    order_context["status"] = "COMPLETED" if step_status == "completed" else "FAILED"
-
-    # 额外写入标准化 step_outputs，供 planner 下一轮调度使用。
-    result = {"order_context": order_context}
-    result.update(
-        build_step_output_update(
-            runtime,
-            node_name="order_agent",
-            status=step_status,
-            text=content,
-            output={"result": order_context["result"]},
-            error=failed_error,
-        )
+    execution_result = execute_tool_node(
+        llm=llm,
+        messages=messages,
+        tools=tools,
+        enable_stream=final_output,
+        failure_policy=failure_policy,
+        fallback_content="订单服务暂时不可用，请稍后重试。",
+        fallback_error="order_agent 执行失败",
     )
-    return result
+
+    return build_standard_node_update(
+        state=state,
+        runtime=runtime,
+        node_name="order_agent",
+        result_key="order",
+        execution_result=execution_result,
+        is_end=final_output,
+        step_output_payload={
+            "order": {
+                "content": execution_result.content,
+                "is_end": final_output,
+            }
+        },
+    )

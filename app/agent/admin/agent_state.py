@@ -2,14 +2,10 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Dict, List, Literal, TypedDict
 
+from langchain_core.messages import AIMessage, HumanMessage
 
-class HistoryMessage(TypedDict):
-    """
-    对话历史消息。
-    """
 
-    role: Literal["user", "assistant"]
-    content: str
+ChatHistoryMessage = HumanMessage | AIMessage
 
 
 class StepOutput(TypedDict, total=False):
@@ -23,6 +19,30 @@ class StepOutput(TypedDict, total=False):
     text: str
     output: Dict[str, Any]
     error: str
+
+
+class ToolCallTrace(TypedDict, total=False):
+    """
+    单次工具调用追踪信息。
+    """
+
+    tool_name: str
+    tool_input: Any
+    tool_output: Any
+    is_error: bool
+    error_message: str
+
+
+class NodeExecutionTrace(TypedDict, total=False):
+    """
+    单个节点执行追踪信息。
+    """
+
+    node_name: str
+    model_name: str
+    input_messages: list[Any]
+    output_text: str
+    tool_calls: list[ToolCallTrace]
 
 
 class FallbackFailedStep(TypedDict, total=False):
@@ -64,70 +84,55 @@ def _merge_step_outputs(
 ) -> dict[str, StepOutput]:
     """
     合并并行节点写入的 step_outputs。
+
+    Args:
+        left: 已有步骤输出字典（可能为空）。
+        right: 新增步骤输出字典（可能为空）。
+
+    Returns:
+        dict[str, StepOutput]: 合并后的步骤输出，`right` 中同名步骤会覆盖 `left`。
     """
     merged = dict(left or {})
     merged.update(right or {})
     return merged
 
 
-class OrderContext(TypedDict, total=False):
+def _merge_results(
+        left: dict[str, Any] | None,
+        right: dict[str, Any] | None,
+) -> dict[str, Any]:
     """
-    订单 Agent 使用的上下文
+    合并并行节点写入的 results。
+
+    Args:
+        left: 已有结果字典（可能为空）。
+        right: 新增结果字典（可能为空）。
+
+    Returns:
+        dict[str, Any]: 合并后的结果字典，`right` 中同名 key 会覆盖 `left`。
     """
-
-    # 结果
-    result: Dict[str, Any]
-
-    # 订单 Agent 当前状态
-    status: str
+    merged = dict(left or {})
+    merged.update(right or {})
+    return merged
 
 
-class AfterSaleContext(TypedDict, total=False):
+def _merge_execution_traces(
+        left: list[NodeExecutionTrace] | None,
+        right: list[NodeExecutionTrace] | None,
+) -> list[NodeExecutionTrace]:
     """
-    售后 Agent 使用的上下文
+    合并并行节点写入的 execution_traces。
+
+    Args:
+        left: 已有节点追踪列表（可能为空）。
+        right: 新增节点追踪列表（可能为空）。
+
+    Returns:
+        list[NodeExecutionTrace]: 按写入顺序拼接后的追踪列表。
     """
-    # 售后或退款单 ID 列表
-    refund_ids: list[str]
-
-    # 售后类型
-    aftersale_type: str
-
-    # 售后处理结果数据
-    aftersale_data: list[Dict[str, Any]]
-
-    # 售后 Agent 当前状态
-    status: str
-
-
-class ExcelContext(TypedDict, total=False):
-    """
-    Excel Agent 使用的上下文
-    """
-    # 导出类型
-    export_type: str
-
-    # 数据来源 Agent
-    source_agent: str
-
-    # 导出的列名
-    columns: list[str]
-
-    # URL 地址
-    url: str
-
-    # Excel Agent 当前状态
-    status: str
-
-
-class ProductContext(TypedDict, total=False):
-    """
-    商品 Agent 使用的上下文
-    """
-    # 结果
-    result: Dict[str, Any]
-
-    # 商品 Agent 当前状态
-    status: str
+    merged = list(left or [])
+    merged.extend(list(right or []))
+    return merged
 
 
 class StepFailurePolicy(TypedDict, total=False):
@@ -197,7 +202,7 @@ class RoutingState(TypedDict, total=False):
     路由状态（供 workflow/router 与各 agent 共享）
     """
 
-    # 当前执行到第几个阶段（兼容旧字段）
+    # 当前执行到第几个阶段
     stage_index: int
 
     # router 计算出的下一批可执行节点（单节点或并行多节点）
@@ -248,29 +253,20 @@ class AgentState(TypedDict):
     # 当前执行状态
     routing: RoutingState
 
-    # 订单 Agent 上下文
-    order_context: OrderContext
-
-    # 售后 Agent 上下文
-    aftersale_context: AfterSaleContext
-
-    # Excel Agent 上下文
-    excel_context: ExcelContext
-
-    # 商品 Agent 上下文
-    product_context: ProductContext
-
-    # 历史消息（用户与助手）
-    history_messages: List[HistoryMessage]
+    # 历史消息（仅支持 LangChain 消息对象）
+    history_messages: List[ChatHistoryMessage]
 
     # DAG 步骤产出（并发安全聚合）
     step_outputs: Annotated[dict[str, StepOutput], _merge_step_outputs]
 
+    # 全图节点执行追踪（并发安全聚合），仅用于消息持久化审计。
+    execution_traces: Annotated[list[NodeExecutionTrace], _merge_execution_traces]
+
     # 共享信息
     shared_memory: Dict[str, Any]
 
-    # 最终结果
-    results: Dict[str, Any]
+    # 最终结果（并发安全聚合）
+    results: Annotated[Dict[str, Any], _merge_results]
 
     # 错误信息
     errors: List[str]

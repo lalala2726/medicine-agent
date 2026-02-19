@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from app.agent.admin.agent_state import (
     AgentState,
     FallbackContext,
+    FallbackFailedStep,
+    FallbackPartialResult,
     PlanStep,
     StepFailurePolicy,
 )
@@ -30,12 +32,20 @@ _MAX_PLAN_STEPS_BY_DIFFICULTY = {
     "complex": 6,
 }
 
+FailureMode = Literal["hybrid", "marker_only", "tool_only"]
+ToolErrorCounting = Literal["consecutive", "total"]
+
+_DEFAULT_FAILURE_MODE: FailureMode = "hybrid"
+_DEFAULT_ERROR_MARKER_PREFIX = "__ERROR__:"
+_DEFAULT_TOOL_ERROR_COUNTING: ToolErrorCounting = "consecutive"
+_DEFAULT_MAX_TOOL_ERRORS = 2
+_DEFAULT_STRICT_DATA_QUALITY = True
 _STEP_FAILURE_POLICY_DEFAULT: StepFailurePolicy = {
-    "mode": "hybrid",
-    "error_marker_prefix": "__ERROR__:",
-    "tool_error_counting": "consecutive",
-    "max_tool_errors": 2,
-    "strict_data_quality": True,
+    "mode": _DEFAULT_FAILURE_MODE,
+    "error_marker_prefix": _DEFAULT_ERROR_MARKER_PREFIX,
+    "tool_error_counting": _DEFAULT_TOOL_ERROR_COUNTING,
+    "max_tool_errors": _DEFAULT_MAX_TOOL_ERRORS,
+    "strict_data_quality": _DEFAULT_STRICT_DATA_QUALITY,
 }
 
 # planner 调度时允许下发执行的节点。
@@ -46,6 +56,38 @@ EXECUTION_NODES = (
     "summary_agent",
     "product_agent",
 )
+
+
+def _empty_failure_policy() -> StepFailurePolicy:
+    """
+    返回空失败策略对象（用于校验失败分支）。
+
+    Args:
+        无。
+
+    Returns:
+        StepFailurePolicy: 空字典形式的失败策略。
+    """
+    return {}
+
+
+def _default_failure_policy() -> StepFailurePolicy:
+    """
+    返回系统默认失败策略。
+
+    Args:
+        无。
+
+    Returns:
+        StepFailurePolicy: 包含默认 mode、阈值与哨兵配置的策略对象。
+    """
+    return {
+        "mode": _DEFAULT_FAILURE_MODE,
+        "error_marker_prefix": _DEFAULT_ERROR_MARKER_PREFIX,
+        "tool_error_counting": _DEFAULT_TOOL_ERROR_COUNTING,
+        "max_tool_errors": _DEFAULT_MAX_TOOL_ERRORS,
+        "strict_data_quality": _DEFAULT_STRICT_DATA_QUALITY,
+    }
 
 
 def _normalize_failure_policy(raw: Any) -> tuple[StepFailurePolicy, str]:
@@ -61,62 +103,68 @@ def _normalize_failure_policy(raw: Any) -> tuple[StepFailurePolicy, str]:
         - reason: 校验结果，`ok` 表示通过，否则为错误原因。
     """
     if raw is None:
-        return dict(_STEP_FAILURE_POLICY_DEFAULT), "ok"
+        return _default_failure_policy(), "ok"
     if not isinstance(raw, dict):
-        return {}, "failure_policy 必须是对象。"
+        return _empty_failure_policy(), "failure_policy 必须是对象。"
 
-    mode = str(raw.get("mode", _STEP_FAILURE_POLICY_DEFAULT["mode"])).strip().lower()
-    if mode not in {"hybrid", "marker_only", "tool_only"}:
-        return {}, f"failure_policy.mode 非法: {mode}。"
+    raw_mode = str(raw.get("mode", _DEFAULT_FAILURE_MODE)).strip().lower()
+    if raw_mode == "hybrid":
+        mode: FailureMode = "hybrid"
+    elif raw_mode == "marker_only":
+        mode = "marker_only"
+    elif raw_mode == "tool_only":
+        mode = "tool_only"
+    else:
+        return _empty_failure_policy(), f"failure_policy.mode 非法: {raw_mode}。"
 
     error_marker_prefix = str(
         raw.get(
             "error_marker_prefix",
-            _STEP_FAILURE_POLICY_DEFAULT["error_marker_prefix"],
+            _DEFAULT_ERROR_MARKER_PREFIX,
         )
     ).strip()
     if not error_marker_prefix:
-        return {}, "failure_policy.error_marker_prefix 不能为空。"
+        return _empty_failure_policy(), "failure_policy.error_marker_prefix 不能为空。"
 
-    tool_error_counting = str(
+    raw_tool_error_counting = str(
         raw.get(
             "tool_error_counting",
-            _STEP_FAILURE_POLICY_DEFAULT["tool_error_counting"],
+            _DEFAULT_TOOL_ERROR_COUNTING,
         )
     ).strip().lower()
-    if tool_error_counting not in {"consecutive", "total"}:
-        return {}, (
-            f"failure_policy.tool_error_counting 非法: {tool_error_counting}。"
+    if raw_tool_error_counting == "consecutive":
+        tool_error_counting: ToolErrorCounting = "consecutive"
+    elif raw_tool_error_counting == "total":
+        tool_error_counting = "total"
+    else:
+        return _empty_failure_policy(), (
+            f"failure_policy.tool_error_counting 非法: {raw_tool_error_counting}。"
         )
 
-    raw_max_tool_errors = raw.get(
-        "max_tool_errors", _STEP_FAILURE_POLICY_DEFAULT["max_tool_errors"]
-    )
+    raw_max_tool_errors = raw.get("max_tool_errors", _DEFAULT_MAX_TOOL_ERRORS)
     try:
         max_tool_errors = int(raw_max_tool_errors)
     except (TypeError, ValueError):
-        return {}, "failure_policy.max_tool_errors 必须是整数。"
+        return _empty_failure_policy(), "failure_policy.max_tool_errors 必须是整数。"
     if max_tool_errors < 1 or max_tool_errors > 5:
-        return {}, "failure_policy.max_tool_errors 必须在 1..5 范围内。"
+        return _empty_failure_policy(), "failure_policy.max_tool_errors 必须在 1..5 范围内。"
 
     strict_data_quality = _normalize_bool(
         raw.get(
             "strict_data_quality",
-            _STEP_FAILURE_POLICY_DEFAULT["strict_data_quality"],
+            _DEFAULT_STRICT_DATA_QUALITY,
         ),
-        default=bool(_STEP_FAILURE_POLICY_DEFAULT["strict_data_quality"]),
+        default=_DEFAULT_STRICT_DATA_QUALITY,
     )
 
-    return (
-        {
-            "mode": mode,  # type: ignore[typeddict-item]
-            "error_marker_prefix": error_marker_prefix,
-            "tool_error_counting": tool_error_counting,  # type: ignore[typeddict-item]
-            "max_tool_errors": max_tool_errors,
-            "strict_data_quality": strict_data_quality,
-        },
-        "ok",
-    )
+    policy: StepFailurePolicy = {
+        "mode": mode,
+        "error_marker_prefix": error_marker_prefix,
+        "tool_error_counting": tool_error_counting,
+        "max_tool_errors": max_tool_errors,
+        "strict_data_quality": strict_data_quality,
+    }
+    return policy, "ok"
 
 
 def select_model_by_difficulty(difficulty: str) -> str:
@@ -486,7 +534,7 @@ def build_retry_feedback(reason: str) -> str:
     )
 
 
-def _normalize_plan_steps(plan: list[PlanStep] | None) -> list[PlanStep]:
+def _normalize_plan_steps(plan: Any) -> list[PlanStep]:
     """
     对运行态计划做轻量清洗，过滤无效步骤。
 
@@ -505,7 +553,26 @@ def _normalize_plan_steps(plan: list[PlanStep] | None) -> list[PlanStep]:
         step_id = str(item.get("step_id") or "").strip()
         if not step_id:
             continue
-        normalized.append(item)
+        step: PlanStep = {"step_id": step_id}
+        if "node_name" in item:
+            step["node_name"] = item.get("node_name")
+        if "required_depends_on" in item:
+            step["required_depends_on"] = item.get("required_depends_on")
+        if "optional_depends_on" in item:
+            step["optional_depends_on"] = item.get("optional_depends_on")
+        if "read_from" in item:
+            step["read_from"] = item.get("read_from")
+        if "task_description" in item:
+            step["task_description"] = item.get("task_description")
+        if "include_user_input" in item:
+            step["include_user_input"] = item.get("include_user_input")
+        if "include_chat_history" in item:
+            step["include_chat_history"] = item.get("include_chat_history")
+        if "final_output" in item:
+            step["final_output"] = item.get("final_output")
+        if "failure_policy" in item:
+            step["failure_policy"] = item.get("failure_policy")
+        normalized.append(step)
     return normalized
 
 
@@ -562,6 +629,13 @@ def _build_skipped_step_output(
 def _build_terminated_step_output(step: PlanStep, *, reason: str) -> dict[str, Any]:
     """
     构造 fallback 终止时的 skipped 输出。
+
+    Args:
+        step: 步骤定义。
+        reason: 终止原因说明。
+
+    Returns:
+        dict[str, Any]: 标准化 skipped 步骤输出对象。
     """
     step_id = str(step.get("step_id") or "")
     node_name = str(step.get("node_name") or "")
@@ -586,9 +660,19 @@ def _build_fallback_context(
 ) -> FallbackContext:
     """
     构造 planner -> chat 兜底输出所需上下文。
+
+    Args:
+        ordered_step_ids: 按执行拓扑排序的步骤 ID 列表。
+        step_by_id: step_id 到步骤定义的映射。
+        status_by_id: step_id 到执行状态的映射。
+        step_outputs: 各步骤输出载荷。
+        final_step_id: 标记为 final_output 的步骤 ID。
+
+    Returns:
+        FallbackContext: fallback 聊天节点可消费的上下文对象。
     """
-    failed_steps: list[dict[str, Any]] = []
-    partial_results: list[dict[str, Any]] = []
+    failed_steps: list[FallbackFailedStep] = []
+    partial_results: list[FallbackPartialResult] = []
     for step_id in ordered_step_ids:
         status = status_by_id.get(step_id)
         if not status:
@@ -596,26 +680,33 @@ def _build_fallback_context(
         payload = step_outputs.get(step_id) or {}
         step = step_by_id.get(step_id) or {}
         node_name = str(payload.get("node_name") or step.get("node_name") or "")
-        if status in {"failed", "skipped"}:
+        if status == "failed":
             error = str(payload.get("error") or payload.get("text") or "").strip()
-            failed_steps.append(
-                {
-                    "step_id": step_id,
-                    "node_name": node_name,
-                    "status": status,
-                    "error": error,
-                }
-            )
+            failed_step: FallbackFailedStep = {
+                "step_id": step_id,
+                "node_name": node_name,
+                "status": "failed",
+                "error": error,
+            }
+            failed_steps.append(failed_step)
+        elif status == "skipped":
+            error = str(payload.get("error") or payload.get("text") or "").strip()
+            failed_step: FallbackFailedStep = {
+                "step_id": step_id,
+                "node_name": node_name,
+                "status": "skipped",
+                "error": error,
+            }
+            failed_steps.append(failed_step)
         elif status == "completed":
             text = str(payload.get("text") or "").strip()
             if text:
-                partial_results.append(
-                    {
-                        "step_id": step_id,
-                        "node_name": node_name,
-                        "text": text,
-                    }
-                )
+                partial_result: FallbackPartialResult = {
+                    "step_id": step_id,
+                    "node_name": node_name,
+                    "text": text,
+                }
+                partial_results.append(partial_result)
 
     final_status = status_by_id.get(final_step_id)
     if final_status == "failed":
@@ -625,13 +716,14 @@ def _build_fallback_context(
     else:
         reason_text = f"最终步骤 {final_step_id} 不可达。"
 
-    return {
+    context: FallbackContext = {
         "trigger": "final_output_unreachable",
         "final_step_id": final_step_id,
         "failed_steps": failed_steps,
         "partial_results": partial_results,
         "reason_text": reason_text,
     }
+    return context
 
 
 def compute_planner_update(state: AgentState) -> dict[str, Any]:
@@ -684,7 +776,6 @@ def compute_planner_update(state: AgentState) -> dict[str, Any]:
     step_outputs = raw_step_outputs if isinstance(raw_step_outputs, dict) else {}
     status_by_id = _extract_status(step_outputs)
 
-    completed_ids = {sid for sid, status in status_by_id.items() if status == "completed"}
     failed_or_skipped_ids = {
         sid for sid, status in status_by_id.items() if status in {"failed", "skipped"}
     }

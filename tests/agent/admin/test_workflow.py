@@ -24,12 +24,9 @@ def _build_initial_state(
         "user_intent": {"type": "fake"},
         "plan": plan,
         "routing": routing or {},
-        "order_context": {},
-        "product_context": {},
-        "aftersale_context": {},
-        "excel_context": {},
         "history_messages": [],
         "step_outputs": step_outputs or {},
+        "execution_traces": [],
         "shared_memory": {},
         "results": {},
         "errors": [],
@@ -62,6 +59,7 @@ def test_chat_node_handles_non_business_chat(monkeypatch: pytest.MonkeyPatch):
     result = chat_module.chat_agent(state)
     assert result["results"]["chat"]["mode"] == "chat"
     assert result["results"]["chat"]["content"] == "你好，我可以陪你聊聊日常问题。"
+    assert result["execution_traces"][0]["node_name"] == "chat_agent"
 
 
 def test_chat_node_streams_when_model_supports_stream(monkeypatch: pytest.MonkeyPatch):
@@ -89,6 +87,32 @@ def test_chat_node_streams_when_model_supports_stream(monkeypatch: pytest.Monkey
     result = chat_module.chat_agent(state)
     assert dummy_model.invoke_called is False
     assert result["results"]["chat"]["content"] == "你好"
+    assert result["execution_traces"][0]["model_name"] == "qwen-flash"
+
+
+def test_gateway_and_planner_emit_execution_trace(monkeypatch: pytest.MonkeyPatch):
+    """测试目标：网关与规划节点写入 trace；成功标准：节点名与空输入/空工具字段符合约定。"""
+
+    class _DummyResponse:
+        def __init__(self, content: str):
+            self.content = content
+
+    class _DummyModel:
+        def invoke(self, _messages):
+            return _DummyResponse('{"route_target":"chat_agent","difficulty":"simple"}')
+
+    monkeypatch.setattr(workflow_module, "create_chat_model", lambda **_kwargs: _DummyModel())
+    monkeypatch.setattr(workflow_module, "compute_planner_update", lambda _state: {"routing": {"next_nodes": []}})
+
+    gateway_update = workflow_module.gateway_router(_build_initial_state(plan=[]))
+    planner_update = workflow_module.planner(_build_initial_state(plan=[]))
+
+    assert gateway_update["execution_traces"][0]["node_name"] == "gateway_router"
+    assert gateway_update["execution_traces"][0]["input_messages"] == []
+    assert gateway_update["execution_traces"][0]["tool_calls"] == []
+    assert planner_update["execution_traces"][0]["node_name"] == "planner"
+    assert planner_update["execution_traces"][0]["input_messages"] == []
+    assert planner_update["execution_traces"][0]["tool_calls"] == []
 
 
 def _make_step(
@@ -263,6 +287,74 @@ def test_workflow_blocks_downstream_on_failure(monkeypatch: pytest.MonkeyPatch):
     assert result["step_outputs"]["s2"]["status"] == "skipped"
     assert "阻断" in result["step_outputs"]["s2"]["error"]
     assert result["routing"]["next_nodes"] == ["chat_agent"] or "fallback_context" in result["routing"]
+
+
+def test_workflow_merges_results_on_parallel_nodes(monkeypatch: pytest.MonkeyPatch):
+    plan = [
+        _make_step("s1", "order_agent"),
+        _make_step("s2", "product_agent"),
+        _make_step(
+            "s3",
+            "summary_agent",
+            depends_on=["s1", "s2"],
+            read_from=["s1", "s2"],
+            final_output=True,
+        ),
+    ]
+
+    def fake_gateway_router(_state: dict) -> dict:
+        return {"routing": {"route_target": "coordinator_agent", "difficulty": "medium"}}
+
+    def fake_coordinator(_state: dict) -> dict:
+        return {}
+
+    def _parallel_node(node_name: str, result_key: str):
+        def _runner(state: dict) -> dict:
+            step = ((state.get("routing") or {}).get("current_step_map") or {}).get(node_name) or {}
+            step_id = step.get("step_id")
+            return {
+                "results": {result_key: {"content": f"{node_name} done"}},
+                "step_outputs": {
+                    step_id: {
+                        "step_id": step_id,
+                        "node_name": node_name,
+                        "status": "completed",
+                        "text": f"{node_name} done",
+                        "output": {"ok": True},
+                    }
+                },
+            }
+
+        return _runner
+
+    def summary_runner(state: dict) -> dict:
+        step = ((state.get("routing") or {}).get("current_step_map") or {}).get("summary_agent") or {}
+        step_id = step.get("step_id")
+        return {
+            "results": {"summary": {"content": "summary done"}},
+            "step_outputs": {
+                step_id: {
+                    "step_id": step_id,
+                    "node_name": "summary_agent",
+                    "status": "completed",
+                    "text": "summary done",
+                    "output": {"ok": True},
+                }
+            },
+        }
+
+    monkeypatch.setattr(workflow_module, "gateway_router", fake_gateway_router)
+    monkeypatch.setattr(workflow_module, "coordinator", fake_coordinator)
+    monkeypatch.setattr(workflow_module, "order_agent", _parallel_node("order_agent", "order"))
+    monkeypatch.setattr(workflow_module, "product_agent", _parallel_node("product_agent", "product"))
+    monkeypatch.setattr(workflow_module, "summary_agent", summary_runner)
+    monkeypatch.setattr(workflow_module, "chart_agent", lambda _state: {})
+    monkeypatch.setattr(workflow_module, "excel_agent", lambda _state: {})
+
+    result = workflow_module.build_graph().invoke(_build_initial_state(plan=plan))
+    assert result["results"]["order"]["content"] == "order_agent done"
+    assert result["results"]["product"]["content"] == "product_agent done"
+    assert result["results"]["summary"]["content"] == "summary done"
 
 
 def test_planner_waits_optional_dependencies_until_terminal():

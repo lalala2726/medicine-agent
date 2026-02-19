@@ -1,19 +1,21 @@
 import json
 from typing import Any
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage
 
+from app.agent.admin.agent_utils import build_execution_trace_update
 from app.agent.admin.agent_state import AgentState, PlanStep
 from app.agent.admin.dag_rules import (
     build_retry_feedback,
     review_plan,
     select_model_by_difficulty,
 )
+from app.agent.admin.history_utils import build_messages_with_history
 from app.agent.tools.coordinator_tools import get_agent_detail
 from app.core.assistant_status import status_node
 from app.core.langsmith import traceable
 from app.core.llm import create_chat_model
-from app.utils.streaming_utils import invoke
+from app.utils.streaming_utils import invoke_with_policy
 
 _system_prompt = """
     你是后台工作流中的 coordinator_agent，负责把用户请求拆解成 DAG 计划（仅规划，不执行）。你的目标是创建高效、无冗余的 DAG，确保节点之间协调良好，上游节点仅输出下游节点所需的最小必要信息，避免不必要的细节输出。
@@ -35,6 +37,7 @@ _system_prompt = """
     节点协调原则（必须严格遵守，以避免冗余和低效）：
     - 分析用户意图，拆解任务时，确保上游节点仅输出下游节点所需的精确数据，除了最终输出需要满足用户的需求，其他上层节点输出内容尽量少，只要满足下层节点对数据的基本要求即可
         - 这样的目的是为了避免冗余和低效，确保每个节点只输出必要的信息，避免重复处理和无用计算，但是最终的节点输出必须满足用户需求
+        - 综上所述你在task_description涉及多个节点的时候任务一定要相互对应，并且确保每个节点的输出都对后续节点有实际意义，避免无用计算
     
     注意：
     - chat_agent 由 gateway_router 处理，禁止出现在 plan 中。
@@ -102,6 +105,27 @@ _system_prompt = """
 _PLAN_REVIEW_RETRY_LIMIT = 2
 
 
+def _serialize_messages(messages: list[Any]) -> list[dict[str, Any]]:
+    """
+    序列化节点输入消息，供 execution_trace 落库。
+
+    Args:
+        messages: 原始消息列表。
+
+    Returns:
+        list[dict[str, Any]]: 序列化后的消息字典列表。
+    """
+    serialized: list[dict[str, Any]] = []
+    for message in messages:
+        serialized.append(
+            {
+                "role": str(getattr(message, "type", "") or message.__class__.__name__).strip().lower() or "unknown",
+                "content": getattr(message, "content", ""),
+            }
+        )
+    return serialized
+
+
 @status_node(node="coordinator", start_message="正在规划任务中")
 @traceable(name="Coordinator Agent Node", run_type="chain")
 def coordinator(state: AgentState) -> dict[str, Any]:
@@ -131,29 +155,45 @@ def coordinator(state: AgentState) -> dict[str, Any]:
     user_input = str(state.get("user_input") or "").strip()
     if not user_input:
         routing["difficulty"] = difficulty
-        return {"routing": routing, "plan": []}
+        result = {"routing": routing, "plan": []}
+        result.update(
+            build_execution_trace_update(
+                node_name="coordinator_agent",
+                model_name="unknown",
+                input_messages=[],
+                output_text=json.dumps(result, ensure_ascii=False, default=str),
+                tool_calls=[],
+            )
+        )
+        return result
+    history_messages = list(state.get("history_messages") or [])
 
     llm = create_chat_model(
         model=model_name,
         temperature=0,
         response_format={"type": "json_object"},
     )
-    base_messages = [
-        SystemMessage(content=_system_prompt),
-        HumanMessage(content=f"用户请求：{user_input}"),
-    ]
+    base_messages = build_messages_with_history(
+        system_prompt=_system_prompt,
+        history_messages=history_messages,
+        fallback_user_input=user_input,
+    )
 
     routing["difficulty"] = difficulty
     reviewed_plan: list[PlanStep] = []
     last_reason = "模型返回内容不是有效 JSON。"
+    last_messages_for_trace = list(base_messages)
+    last_tool_calls: list[dict[str, Any]] = []
 
     for attempt in range(_PLAN_REVIEW_RETRY_LIMIT + 1):
         messages = list(base_messages)
         if attempt > 0:
             messages.append(HumanMessage(content=build_retry_feedback(last_reason)))
+        last_messages_for_trace = list(messages)
 
         try:
-            payload = _invoke_coordinator_payload(llm, messages)
+            payload, tool_calls = _invoke_coordinator_payload(llm, messages)
+            last_tool_calls = list(tool_calls)
         except Exception:
             last_reason = "模型返回内容不是有效 JSON。"
             continue
@@ -164,23 +204,47 @@ def coordinator(state: AgentState) -> dict[str, Any]:
             break
         last_reason = reason
 
-    return {
+    result = {
         "routing": routing,
         "plan": reviewed_plan,
     }
+    result.update(
+        build_execution_trace_update(
+            node_name="coordinator_agent",
+            model_name=model_name,
+            input_messages=_serialize_messages(last_messages_for_trace),
+            output_text=json.dumps(result, ensure_ascii=False, default=str),
+            tool_calls=last_tool_calls,
+        )
+    )
+    return result
 
 
-def _invoke_coordinator_payload(llm: Any, messages: list[Any]) -> dict[str, Any]:
+def _invoke_coordinator_payload(llm: Any, messages: list[Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """
     调用 coordinator 模型并解析 JSON 结果。
 
     优先使用工具模式（支持 bind_tools 的模型），让模型可按需调用 get_agent_detail；
     若模型不支持工具绑定，则回退为普通 invoke 调用。
+
+    Args:
+        llm: coordinator 模型实例。
+        messages: 输入消息列表。
+
+    Returns:
+        tuple[dict[str, Any], list[dict[str, Any]]]:
+            - payload: 解析后的 JSON 计划结果
+            - tool_calls: 工具调用明细（用于 execution_trace）
     """
     bind_tools = getattr(llm, "bind_tools", None)
     if callable(bind_tools):
-        content = invoke(llm, messages, tools=[get_agent_detail])
-        return json.loads(str(content))
+        content, diagnostics = invoke_with_policy(
+            llm,
+            messages,
+            tools=[get_agent_detail],
+            enable_stream=False,
+        )
+        return json.loads(str(content)), list(diagnostics.get("tool_call_details") or [])
 
     response = llm.invoke(messages)
-    return json.loads(str(response.content))
+    return json.loads(str(response.content)), []

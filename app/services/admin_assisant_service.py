@@ -3,13 +3,14 @@ from __future__ import annotations
 import asyncio
 import threading
 import uuid
+from dataclasses import dataclass
 from typing import Any
 
 from fastapi.responses import StreamingResponse
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-from langchain_core.prompts import SystemMessagePromptTemplate
+from langchain_core.messages import HumanMessage, SystemMessage
 from loguru import logger
 
+from app.agent.admin.agent_state import ChatHistoryMessage
 from app.agent.admin.workflow import build_graph
 from app.core.codes import ResponseCode
 from app.core.exceptions import ServiceException
@@ -21,7 +22,13 @@ from app.services.assistant_stream_service import (
     AssistantStreamConfig,
     create_streaming_response,
 )
-from app.services.conversation_service import add_admin_conversation, save_conversation_title
+from app.services.conversation_service import (
+    add_admin_conversation,
+    get_admin_conversation,
+    save_conversation_title,
+)
+from app.services.message_service import add_message, get_history
+from app.services.token_usage_service import merge_assistant_token_usage
 from app.utils.streaming_utils import is_final_node
 
 ADMIN_WORKFLOW = build_graph()
@@ -32,6 +39,26 @@ STREAM_OUTPUT_NODES = {
     "summary_agent",
     "chart_agent",
 }
+
+
+@dataclass(frozen=True)
+class ConversationContext:
+    """
+    会话准备阶段的统一上下文。
+
+    Attributes:
+        conversation_uuid: 会话 UUID。
+        conversation_id: Mongo 会话 ID（ObjectId 字符串）。
+        history_messages: 会话历史消息（按时间正序）。
+        initial_emitted_events: 流开始前要注入的 SSE 事件。
+        is_new_conversation: 是否为本次请求创建的新会话。
+    """
+
+    conversation_uuid: str
+    conversation_id: str
+    history_messages: list[ChatHistoryMessage]
+    initial_emitted_events: tuple[AssistantResponse, ...]
+    is_new_conversation: bool
 
 
 def _invoke_admin_workflow(state: dict[str, Any]) -> dict[str, Any]:
@@ -65,26 +92,27 @@ def _build_stream_config() -> dict | None:
     )
 
 
-def _build_initial_state(question: str) -> dict[str, Any]:
+def _build_initial_state(
+        question: str,
+        *,
+        history_messages: list[ChatHistoryMessage] | None = None,
+) -> dict[str, Any]:
     """
     构造管理助手的初始状态。
 
     所有节点共享该状态结构，避免执行过程中出现缺失键导致的分支判断复杂化。
     """
 
-    # 初始状态里预置 step_outputs/history_messages，让 DAG 节点与 planner
+    # 初始状态里预置 step_outputs/history_messages/execution_traces，让 DAG 节点与 planner
     # 不需要做大量判空分支。
     return {
         "user_input": question,
         "user_intent": {},
         "plan": [],
         "routing": {},
-        "order_context": {},
-        "product_context": {},
-        "aftersale_context": {},
-        "excel_context": {},
-        "history_messages": [],
+        "history_messages": list(history_messages or []),
         "step_outputs": {},
+        "execution_traces": [],
         "shared_memory": {},
         "results": {},
         "errors": [],
@@ -130,11 +158,10 @@ def _build_conversation_created_event(
 
     return AssistantResponse(
         content=Content(
-            node="conversation",
             state="created",
             message="会话创建成功",
         ),
-        type=MessageType.STATUS,
+        type=MessageType.NOTICE,
         meta={
             "conversation_uuid": conversation_uuid,
         },
@@ -192,80 +219,325 @@ def _schedule_title_generation(*, conversation_uuid: str, question: str) -> None
     )
 
 
+def _load_admin_conversation(
+        *,
+        conversation_uuid: str,
+        user_id: int,
+) -> str:
+    """
+    加载会话并返回 Mongo 会话ID（ObjectId 字符串）。
+
+    Raises:
+        ServiceException: 会话不存在、无权限或会话数据异常时抛出。
+    """
+
+    conversation = get_admin_conversation(
+        conversation_uuid=conversation_uuid,
+        user_id=user_id,
+    )
+    if conversation is None:
+        raise ServiceException(code=ResponseCode.NOT_FOUND, message="会话不存在")
+
+    conversation_id = conversation.get("_id")
+    if conversation_id is None:
+        raise ServiceException(code=ResponseCode.DATABASE_ERROR, message="会话数据异常")
+    return str(conversation_id)
+
+
+def _schedule_background_task(
+        *,
+        task_name: str,
+        func: Any,
+        kwargs: dict[str, Any],
+) -> None:
+    """
+    使用守护线程调度后台任务。
+
+    Args:
+        task_name: 任务名称（用于日志追踪）。
+        func: 要执行的函数。
+        kwargs: 关键字参数。
+
+    Returns:
+        None
+    """
+
+    def _runner() -> None:
+        try:
+            func(**kwargs)
+        except Exception as exc:  # pragma: no cover - 防御性兜底
+            logger.opt(exception=exc).warning("Background task failed task_name={task_name}", task_name=task_name)
+
+    thread = threading.Thread(target=_runner, daemon=True)
+    thread.start()
+
+
+def _persist_user_message(
+        *,
+        conversation_id: str,
+        question: str,
+) -> None:
+    """
+    后台持久化 user 消息。
+
+    Args:
+        conversation_id: 会话 ID。
+        question: 用户问题文本。
+
+    Returns:
+        None
+    """
+
+    add_message(conversation_id=conversation_id, role="user", content=question)
+
+
+def _persist_assistant_message(
+        *,
+        conversation_id: str,
+        question: str,
+        answer_text: str,
+        stream_token_usage: dict[str, Any] | None,
+        execution_trace: list[dict[str, Any]] | None,
+) -> None:
+    """
+    持久化 assistant 消息。
+
+    优先使用流式汇总中的真实 usage；缺失字段再回退 tiktoken 估算。
+    """
+
+    resolved_usage = merge_assistant_token_usage(
+        stream_token_usage=stream_token_usage,
+        prompt_text=question,
+        completion_text=answer_text,
+    )
+    add_message(
+        conversation_id=conversation_id,
+        role="assistant",
+        content=answer_text,
+        token_usage=resolved_usage,
+        execution_trace=execution_trace,
+    )
+
+
+def _build_assistant_message_callback(*, conversation_id: str, question: str):
+    """
+    构建“流结束后写入 AI 消息”的异步回调。
+
+    该回调由流式引擎在输出结束时触发，满足“AI 完整响应后再落库”的时序要求。
+    """
+
+    async def _callback(
+            answer_text: str,
+            stream_token_usage: dict[str, Any] | None,
+            execution_trace: list[dict[str, Any]] | None,
+    ) -> None:
+        normalized_answer = str(answer_text or "").strip()
+        if not normalized_answer:
+            return
+
+        _schedule_background_task(
+            task_name="persist_assistant_message",
+            func=_persist_assistant_message,
+            kwargs={
+                "conversation_id": conversation_id,
+                "question": question,
+                "answer_text": normalized_answer,
+                "stream_token_usage": stream_token_usage,
+                "execution_trace": execution_trace,
+            },
+        )
+
+    return _callback
+
+
+def _prepare_new_conversation(
+        *,
+        question: str,
+        user_id: int,
+) -> ConversationContext:
+    """
+    准备新会话上下文。
+
+    Args:
+        question: 当前用户问题文本，用于异步生成标题。
+        user_id: 当前用户 ID。
+
+    Returns:
+        ConversationContext: 新会话上下文（含会话创建事件）。
+
+    Raises:
+        ServiceException: 当会话创建失败时抛出数据库异常。
+    """
+
+    conversation_uuid = str(uuid.uuid4())
+    conversation_id = add_admin_conversation(
+        conversation_uuid=conversation_uuid,
+        user_id=user_id,
+    )
+    if conversation_id is None:
+        raise ServiceException(code=ResponseCode.DATABASE_ERROR, message="无法创建会话，请稍后重试。")
+
+    _schedule_title_generation(
+        conversation_uuid=conversation_uuid,
+        question=question,
+    )
+    return ConversationContext(
+        conversation_uuid=conversation_uuid,
+        conversation_id=conversation_id,
+        history_messages=[],
+        initial_emitted_events=(
+            _build_conversation_created_event(
+                conversation_uuid=conversation_uuid,
+            ),
+        ),
+        is_new_conversation=True,
+    )
+
+
+def _prepare_existing_conversation(
+        *,
+        conversation_uuid: str,
+        user_id: int,
+        question: str,
+) -> ConversationContext:
+    """
+    准备已存在会话上下文。
+
+    Args:
+        conversation_uuid: 会话 UUID。
+        user_id: 当前用户 ID（用于会话归属校验）。
+        question: 当前用户问题文本，会追加到历史末尾供模型推理。
+
+    Returns:
+        ConversationContext: 已存在会话上下文（不含会话创建事件），
+            其中 `history_messages` 末尾包含本轮用户问题。
+
+    Raises:
+        ServiceException: 当会话不存在、无权限或数据库异常时抛出。
+    """
+
+    conversation_id = _load_admin_conversation(
+        conversation_uuid=conversation_uuid,
+        user_id=user_id,
+    )
+    history_messages = load_history(
+        conversation_id=conversation_id,
+        limit=50,
+    )
+    # 旧会话场景需显式注入本轮用户输入，避免模型只基于上一轮历史作答。
+    history_messages = [*history_messages, HumanMessage(content=question)]
+    return ConversationContext(
+        conversation_uuid=conversation_uuid,
+        conversation_id=conversation_id,
+        history_messages=history_messages,
+        initial_emitted_events=(),
+        is_new_conversation=False,
+    )
+
+
+def _prepare_conversation_context(
+        *,
+        question: str,
+        user_id: int,
+        conversation_uuid: str | None,
+) -> ConversationContext:
+    """
+    统一准备会话上下文（新建/加载分支）。
+
+    Args:
+        question: 当前用户问题文本。
+        user_id: 当前用户 ID。
+        conversation_uuid: 会话 UUID；为空时创建新会话。
+
+    Returns:
+        ConversationContext: 可直接驱动后续流式响应的会话上下文。
+
+    Raises:
+        ServiceException: 当会话创建/加载失败时抛出。
+    """
+
+    if conversation_uuid is None:
+        return _prepare_new_conversation(
+            question=question,
+            user_id=user_id,
+        )
+    return _prepare_existing_conversation(
+        conversation_uuid=conversation_uuid,
+        user_id=user_id,
+        question=question,
+    )
+
+
 def assistant_chat(*, question: str, conversation_uuid: str | None = None) -> StreamingResponse:
     """
     管理助手聊天入口（SSE 流式返回）。
 
     行为说明：
     1. 首次消息（未传 `conversation_uuid`）会创建会话并先推送“会话创建成功”事件；
-    2. 标题生成与保存在后台并行执行，不阻塞当前流式响应；
-    3. 已存在会话（传入 `conversation_uuid`）的历史加载仍为后续待实现。
+    2. 用户提问会后台写入消息表；
+    3. AI 回复会在流结束后后台写入消息表；
+    4. 标题生成与保存在后台并行执行，不阻塞当前流式响应。
+    5. 会话准备逻辑由 `_prepare_conversation_context` 统一处理。
     """
 
     if not question:
         raise ServiceException(code=ResponseCode.BAD_REQUEST, message="问题不能为空")
 
-    initial_emitted_events: list[AssistantResponse] = []
-    if conversation_uuid is None:
-        # 未传入会话 UUID，则创建新会话
-        conversation_uuid = str(uuid.uuid4())
-        conversation_id = add_admin_conversation(
-            conversation_uuid=conversation_uuid,
-            user_id=get_user_id(),
-        )
+    current_user_id = get_user_id()
+    context = _prepare_conversation_context(
+        question=question,
+        user_id=current_user_id,
+        conversation_uuid=conversation_uuid,
+    )
 
-        if conversation_id is None:
-            raise ServiceException(code=ResponseCode.DATABASE_ERROR, message="无法创建会话，请稍后重试。")
-
-        # 标题生成与落库放到后台并行执行，不阻塞当前流式响应。
-        _schedule_title_generation(
-            conversation_uuid=conversation_uuid,
-            question=question,
-        )
-
-        initial_emitted_events.append(
-            _build_conversation_created_event(
-                conversation_uuid=conversation_uuid,
-            )
-        )
-    else:
-        # todo 加载会话并响应消息
-        pass
+    _schedule_background_task(
+        task_name="persist_user_message",
+        func=_persist_user_message,
+        kwargs={
+            "conversation_id": context.conversation_id,
+            "question": question,
+        },
+    )
 
     stream_config = AssistantStreamConfig(
         workflow=ADMIN_WORKFLOW,
-        build_initial_state=_build_initial_state,
+        build_initial_state=lambda q: _build_initial_state(
+            q,
+            history_messages=context.history_messages,
+        ),
         extract_final_content=lambda _state: "",
         should_stream_token=_should_stream_token,
         build_stream_config=_build_stream_config,
         invoke_sync=_invoke_admin_workflow,
         map_exception=_map_exception,
-        initial_emitted_events=tuple(initial_emitted_events),
+        on_answer_completed=_build_assistant_message_callback(
+            conversation_id=context.conversation_id,
+            question=question,
+        ),
+        initial_emitted_events=context.initial_emitted_events,
     )
     return create_streaming_response(question, stream_config)
 
 
-def new_conversation(
-        *,
-        question: str
-):
-    pass
-
-
-def has_conversation(*, conversation_uuid: str) -> bool:
-    pass
-
-
 def load_history(
         *,
-        conversation_uuid: str,
-        user_id: int,
-) -> tuple[HumanMessage, AIMessage] | None:
-    """加载聊天历史。"""
+        conversation_id: str,
+        limit: int = 50,
+) -> list[ChatHistoryMessage]:
+    """
+    加载会话历史消息（最近窗口）。
 
-    _ = conversation_uuid
-    _ = user_id
-    pass
+    读取策略：
+    1. 先按创建时间倒序读取最近 N 条；
+    2. 再反转为正序，保证喂给模型时上下文顺序正确。
+    """
+
+    history_messages = get_history(
+        conversation_id=conversation_id,
+        limit=limit,
+        ascending=False,
+    )
+    return list(reversed(history_messages))
 
 
 def list_history() -> None:

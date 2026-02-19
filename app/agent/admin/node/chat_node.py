@@ -1,9 +1,11 @@
 import json
+from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from app.agent.admin.agent_utils import build_execution_trace_update
 from app.agent.admin.agent_state import AgentState
-from app.core.assistant_status import status_node
+from app.agent.admin.history_utils import build_messages_with_history
 from app.core.langsmith import traceable
 from app.core.llm import create_chat_model
 from app.schemas.prompt import base_prompt
@@ -35,8 +37,38 @@ _FALLBACK_CHAT_SYSTEM_PROMPT = (
 )
 
 
+def _serialize_messages(messages: list[Any]) -> list[dict[str, Any]]:
+    """
+    序列化节点输入消息，供 execution_trace 存储。
+
+    Args:
+        messages: 待序列化的消息列表。
+
+    Returns:
+        list[dict[str, Any]]: 统一结构的消息字典列表。
+    """
+    return [
+        {
+            "role": str(getattr(message, "type", "") or message.__class__.__name__).strip().lower() or "unknown",
+            "content": getattr(message, "content", ""),
+        }
+        for message in messages
+    ]
+
+
 @traceable(name="Chat Agent Node", run_type="chain")
 def chat_agent(state: AgentState) -> AgentState:
+    """
+    执行聊天节点（含 fallback 聊天模式）。
+
+    Args:
+        state: 当前全局状态，包含用户输入、历史对话和 fallback 上下文。
+
+    Returns:
+        AgentState: 增量更新结果，包含：
+            - `results["chat"]`
+            - `execution_traces`（记录节点输入输出）
+    """
     routing = state.get("routing") or {}
     fallback_context = routing.get("fallback_context")
     is_fallback = isinstance(fallback_context, dict) and bool(fallback_context)
@@ -44,11 +76,14 @@ def chat_agent(state: AgentState) -> AgentState:
     user_input = str(state.get("user_input") or "").strip()
     if not user_input:
         user_input = "你好"
+    history_messages = list(state.get("history_messages") or [])
 
+    model_name = "qwen-flash"
+    messages: list[Any] = []
     try:
         llm = create_chat_model(
             temperature=1.3,
-            model="qwen-flash",
+            model=model_name,
         )
         if is_fallback:
             fallback_input = json.dumps(fallback_context, ensure_ascii=False)
@@ -57,10 +92,11 @@ def chat_agent(state: AgentState) -> AgentState:
                 HumanMessage(content=fallback_input),
             ]
         else:
-            messages = [
-                SystemMessage(content=_CHAT_SYSTEM_PROMPT),
-                HumanMessage(content=user_input),
-            ]
+            messages = build_messages_with_history(
+                system_prompt=_CHAT_SYSTEM_PROMPT,
+                history_messages=history_messages,
+                fallback_user_input=user_input,
+            )
         if hasattr(llm, "stream") and callable(getattr(llm, "stream")):
             streamed_parts: list[str] = []
             for chunk in llm.stream(messages):
@@ -80,4 +116,14 @@ def chat_agent(state: AgentState) -> AgentState:
         "mode": "fallback" if is_fallback else "chat",
         "content": content,
     }
-    return {"results": results}
+    result_update: dict[str, Any] = {"results": results}
+    result_update.update(
+        build_execution_trace_update(
+            node_name="chat_agent",
+            model_name=model_name,
+            input_messages=_serialize_messages(messages),
+            output_text=content,
+            tool_calls=[],
+        )
+    )
+    return result_update

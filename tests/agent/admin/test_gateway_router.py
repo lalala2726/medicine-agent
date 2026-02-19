@@ -1,6 +1,7 @@
 import json
 
 import pytest
+from langchain_core.messages import AIMessage, HumanMessage
 
 import app.agent.admin.dag_rules as dag_rules_module
 import app.agent.admin.node.coordinator_node as coordinator_module
@@ -21,18 +22,21 @@ class _DummyModel:
         return _DummyResponse(self.payload)
 
 
-def _build_initial_state(user_input: str, plan=None, routing=None, step_outputs=None) -> dict:
+def _build_initial_state(
+        user_input: str,
+        plan=None,
+        routing=None,
+        step_outputs=None,
+        history_messages=None,
+) -> dict:
     return {
         "user_input": user_input,
         "user_intent": {},
         "plan": plan or [],
         "routing": routing or {},
-        "order_context": {},
-        "product_context": {},
-        "aftersale_context": {},
-        "excel_context": {},
-        "history_messages": [],
+        "history_messages": history_messages or [],
         "step_outputs": step_outputs or {},
+        "execution_traces": [],
         "shared_memory": {},
         "results": {},
         "errors": [],
@@ -63,6 +67,55 @@ def test_gateway_router_routes_to_coordinator_agent(monkeypatch: pytest.MonkeyPa
     result = workflow_module.gateway_router(_build_initial_state("查订单并出图再总结"))
     assert result["routing"]["route_target"] == "coordinator_agent"
     assert result["routing"]["difficulty"] == "complex"
+
+
+def test_gateway_router_uses_history_messages_when_present(monkeypatch: pytest.MonkeyPatch):
+    payload = json.dumps({"route_target": "summary_agent", "difficulty": "simple"})
+    captured: dict = {}
+
+    class _CaptureModel:
+        def invoke(self, messages):
+            captured["messages"] = messages
+            return _DummyResponse(payload)
+
+    monkeypatch.setattr(
+        workflow_module,
+        "create_chat_model",
+        lambda *args, **kwargs: _CaptureModel(),
+    )
+
+    result = workflow_module.gateway_router(
+        _build_initial_state(
+            "",
+            history_messages=[
+                HumanMessage(content="上轮问题"),
+                AIMessage(content="上轮回答"),
+                HumanMessage(content="本轮问题"),
+            ],
+        )
+    )
+    assert result["routing"]["route_target"] == "coordinator_agent"
+    assert result["routing"]["difficulty"] == "simple"
+    assert len(captured["messages"]) == 4
+    assert isinstance(captured["messages"][1], HumanMessage)
+    assert isinstance(captured["messages"][2], AIMessage)
+    assert isinstance(captured["messages"][3], HumanMessage)
+
+
+@pytest.mark.parametrize("forbidden_target", ["excel_agent", "chart_agent", "summary_agent"])
+def test_gateway_router_forces_coordinator_for_non_direct_targets(
+        monkeypatch: pytest.MonkeyPatch,
+        forbidden_target: str,
+):
+    payload = json.dumps({"route_target": forbidden_target, "difficulty": "simple"})
+    monkeypatch.setattr(
+        workflow_module,
+        "create_chat_model",
+        lambda *args, **kwargs: _DummyModel(payload),
+    )
+
+    result = workflow_module.gateway_router(_build_initial_state("请导出并生成图表"))
+    assert result["routing"]["route_target"] == "coordinator_agent"
 
 
 @pytest.mark.parametrize("difficulty", ["simple", "medium", "complex", "unknown"])

@@ -3,10 +3,11 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.constants import END, START
 from langgraph.graph import StateGraph
 
+from app.agent.admin.history_utils import build_messages_with_history
+from app.agent.admin.agent_utils import build_execution_trace_update
 from app.agent.admin.agent_state import AgentState
 from app.agent.admin.dag_rules import EXECUTION_NODES, compute_planner_update
 from app.agent.admin.node import (
@@ -21,12 +22,14 @@ from app.agent.admin.node.product_node import product_agent
 from app.core.langsmith import traceable
 from app.core.llm import create_chat_model
 
-GATEWAY_ROUTE_NODES = (*EXECUTION_NODES, "chat_agent", "coordinator_agent")
+# 网关直达节点：仅保留订单、商品、聊天。
+GATEWAY_DIRECT_NODES = (
+    "order_agent",
+    "product_agent",
+)
+GATEWAY_ROUTE_NODES = (*GATEWAY_DIRECT_NODES, "chat_agent", "coordinator_agent")
 GATEWAY_ROUTE_MAP = {
     "order_agent": "order_agent",
-    "excel_agent": "excel_agent",
-    "chart_agent": "chart_agent",
-    "summary_agent": "summary_agent",
     "product_agent": "product_agent",
     "chat_agent": "chat_agent",
     "coordinator_agent": "coordinator_agent",
@@ -49,26 +52,18 @@ GATEWAY_ROUTER_PROMPT = """
     可用节点与业务范围：
     1. order_agent
        - 订单域任务：订单查询、订单状态判断、订单信息核验、订单明细检索。
-    2. excel_agent
-       - 表格域任务：支持将系统数据按照条件导出为excel表格并生成下载链接让用户下载
-       - 支持如下:用户数据导出、订单数据导出、商品数据导出
-       - 如果用户想要导出的数据不在以上范围内，你应该直接调用 chat_agent 并且告诉用户原因
-       - 请注意！此Agent不接受导出数据范围以外的请求，并且这个agent有自己获取数据的能力不要为了数据调用其他的Agent
-    3. chart_agent
-       - 图表域任务：根据已有结构化数据生成图表、统计可视化结果说明。
-    4. summary_agent
-       - 汇总域任务：汇总多个节点结果，输出最终结论。
-    5. chat_agent
+    2. product_agent
+       - 商品域任务：商品信息查询、商品信息核验。
+    3. chat_agent
         - 普通对话：非业务相关问题、咨询、闲聊。
-    7. coordinator_agent
+    4. coordinator_agent
        - 协调域任务：多节点任务拆解、并行/串行编排、跨节点结果整合。
-       - 当请求涉及两个及以上业务域，或依赖关系复杂时，必须路由到该节点。
-    8. product_agent
-       - 商品域任务：商品信息查询、商品信息核验
+       - excel/chart/summary 相关任务必须路由到该节点，由 coordinator 决定计划。
+       - 当请求涉及两个及以上业务域，或依赖关系复杂时，也必须路由到该节点。
 
     请严格输出 JSON 对象，且只输出 JSON，不要包含其他文字：
     {
-      "route_target": "order_agent | excel_agent | chart_agent | summary_agent | chat_agent | coordinator_agent | product_agent",
+      "route_target": "order_agent | product_agent | chat_agent | coordinator_agent",
       "difficulty": "simple | medium | complex"
     }
 
@@ -93,6 +88,9 @@ def build_graph():
     - coordinator 生成计划后进入 planner
     - planner 按 DAG 规则选择下一批执行节点
     - 业务节点执行后回到 planner，直到无可执行节点并结束
+
+    Args:
+        无。
 
     Returns:
         已编译的 LangGraph，可直接通过 `invoke/stream` 执行。
@@ -166,11 +164,12 @@ def gateway_router(state: AgentState) -> dict[str, Any]:
         - `stage_index/next_nodes/next_step_ids/current_step_ids/completed_step_ids/blocked_step_ids`
     """
     user_input = str(state.get("user_input") or "").strip()
+    history_messages = list(state.get("history_messages") or [])
     routing = dict(state.get("routing") or {})
 
     route_target = "coordinator_agent"
     difficulty = "medium"
-    if user_input:
+    if user_input or history_messages:
         try:
             model = create_chat_model(
                 model="qwen-flash",
@@ -178,10 +177,11 @@ def gateway_router(state: AgentState) -> dict[str, Any]:
                 temperature=0,
                 response_format={"type": "json_object"},
             )
-            messages = [
-                SystemMessage(content=GATEWAY_ROUTER_PROMPT),
-                HumanMessage(content=f"用户请求：{user_input}"),
-            ]
+            messages = build_messages_with_history(
+                system_prompt=GATEWAY_ROUTER_PROMPT,
+                history_messages=history_messages,
+                fallback_user_input=user_input,
+            )
             response = model.invoke(messages)
             raw = json.loads(str(response.content))
             route_target = str(raw["route_target"])
@@ -203,7 +203,17 @@ def gateway_router(state: AgentState) -> dict[str, Any]:
     routing.setdefault("completed_step_ids", [])
     routing.setdefault("blocked_step_ids", [])
 
-    return {"routing": routing}
+    gateway_update: dict[str, Any] = {"routing": routing}
+    gateway_update.update(
+        build_execution_trace_update(
+            node_name="gateway_router",
+            model_name="unknown",
+            input_messages=[],
+            output_text=json.dumps(gateway_update, ensure_ascii=False, default=str),
+            tool_calls=[],
+        )
+    )
+    return gateway_update
 
 
 def _route_from_gateway(state: AgentState) -> str:
@@ -235,7 +245,17 @@ def planner(state: AgentState) -> dict[str, Any]:
     Returns:
         由 `compute_planner_update` 返回的调度更新结果。
     """
-    return compute_planner_update(state)
+    planner_update = compute_planner_update(state)
+    planner_update.update(
+        build_execution_trace_update(
+            node_name="planner",
+            model_name="unknown",
+            input_messages=[],
+            output_text=json.dumps(planner_update, ensure_ascii=False, default=str),
+            tool_calls=[],
+        )
+    )
+    return planner_update
 
 
 def _route_to_next_node(state: AgentState) -> str | list[str]:
