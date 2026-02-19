@@ -4,6 +4,7 @@ import json
 from fastapi.responses import StreamingResponse
 from langchain_core.messages import AIMessage, HumanMessage
 
+from app.schemas.base_request import PageRequest
 from app.schemas.sse_response import MessageType
 from app.services import admin_assisant_service as service_module
 from app.services.assistant_stream_service import AssistantStreamConfig
@@ -39,6 +40,43 @@ def test_invoke_admin_workflow_passes_langsmith_config(monkeypatch):
     assert result["results"]["chat"]["content"] == "ok"
     assert graph.captured_config is not None
     assert graph.captured_config["run_name"] == "admin_assistant_graph"
+
+
+def test_chat_list_returns_current_user_conversations(monkeypatch):
+    """测试目标：会话列表查询透传分页参数；成功标准：仅返回会话 UUID 与标题列表。"""
+
+    captured: dict = {}
+
+    monkeypatch.setattr(service_module, "get_user_id", lambda: 100)
+    monkeypatch.setattr(
+        service_module,
+        "list_admin_conversations",
+        lambda *, user_id, page_num, page_size: (
+            captured.update(
+                {
+                    "user_id": user_id,
+                    "page_num": page_num,
+                    "page_size": page_size,
+                }
+            ),
+            ([{"conversation_uuid": "conv-1", "title": "标题1"}], 1),
+        )[-1],
+    )
+
+    rows, total = service_module.chat_list(
+        page_request=PageRequest(
+            page_num=2,
+            page_size=20,
+        )
+    )
+
+    assert captured == {
+        "user_id": 100,
+        "page_num": 2,
+        "page_size": 20,
+    }
+    assert rows == [{"conversation_uuid": "conv-1", "title": "标题1"}]
+    assert total == 1
 
 
 def test_prepare_new_conversation_returns_context_with_created_event(monkeypatch):

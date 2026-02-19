@@ -18,6 +18,7 @@ from app.core.langsmith import build_langsmith_runnable_config
 from app.core.llm import create_chat_model
 from app.core.request_context import get_user_id
 from app.schemas.sse_response import AssistantResponse, Content, MessageType
+from app.schemas.base_request import PageRequest
 from app.services.assistant_stream_service import (
     AssistantStreamConfig,
     create_streaming_response,
@@ -25,6 +26,7 @@ from app.services.assistant_stream_service import (
 from app.services.conversation_service import (
     add_admin_conversation,
     get_admin_conversation,
+    list_admin_conversations,
     save_conversation_title,
 )
 from app.services.message_service import add_message, get_history
@@ -540,10 +542,30 @@ def load_history(
     return list(reversed(history_messages))
 
 
-def list_history() -> None:
-    """列出聊天历史。"""
+def chat_list(
+        *,
+        page_request: PageRequest,
+) -> tuple[list[dict[str, str]], int]:
+    """
+    分页查询当前用户的管理助手会话列表。
 
-    pass
+    仅返回会话 UUID 与标题，不返回会话内部主键等冗余字段。
+
+    Args:
+        page_request: 分页请求参数。
+
+    Returns:
+        tuple[list[dict[str, str]], int]:
+            - rows: 当前页会话列表，每项仅包含 `conversation_uuid` 与 `title`。
+            - total: 会话总数。
+    """
+
+    current_user_id = get_user_id()
+    return list_admin_conversations(
+        user_id=current_user_id,
+        page_num=page_request.page_num,
+        page_size=page_request.page_size,
+    )
 
 
 def generate_title(question: str) -> str:

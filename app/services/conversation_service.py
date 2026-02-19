@@ -4,6 +4,7 @@ from typing import Annotated
 
 from bson.int64 import Int64
 from pydantic import Field
+from pymongo import DESCENDING
 from pymongo.errors import PyMongoError
 
 from app.core.codes import ResponseCode
@@ -212,6 +213,69 @@ def add_admin_conversation(
         conversation_type=_ADMIN_MARK,
         user_id=user_id,
     )
+
+
+def list_admin_conversations(
+        *,
+        user_id: Annotated[int, Field(ge=1)],
+        page_num: Annotated[int, Field(ge=1)] = 1,
+        page_size: Annotated[int, Field(ge=1, le=100)] = 20,
+) -> tuple[list[dict[str, str]], int]:
+    """
+    分页查询管理端会话列表（仅返回会话 UUID 与标题）。
+
+    Args:
+        user_id: 用户 ID，用于筛选当前用户的会话。
+        page_num: 页码（从 1 开始）。
+        page_size: 每页大小（1-100）。
+
+    Returns:
+        tuple[list[dict[str, str]], int]:
+            - rows: 会话列表，每项仅包含 `conversation_uuid` 和 `title`。
+            - total: 总记录数。
+
+    Raises:
+        ServiceException: 当数据库操作失败时抛出异常。
+    """
+
+    db = get_mongo_database()
+    collection = db[_TABLE_NAME]
+
+    query = {
+        "conversation_type": _ADMIN_MARK,
+        "user_id": _to_mongo_long(user_id),
+    }
+    projection = {
+        "_id": 0,
+        "uuid": 1,
+        "title": 1,
+    }
+    skip = (page_num - 1) * page_size
+
+    try:
+        total = collection.count_documents(query)
+        cursor = (
+            collection.find(query, projection)
+            .sort("update_time", DESCENDING)
+            .skip(skip)
+            .limit(page_size)
+        )
+    except PyMongoError as exc:
+        raise ServiceException(code=ResponseCode.DATABASE_ERROR, message="数据库错误") from exc
+
+    rows: list[dict[str, str]] = []
+    for item in cursor:
+        conversation_uuid = str(item.get("uuid") or "").strip()
+        if not conversation_uuid:
+            continue
+        title = str(item.get("title") or "").strip() or "新聊天"
+        rows.append(
+            {
+                "conversation_uuid": conversation_uuid,
+                "title": title,
+            }
+        )
+    return rows, total
 
 def save_conversation_title(
         *,

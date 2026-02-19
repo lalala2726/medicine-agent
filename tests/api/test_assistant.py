@@ -138,3 +138,58 @@ def test_assistant_request_rejects_legacy_conversion_uuid(monkeypatch):
         for item in body["errors"]
     )
     assert called["value"] is False
+
+
+def test_assistant_chat_list_route_delegates_to_service(monkeypatch):
+    captured: dict = {}
+    _mock_auth(monkeypatch)
+
+    def _fake_chat_list(*, page_request):
+        captured["page_num"] = page_request.page_num
+        captured["page_size"] = page_request.page_size
+        return ([{"conversation_uuid": "conv-1", "title": "会话1"}], 3)
+
+    monkeypatch.setattr(assistant_module, "chat_list", _fake_chat_list)
+    client = TestClient(app)
+
+    response = client.get(
+        "/admin/assistant/chat/list",
+        headers=_auth_headers(),
+        params={"page_num": 2, "page_size": 5},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["code"] == 200
+    assert body["data"]["rows"] == [{"conversation_uuid": "conv-1", "title": "会话1"}]
+    assert body["data"]["total"] == 3
+    assert body["data"]["page_num"] == 2
+    assert body["data"]["page_size"] == 5
+    assert captured == {"page_num": 2, "page_size": 5}
+
+
+def test_assistant_chat_list_route_uses_default_pagination(monkeypatch):
+    captured: dict = {}
+    _mock_auth(monkeypatch)
+
+    def _fake_chat_list(*, page_request):
+        captured["page_num"] = page_request.page_num
+        captured["page_size"] = page_request.page_size
+        return ([], 0)
+
+    monkeypatch.setattr(assistant_module, "chat_list", _fake_chat_list)
+    client = TestClient(app)
+
+    response = client.get(
+        "/admin/assistant/chat/list",
+        headers=_auth_headers(),
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["code"] == 200
+    assert body["data"]["rows"] == []
+    assert body["data"]["total"] == 0
+    assert body["data"]["page_num"] == 1
+    assert body["data"]["page_size"] == 20
+    assert captured == {"page_num": 1, "page_size": 20}
