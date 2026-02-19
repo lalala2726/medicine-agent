@@ -41,6 +41,139 @@ def test_invoke_admin_workflow_passes_langsmith_config(monkeypatch):
     assert graph.captured_config["run_name"] == "admin_assistant_graph"
 
 
+def test_prepare_new_conversation_returns_context_with_created_event(monkeypatch):
+    """测试目标：新会话上下文正确构建；成功标准：包含会话创建事件与空历史。"""
+
+    scheduled_title_calls: list[dict] = []
+
+    monkeypatch.setattr(service_module.uuid, "uuid4", lambda: "new-conv-uuid")
+    monkeypatch.setattr(
+        service_module,
+        "add_admin_conversation",
+        lambda *, conversation_uuid, user_id: f"db-{conversation_uuid}-{user_id}",
+    )
+    monkeypatch.setattr(
+        service_module,
+        "_schedule_title_generation",
+        lambda **kwargs: scheduled_title_calls.append(kwargs),
+    )
+
+    context = service_module._prepare_new_conversation(
+        question="新建会话",
+        user_id=100,
+    )
+
+    assert isinstance(context, service_module.ConversationContext)
+    assert context.conversation_uuid == "new-conv-uuid"
+    assert context.conversation_id == "db-new-conv-uuid-100"
+    assert context.history_messages == []
+    assert context.is_new_conversation is True
+    assert len(context.initial_emitted_events) == 1
+    session_event = context.initial_emitted_events[0]
+    assert session_event.type == MessageType.STATUS
+    assert session_event.content.node == "conversation"
+    assert session_event.content.state == "created"
+    assert session_event.meta == {"conversation_uuid": "new-conv-uuid"}
+    assert scheduled_title_calls == [{"conversation_uuid": "new-conv-uuid", "question": "新建会话"}]
+
+
+def test_prepare_existing_conversation_returns_context_with_history(monkeypatch):
+    """测试目标：旧会话上下文正确构建；成功标准：加载会话并返回历史窗口。"""
+
+    captured: dict = {}
+    expected_history = [HumanMessage(content="历史问题"), AIMessage(content="历史回答")]
+
+    monkeypatch.setattr(
+        service_module,
+        "_load_admin_conversation",
+        lambda *, conversation_uuid, user_id: (
+            captured.update({"conversation_uuid": conversation_uuid, "user_id": user_id}),
+            "507f1f77bcf86cd799439011",
+        )[-1],
+    )
+    monkeypatch.setattr(
+        service_module,
+        "load_history",
+        lambda *, conversation_id, limit: (
+            captured.update({"conversation_id": conversation_id, "limit": limit}),
+            expected_history,
+        )[-1],
+    )
+
+    context = service_module._prepare_existing_conversation(
+        conversation_uuid="conv-1",
+        user_id=100,
+    )
+
+    assert isinstance(context, service_module.ConversationContext)
+    assert context.conversation_uuid == "conv-1"
+    assert context.conversation_id == "507f1f77bcf86cd799439011"
+    assert context.history_messages == expected_history
+    assert context.initial_emitted_events == ()
+    assert context.is_new_conversation is False
+    assert captured == {
+        "conversation_uuid": "conv-1",
+        "user_id": 100,
+        "conversation_id": "507f1f77bcf86cd799439011",
+        "limit": 50,
+    }
+
+
+def test_prepare_conversation_context_routes_by_conversation_uuid(monkeypatch):
+    """测试目标：会话准备总入口分发正确；成功标准：按 UUID 是否为空路由到对应分支。"""
+
+    call_order: list[tuple[str, dict]] = []
+    new_context = service_module.ConversationContext(
+        conversation_uuid="new-conv",
+        conversation_id="new-id",
+        history_messages=[],
+        initial_emitted_events=(),
+        is_new_conversation=True,
+    )
+    existing_context = service_module.ConversationContext(
+        conversation_uuid="conv-1",
+        conversation_id="old-id",
+        history_messages=[HumanMessage(content="历史")],
+        initial_emitted_events=(),
+        is_new_conversation=False,
+    )
+
+    monkeypatch.setattr(
+        service_module,
+        "_prepare_new_conversation",
+        lambda *, question, user_id: (
+            call_order.append(("new", {"question": question, "user_id": user_id})),
+            new_context,
+        )[-1],
+    )
+    monkeypatch.setattr(
+        service_module,
+        "_prepare_existing_conversation",
+        lambda *, conversation_uuid, user_id: (
+            call_order.append(("existing", {"conversation_uuid": conversation_uuid, "user_id": user_id})),
+            existing_context,
+        )[-1],
+    )
+
+    context_new = service_module._prepare_conversation_context(
+        question="问题A",
+        user_id=100,
+        conversation_uuid=None,
+    )
+    context_existing = service_module._prepare_conversation_context(
+        question="问题B",
+        user_id=101,
+        conversation_uuid="conv-1",
+    )
+
+    assert context_new is new_context
+    assert context_existing is existing_context
+    assert call_order == [
+        ("new", {"question": "问题A", "user_id": 100}),
+        ("existing", {"conversation_uuid": "conv-1", "user_id": 101}),
+    ]
+
+
 def test_assistant_chat_schedules_user_persist_without_blocking_main_flow(monkeypatch):
     """测试目标：user 消息走后台调度；成功标准：主流程只触发调度，不依赖同步落库。"""
 
