@@ -20,6 +20,7 @@ from app.schemas.admin_message import (
     AdminMessageDocument,
     ExecutionTraceItem,
     MessageRole,
+    MessageStatus,
     TokenUsage,
 )
 from app.services.token_usage_service import build_user_token_usage, normalize_token_usage
@@ -94,6 +95,7 @@ def add_message(
         *,
         conversation_id: Annotated[str, Field(min_length=1)],
         role: MessageRole | str,
+        status: MessageStatus | str = MessageStatus.SUCCESS,
         content: Annotated[str, Field(min_length=1)],
         thought_chain: list[Any] | None = None,
         token_usage: TokenUsage | dict[str, Any] | None = None,
@@ -106,6 +108,7 @@ def add_message(
     Args:
         conversation_id: 所属会话 Mongo ObjectId（字符串形式）。
         role: 消息角色（user/assistant）。
+        status: 消息状态（success/error）。
         content: 消息内容。
         thought_chain: 可选思维链结构。
         token_usage: 可选 token 消耗明细。
@@ -123,6 +126,7 @@ def add_message(
         uuid=message_uuid or str(uuid.uuid4()),
         conversation_id=conversation_id,
         role=role,
+        status=status,
         content=content,
         thought_chain=thought_chain,
         token_usage=normalize_token_usage(token_usage),
@@ -179,6 +183,7 @@ def list_messages(
         *,
         conversation_id: Annotated[str, Field(min_length=1)],
         limit: Annotated[int, Field(ge=1)] = 50,
+        skip: Annotated[int, Field(ge=0)] = 0,
         ascending: bool = True,
 ) -> list[AdminMessageDocument]:
     """
@@ -187,6 +192,7 @@ def list_messages(
     Args:
         conversation_id: 所属会话 Mongo ObjectId（字符串形式）。
         limit: 返回条数上限，默认 50。
+        skip: 跳过条数，默认 0。
         ascending: 是否按创建时间升序，默认 True（旧到新）。
 
     Returns:
@@ -199,7 +205,7 @@ def list_messages(
     db = get_mongo_database()
     collection = db[_resolve_collection_name()]
     try:
-        cursor = collection.find(query).sort("created_at", sort_direction).limit(limit)
+        cursor = collection.find(query).sort("created_at", sort_direction).skip(skip).limit(limit)
         return [_to_message_document(item) for item in cursor]
     except PyMongoError as exc:
         raise ServiceException(code=ResponseCode.DATABASE_ERROR, message="数据库错误") from exc

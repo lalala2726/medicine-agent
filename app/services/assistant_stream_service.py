@@ -38,6 +38,7 @@ from app.utils.streaming_utils import extract_text
 StreamEvent = tuple[str, Any]
 GraphEventPayload = tuple[str, Any]
 InitialEmittedEvent = AssistantResponse | dict[str, Any]
+OnAnswerCompletedCallback = Callable[..., None | Awaitable[None]]
 
 EVENT_EMITTED = "emitted"
 EVENT_GRAPH = "graph"
@@ -87,10 +88,8 @@ class AssistantStreamConfig:
     # 异常映射器：把内部异常转成统一错误文案。
     map_exception: Callable[[Exception], str]
     # 可选收尾回调：在流结束时回调完整 answer 文本、token 汇总与节点执行追踪。
-    on_answer_completed: Callable[
-        [str, dict[str, Any] | None, list[dict[str, Any]] | None],
-        None | Awaitable[None],
-    ] | None = None
+    # 回调兼容 3 参（历史）和 4 参（新增 has_error）两种签名。
+    on_answer_completed: OnAnswerCompletedCallback | None = None
     # 流开始前注入的事件列表（例如会话创建成功事件），会按给定顺序输出。
     initial_emitted_events: tuple[InitialEmittedEvent, ...] = field(
         default_factory=tuple
@@ -919,13 +918,11 @@ async def _finalize_stream(emitter_token: Any, producer_task: asyncio.Task[Any])
 
 
 async def _invoke_answer_completed_callback(
-        callback: Callable[
-            [str, dict[str, Any] | None, list[dict[str, Any]] | None],
-            None | Awaitable[None],
-        ] | None,
+        callback: OnAnswerCompletedCallback | None,
         answer_text: str,
         token_usage: dict[str, Any] | None,
         execution_trace: list[dict[str, Any]] | None,
+        has_error: bool,
 ) -> None:
     """
     执行“回答完成”回调。
@@ -937,12 +934,32 @@ async def _invoke_answer_completed_callback(
         answer_text: 聚合后的完整回答文本。
         token_usage: 汇总后的 token usage。
         execution_trace: 汇总后的节点执行追踪。
+        has_error: 本次流式执行是否出现错误。
     """
 
     if callback is None:
         return
 
-    callback_result = callback(answer_text, token_usage, execution_trace)
+    callback_signature = inspect.signature(callback)
+    parameters = list(callback_signature.parameters.values())
+    positional_parameters = [
+        parameter
+        for parameter in parameters
+        if parameter.kind in (
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        )
+    ]
+    accepts_variadic = any(
+        parameter.kind == inspect.Parameter.VAR_POSITIONAL
+        for parameter in parameters
+    )
+    supports_four_args = accepts_variadic or len(positional_parameters) >= 4
+
+    if supports_four_args:
+        callback_result = callback(answer_text, token_usage, execution_trace, has_error)
+    else:
+        callback_result = callback(answer_text, token_usage, execution_trace)
     if inspect.isawaitable(callback_result):
         await callback_result
 
@@ -1034,6 +1051,7 @@ async def _event_stream(
                     execution_trace=execution_trace,
                 ),
                 execution_trace,
+                runtime_state.has_emitted_error,
             )
         end_event = await _finalize_stream(emitter_token, producer_task)
         yield end_event

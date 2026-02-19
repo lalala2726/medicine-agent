@@ -8,6 +8,16 @@ class _DummyInsertResult:
         self.inserted_id = inserted_id
 
 
+class _DummyUpdateResult:
+    def __init__(self, matched_count: int):
+        self.matched_count = matched_count
+
+
+class _DummyDeleteResult:
+    def __init__(self, deleted_count: int):
+        self.deleted_count = deleted_count
+
+
 class _DummyCursor:
     def __init__(self, documents: list[dict]):
         self._documents = documents
@@ -43,11 +53,14 @@ class _DummyCollection:
         self.find_one_result: dict | None = None
         self.last_update_query: dict | None = None
         self.last_update_doc: dict | None = None
+        self.last_delete_query: dict | None = None
         self.find_result: list[dict] = []
         self.last_find_query: dict | None = None
         self.last_find_projection: dict | None = None
         self.last_count_query: dict | None = None
         self.last_cursor: _DummyCursor | None = None
+        self.update_matched_count: int = 1
+        self.delete_deleted_count: int = 1
 
     def insert_one(self, document: dict) -> _DummyInsertResult:
         self.last_inserted = document
@@ -60,6 +73,11 @@ class _DummyCollection:
     def update_one(self, query: dict, update_doc: dict):
         self.last_update_query = query
         self.last_update_doc = update_doc
+        return _DummyUpdateResult(self.update_matched_count)
+
+    def delete_one(self, query: dict):
+        self.last_delete_query = query
+        return _DummyDeleteResult(self.delete_deleted_count)
 
     def count_documents(self, query: dict) -> int:
         self.last_count_query = query
@@ -132,6 +150,44 @@ def test_save_conversation_title_updates_title(monkeypatch):
     assert collection.last_update_doc is not None
     assert collection.last_update_doc["$set"]["title"] == "新标题"
     assert "update_time" in collection.last_update_doc["$set"]
+
+
+def test_update_admin_conversation_title_scopes_by_user_and_type(monkeypatch):
+    collection = _DummyCollection()
+    monkeypatch.setattr(service_module, "get_mongo_database", lambda: {"conversations": collection})
+
+    result = service_module.update_admin_conversation_title(
+        conversation_uuid="conv-1",
+        user_id=2,
+        title="更新标题",
+    )
+
+    assert result is True
+    assert collection.last_update_query == {
+        "uuid": "conv-1",
+        "conversation_type": "admin",
+        "user_id": Int64(2),
+    }
+    assert collection.last_update_doc is not None
+    assert collection.last_update_doc["$set"]["title"] == "更新标题"
+    assert "update_time" in collection.last_update_doc["$set"]
+
+
+def test_delete_admin_conversation_scopes_by_user_and_type(monkeypatch):
+    collection = _DummyCollection()
+    monkeypatch.setattr(service_module, "get_mongo_database", lambda: {"conversations": collection})
+
+    result = service_module.delete_admin_conversation(
+        conversation_uuid="conv-2",
+        user_id=3,
+    )
+
+    assert result is True
+    assert collection.last_delete_query == {
+        "uuid": "conv-2",
+        "conversation_type": "admin",
+        "user_id": Int64(3),
+    }
 
 
 def test_list_admin_conversations_returns_uuid_and_title(monkeypatch):

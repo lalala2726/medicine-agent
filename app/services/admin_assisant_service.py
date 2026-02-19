@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
 import uuid
 from dataclasses import dataclass
@@ -12,11 +13,14 @@ from loguru import logger
 
 from app.agent.admin.agent_state import ChatHistoryMessage
 from app.agent.admin.workflow import build_graph
+from app.core.assistant_status import resolve_tool_call_messages
 from app.core.codes import ResponseCode
 from app.core.exceptions import ServiceException
 from app.core.langsmith import build_langsmith_runnable_config
 from app.core.llm import create_chat_model
 from app.core.request_context import get_user_id
+from app.schemas.admin_assistant_history import ConversationMessageResponse
+from app.schemas.admin_message import MessageRole, MessageStatus
 from app.schemas.sse_response import AssistantResponse, Content, MessageType
 from app.schemas.base_request import PageRequest
 from app.services.assistant_stream_service import (
@@ -25,11 +29,13 @@ from app.services.assistant_stream_service import (
 )
 from app.services.conversation_service import (
     add_admin_conversation,
+    delete_admin_conversation,
     get_admin_conversation,
     list_admin_conversations,
     save_conversation_title,
+    update_admin_conversation_title,
 )
-from app.services.message_service import add_message, get_history
+from app.services.message_service import add_message, get_history, list_messages
 from app.services.token_usage_service import merge_assistant_token_usage
 from app.utils.streaming_utils import is_final_node
 
@@ -40,6 +46,15 @@ STREAM_OUTPUT_NODES = {
     "chat_agent",
     "summary_agent",
     "chart_agent",
+}
+_THOUGHT_CHAIN_TOOL_MESSAGE_MAP: dict[str, str] = {
+    "get_user_info": "正在获取用户信息",
+    "get_product_list": "正在查询商品列表",
+    "get_product_detail": "正在查询商品详情",
+    "get_drug_detail": "正在查询药品详情",
+    "get_order_list": "正在查询订单列表",
+    "get_orders_detail": "正在调用订单详情",
+    "get_chart_sample_by_name": "正在获取图表配置模板",
 }
 
 
@@ -300,11 +315,13 @@ def _persist_assistant_message(
         answer_text: str,
         stream_token_usage: dict[str, Any] | None,
         execution_trace: list[dict[str, Any]] | None,
+        status: MessageStatus | str,
 ) -> None:
     """
     持久化 assistant 消息。
 
     优先使用流式汇总中的真实 usage；缺失字段再回退 tiktoken 估算。
+    `thought_chain` 仅在命中 coordinator 路径时落库，直通路由不保存。
     """
 
     resolved_usage = merge_assistant_token_usage(
@@ -312,13 +329,169 @@ def _persist_assistant_message(
         prompt_text=question,
         completion_text=answer_text,
     )
+    resolved_status = MessageStatus(status)
+    can_persist_thought_chain = _should_persist_thought_chain(execution_trace)
     add_message(
         conversation_id=conversation_id,
         role="assistant",
+        status=resolved_status,
         content=answer_text,
+        thought_chain=(
+            _build_thought_chain(execution_trace)
+            if can_persist_thought_chain
+            else None
+        ),
         token_usage=resolved_usage,
         execution_trace=execution_trace,
     )
+
+
+def _serialize_to_json_text(value: Any) -> str | None:
+    """将任意值序列化为字符串（优先 JSON）。"""
+
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    try:
+        return json.dumps(value, ensure_ascii=False)
+    except TypeError:
+        return str(value)
+
+
+def _sanitize_thought_chain_for_response(
+        thought_chain: list[Any] | None,
+) -> list[dict[str, Any]] | None:
+    """
+    清洗 thought_chain，确保不会向前端暴露工具步骤 result 字段。
+    """
+
+    if not isinstance(thought_chain, list):
+        return None
+
+    normalized_nodes: list[dict[str, Any]] = []
+    for raw_node in thought_chain:
+        if not isinstance(raw_node, dict):
+            continue
+        node_payload = dict(raw_node)
+        raw_children = node_payload.get("children")
+        children_payload: list[dict[str, Any]] = []
+        if isinstance(raw_children, list):
+            for raw_child in raw_children:
+                if not isinstance(raw_child, dict):
+                    continue
+                child_payload = {key: value for key, value in raw_child.items() if key != "result"}
+                children_payload.append(child_payload)
+        node_payload["children"] = children_payload
+        normalized_nodes.append(node_payload)
+
+    return normalized_nodes or None
+
+
+def _build_thought_chain(
+        execution_trace: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]] | None:
+    """
+    将 execution_trace 转换为前端历史消息需要的 thought_chain 结构。
+
+    注意：调用方应先通过 `_should_persist_thought_chain` 判定是否允许落库。
+    """
+
+    if not execution_trace:
+        return None
+
+    thought_nodes: list[dict[str, Any]] = []
+    for node_index, trace_item in enumerate(execution_trace, start=1):
+        if not isinstance(trace_item, dict):
+            continue
+
+        node_name = str(trace_item.get("node_name") or "").strip() or f"node-{node_index}"
+        # TODO: 按前端图标策略把 node_name 映射为 router/planner 等语义标识。
+        thought_node_key = node_name
+        raw_tool_calls = trace_item.get("tool_calls")
+        tool_calls = raw_tool_calls if isinstance(raw_tool_calls, list) else []
+
+        children: list[dict[str, Any]] = []
+        node_has_error = False
+        for step_index, tool_call in enumerate(tool_calls, start=1):
+            if not isinstance(tool_call, dict):
+                continue
+
+            tool_name = str(tool_call.get("tool_name") or "").strip()
+            error_message = str(tool_call.get("error_message") or "").strip()
+            is_error = bool(tool_call.get("is_error")) or bool(error_message)
+            step_status = MessageStatus.ERROR.value if is_error else MessageStatus.SUCCESS.value
+            if is_error:
+                node_has_error = True
+
+            step_arguments = _serialize_to_json_text(tool_call.get("tool_input"))
+            step_payload: dict[str, Any] = {
+                "id": f"step-{node_index}-{step_index}",
+                "message": _resolve_tool_call_step_message(tool_name),
+                "status": step_status,
+            }
+            if tool_name:
+                step_payload["name"] = tool_name
+            if step_arguments:
+                step_payload["arguments"] = step_arguments
+            children.append(step_payload)
+
+        thought_nodes.append(
+            {
+                "id": f"node-{node_index}",
+                "node": thought_node_key,
+                "message": node_name,
+                "status": MessageStatus.ERROR.value if node_has_error else MessageStatus.SUCCESS.value,
+                "children": children,
+            }
+        )
+
+    return thought_nodes or None
+
+
+def _resolve_tool_call_step_message(tool_name: str) -> str:
+    """
+    生成 thought_chain 子步骤的展示文案。
+
+    要求：
+    - 已知工具返回中文可读文案；
+    - 未知工具使用通用中文兜底，不拼接英文工具名。
+    """
+
+    if not tool_name:
+        return "工具调用"
+
+    mapped_message = _THOUGHT_CHAIN_TOOL_MESSAGE_MAP.get(tool_name)
+    if mapped_message:
+        return mapped_message
+
+    start_message, _, _ = resolve_tool_call_messages(tool_name)
+    if start_message == f"正在调用工具 {tool_name}":
+        return "正在调用工具"
+    return start_message
+
+
+def _should_persist_thought_chain(
+        execution_trace: list[dict[str, Any]] | None,
+) -> bool:
+    """
+    判定当前消息是否允许保存 thought_chain。
+
+    规则：
+    - 仅当 execution_trace 中命中 `coordinator_agent` 节点时允许保存；
+    - 直通路由（未经过 coordinator）一律不保存 thought_chain。
+    """
+
+    if not execution_trace:
+        return False
+
+    for trace_item in execution_trace:
+        if not isinstance(trace_item, dict):
+            continue
+        node_name = str(trace_item.get("node_name") or "").strip()
+        if node_name == "coordinator_agent":
+            return True
+    return False
 
 
 def _build_assistant_message_callback(*, conversation_id: str, question: str):
@@ -332,6 +505,7 @@ def _build_assistant_message_callback(*, conversation_id: str, question: str):
             answer_text: str,
             stream_token_usage: dict[str, Any] | None,
             execution_trace: list[dict[str, Any]] | None,
+            has_error: bool = False,
     ) -> None:
         normalized_answer = str(answer_text or "").strip()
         if not normalized_answer:
@@ -346,6 +520,7 @@ def _build_assistant_message_callback(*, conversation_id: str, question: str):
                 "answer_text": normalized_answer,
                 "stream_token_usage": stream_token_usage,
                 "execution_trace": execution_trace,
+                "status": MessageStatus.ERROR if has_error else MessageStatus.SUCCESS,
             },
         )
 
@@ -542,7 +717,7 @@ def load_history(
     return list(reversed(history_messages))
 
 
-def chat_list(
+def conversation_list(
         *,
         page_request: PageRequest,
 ) -> tuple[list[dict[str, str]], int]:
@@ -566,6 +741,127 @@ def chat_list(
         page_num=page_request.page_num,
         page_size=page_request.page_size,
     )
+
+
+def conversation_messages(
+        *,
+        conversation_uuid: str,
+        page_request: PageRequest,
+) -> list[ConversationMessageResponse]:
+    """
+    分页查询当前用户某个管理助手会话的历史消息。
+
+    分页规则：
+    1. page_num=1 返回最近一页（最新 50 条）；
+    2. 每页内部按时间升序返回，便于前端直接渲染。
+    """
+
+    normalized_uuid = conversation_uuid.strip()
+    if not normalized_uuid:
+        raise ServiceException(code=ResponseCode.BAD_REQUEST, message="会话UUID不能为空")
+
+    current_user_id = get_user_id()
+    conversation_id = _load_admin_conversation(
+        conversation_uuid=normalized_uuid,
+        user_id=current_user_id,
+    )
+
+    skip = (page_request.page_num - 1) * page_request.page_size
+    message_documents = list_messages(
+        conversation_id=conversation_id,
+        limit=page_request.page_size,
+        skip=skip,
+        ascending=False,
+    )
+
+    result: list[ConversationMessageResponse] = []
+    for document in reversed(message_documents):
+        role = "user" if document.role == MessageRole.USER else "ai"
+        payload: dict[str, Any] = {
+            "id": document.uuid,
+            "role": role,
+            "content": document.content,
+        }
+        if role == "ai":
+            payload["status"] = document.status.value
+            if document.thought_chain:
+                sanitized_thought_chain = _sanitize_thought_chain_for_response(document.thought_chain)
+                if sanitized_thought_chain:
+                    payload["thought_chain"] = sanitized_thought_chain
+        result.append(ConversationMessageResponse.model_validate(payload))
+    return result
+
+
+def delete_conversation(
+        *,
+        conversation_uuid: str,
+) -> None:
+    """
+    删除当前用户的管理助手会话。
+
+    Args:
+        conversation_uuid: 会话 UUID。
+
+    Raises:
+        ServiceException:
+            - BAD_REQUEST: 会话 UUID 为空；
+            - NOT_FOUND: 会话不存在或无权限；
+            - DATABASE_ERROR: 数据库异常。
+    """
+
+    normalized_uuid = conversation_uuid.strip()
+    if not normalized_uuid:
+        raise ServiceException(code=ResponseCode.BAD_REQUEST, message="会话UUID不能为空")
+
+    current_user_id = get_user_id()
+    deleted = delete_admin_conversation(
+        conversation_uuid=normalized_uuid,
+        user_id=current_user_id,
+    )
+    if not deleted:
+        raise ServiceException(code=ResponseCode.NOT_FOUND, message="会话不存在")
+
+
+def update_conversation_title(
+        *,
+        conversation_uuid: str,
+        title: str,
+) -> str:
+    """
+    更新当前用户管理助手会话标题。
+
+    Args:
+        conversation_uuid: 会话 UUID。
+        title: 新标题。
+
+    Returns:
+        str: 归一化后的标题（strip 后）。
+
+    Raises:
+        ServiceException:
+            - BAD_REQUEST: 会话 UUID 或标题为空；
+            - NOT_FOUND: 会话不存在或无权限；
+            - DATABASE_ERROR: 数据库异常。
+    """
+
+    normalized_uuid = conversation_uuid.strip()
+    if not normalized_uuid:
+        raise ServiceException(code=ResponseCode.BAD_REQUEST, message="会话UUID不能为空")
+
+    normalized_title = title.strip()
+    if not normalized_title:
+        raise ServiceException(code=ResponseCode.BAD_REQUEST, message="会话标题不能为空")
+
+    current_user_id = get_user_id()
+    updated = update_admin_conversation_title(
+        conversation_uuid=normalized_uuid,
+        user_id=current_user_id,
+        title=normalized_title,
+    )
+    if not updated:
+        raise ServiceException(code=ResponseCode.NOT_FOUND, message="会话不存在")
+
+    return normalized_title
 
 
 def generate_title(question: str) -> str:
@@ -592,7 +888,7 @@ def generate_title(question: str) -> str:
         4. 不得输出多个标题
         5. 不得添加任何前缀或后缀（例如“标题：”）
         6. 输出必须为单行文本
-        7. 字数不超过20个字
+        7. 字数不超过10个字
         8. 除非必要，不使用标点符号
         
         ---
@@ -614,7 +910,9 @@ def generate_title(question: str) -> str:
     if not question:
         return "未知标题"
 
-    llm_model = create_chat_model(model="qwen-flash")
+    llm_model = create_chat_model(
+        model="qwen-flash",
+    )
     messages = [
         SystemMessage(content=system_prompt),
         HumanMessage(content=question),

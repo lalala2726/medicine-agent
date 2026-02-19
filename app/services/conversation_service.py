@@ -304,3 +304,77 @@ def save_conversation_title(
         collection.update_one(query, update_doc)
     except PyMongoError as exc:
         raise ServiceException(code=ResponseCode.DATABASE_ERROR, message="数据库错误") from exc
+
+
+def update_admin_conversation_title(
+        *,
+        conversation_uuid: Annotated[str, Field(min_length=1)],
+        user_id: Annotated[int, Field(ge=1)],
+        title: Annotated[str, Field(min_length=1)],
+) -> bool:
+    """
+    更新当前用户的管理端会话标题。
+
+    Args:
+        conversation_uuid: 会话 UUID。
+        user_id: 当前用户 ID。
+        title: 新标题。
+
+    Returns:
+        bool: True 表示命中并更新成功；False 表示会话不存在或无权限。
+
+    Raises:
+        ServiceException: 数据库异常时抛出。
+    """
+
+    db = get_mongo_database()
+    collection = db[_TABLE_NAME]
+
+    now = datetime.datetime.now()
+    query = {
+        "uuid": conversation_uuid,
+        "conversation_type": _ADMIN_MARK,
+        "user_id": _to_mongo_long(user_id),
+    }
+    update_doc = {"$set": {"title": title, "update_time": now}}
+
+    try:
+        result = collection.update_one(query, update_doc)
+        return int(getattr(result, "matched_count", 0)) > 0
+    except PyMongoError as exc:
+        raise ServiceException(code=ResponseCode.DATABASE_ERROR, message="数据库错误") from exc
+
+
+def delete_admin_conversation(
+        *,
+        conversation_uuid: Annotated[str, Field(min_length=1)],
+        user_id: Annotated[int, Field(ge=1)],
+) -> bool:
+    """
+    删除当前用户的管理端会话。
+
+    Args:
+        conversation_uuid: 会话 UUID。
+        user_id: 当前用户 ID。
+
+    Returns:
+        bool: True 表示删除成功；False 表示会话不存在或无权限。
+
+    Raises:
+        ServiceException: 数据库异常时抛出。
+    """
+
+    db = get_mongo_database()
+    collection = db[_TABLE_NAME]
+
+    query = {
+        "uuid": conversation_uuid,
+        "conversation_type": _ADMIN_MARK,
+        "user_id": _to_mongo_long(user_id),
+    }
+
+    try:
+        result = collection.delete_one(query)
+        return int(getattr(result, "deleted_count", 0)) > 0
+    except PyMongoError as exc:
+        raise ServiceException(code=ResponseCode.DATABASE_ERROR, message="数据库错误") from exc

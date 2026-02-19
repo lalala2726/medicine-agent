@@ -3,7 +3,11 @@ import json
 
 from fastapi.responses import StreamingResponse
 from langchain_core.messages import AIMessage, HumanMessage
+import pytest
 
+from app.core.codes import ResponseCode
+from app.core.exceptions import ServiceException
+from app.schemas.admin_message import MessageRole, MessageStatus
 from app.schemas.base_request import PageRequest
 from app.schemas.sse_response import MessageType
 from app.services import admin_assisant_service as service_module
@@ -63,7 +67,7 @@ def test_chat_list_returns_current_user_conversations(monkeypatch):
         )[-1],
     )
 
-    rows, total = service_module.chat_list(
+    rows, total = service_module.conversation_list(
         page_request=PageRequest(
             page_num=2,
             page_size=20,
@@ -77,6 +81,76 @@ def test_chat_list_returns_current_user_conversations(monkeypatch):
     }
     assert rows == [{"conversation_uuid": "conv-1", "title": "标题1"}]
     assert total == 1
+
+
+def test_delete_conversation_calls_repository_with_current_user(monkeypatch):
+    captured: dict = {}
+    monkeypatch.setattr(service_module, "get_user_id", lambda: 101)
+    monkeypatch.setattr(
+        service_module,
+        "delete_admin_conversation",
+        lambda *, conversation_uuid, user_id: (
+            captured.update({"conversation_uuid": conversation_uuid, "user_id": user_id}),
+            True,
+        )[-1],
+    )
+
+    service_module.delete_conversation(conversation_uuid="conv-1")
+
+    assert captured == {"conversation_uuid": "conv-1", "user_id": 101}
+
+
+def test_delete_conversation_raises_not_found_when_missing(monkeypatch):
+    monkeypatch.setattr(service_module, "get_user_id", lambda: 101)
+    monkeypatch.setattr(
+        service_module,
+        "delete_admin_conversation",
+        lambda **_kwargs: False,
+    )
+
+    with pytest.raises(ServiceException) as exc_info:
+        service_module.delete_conversation(conversation_uuid="missing-conv")
+    assert exc_info.value.code == ResponseCode.NOT_FOUND.code
+
+
+def test_update_conversation_title_returns_normalized_title(monkeypatch):
+    captured: dict = {}
+    monkeypatch.setattr(service_module, "get_user_id", lambda: 101)
+    monkeypatch.setattr(
+        service_module,
+        "update_admin_conversation_title",
+        lambda *, conversation_uuid, user_id, title: (
+            captured.update(
+                {
+                    "conversation_uuid": conversation_uuid,
+                    "user_id": user_id,
+                    "title": title,
+                }
+            ),
+            True,
+        )[-1],
+    )
+
+    title = service_module.update_conversation_title(
+        conversation_uuid="conv-1",
+        title="  新标题  ",
+    )
+
+    assert title == "新标题"
+    assert captured == {
+        "conversation_uuid": "conv-1",
+        "user_id": 101,
+        "title": "新标题",
+    }
+
+
+def test_update_conversation_title_rejects_blank_title(monkeypatch):
+    with pytest.raises(ServiceException) as exc_info:
+        service_module.update_conversation_title(
+            conversation_uuid="conv-1",
+            title="   ",
+        )
+    assert exc_info.value.code == ResponseCode.BAD_REQUEST.code
 
 
 def test_prepare_new_conversation_returns_context_with_created_event(monkeypatch):
@@ -366,9 +440,18 @@ def test_answer_completed_schedules_async_persist_with_execution_trace(monkeypat
                     "model_name": "qwen-max",
                     "input_messages": [{"role": "human", "content": "用户问题"}],
                     "output_text": "AI回复",
-                    "tool_calls": [],
+                    "tool_calls": [
+                        {
+                            "tool_name": "query_orders",
+                            "tool_input": {"limit": 10},
+                            "tool_output": {"rows": 10},
+                            "is_error": False,
+                            "error_message": None,
+                        }
+                    ],
                 }
             ],
+            False,
         )
     )
 
@@ -386,9 +469,18 @@ def test_answer_completed_schedules_async_persist_with_execution_trace(monkeypat
                         "model_name": "qwen-max",
                         "input_messages": [{"role": "human", "content": "用户问题"}],
                         "output_text": "AI回复",
-                        "tool_calls": [],
+                        "tool_calls": [
+                            {
+                                "tool_name": "query_orders",
+                                "tool_input": {"limit": 10},
+                                "tool_output": {"rows": 10},
+                                "is_error": False,
+                                "error_message": None,
+                            }
+                        ],
                     }
                 ],
+                "status": MessageStatus.SUCCESS,
             },
         }
     ]
@@ -400,6 +492,195 @@ def test_answer_completed_schedules_async_persist_with_execution_trace(monkeypat
         }
     ]
     assert saved_messages[-1]["execution_trace"][0]["node_name"] == "chat_agent"
+    assert saved_messages[-1]["status"] == MessageStatus.SUCCESS
+    assert saved_messages[-1]["thought_chain"] is None
+
+
+def test_answer_completed_marks_error_status_when_stream_failed(monkeypatch):
+    """测试目标：流式执行报错时，assistant 消息落库状态为 error。"""
+
+    saved_messages: list[dict] = []
+
+    monkeypatch.setattr(
+        service_module,
+        "merge_assistant_token_usage",
+        lambda **_kwargs: {
+            "prompt_tokens": 1,
+            "completion_tokens": 1,
+            "total_tokens": 2,
+            "breakdown": None,
+        },
+    )
+    monkeypatch.setattr(
+        service_module,
+        "_schedule_background_task",
+        lambda *, task_name, func, kwargs: func(**kwargs),
+    )
+    monkeypatch.setattr(
+        service_module,
+        "add_message",
+        lambda **kwargs: saved_messages.append(kwargs) or "507f1f77bcf86cd799439012",
+    )
+
+    callback = service_module._build_assistant_message_callback(
+        conversation_id="507f1f77bcf86cd799439011",
+        question="用户问题",
+    )
+    asyncio.run(
+        callback(
+            "错误提示",
+            None,
+            [],
+            True,
+        )
+    )
+
+    assert saved_messages[-1]["status"] == MessageStatus.ERROR
+    assert saved_messages[-1]["thought_chain"] is None
+
+
+def test_answer_completed_persists_thought_chain_when_trace_contains_coordinator(monkeypatch):
+    """测试目标：命中 coordinator 路径才保存 thought_chain；成功标准：保存完整执行链。"""
+
+    saved_messages: list[dict] = []
+
+    monkeypatch.setattr(
+        service_module,
+        "merge_assistant_token_usage",
+        lambda **_kwargs: {
+            "prompt_tokens": 2,
+            "completion_tokens": 3,
+            "total_tokens": 5,
+            "breakdown": None,
+        },
+    )
+    monkeypatch.setattr(
+        service_module,
+        "_schedule_background_task",
+        lambda *, task_name, func, kwargs: func(**kwargs),
+    )
+    monkeypatch.setattr(
+        service_module,
+        "add_message",
+        lambda **kwargs: saved_messages.append(kwargs) or "507f1f77bcf86cd799439012",
+    )
+
+    callback = service_module._build_assistant_message_callback(
+        conversation_id="507f1f77bcf86cd799439011",
+        question="复杂问题",
+    )
+    asyncio.run(
+        callback(
+            "复杂回复",
+            None,
+            [
+                {
+                    "node_name": "coordinator_agent",
+                    "model_name": "qwen-max",
+                    "input_messages": [],
+                    "output_text": "计划已生成",
+                    "tool_calls": [],
+                },
+                {
+                    "node_name": "planner",
+                    "model_name": "unknown",
+                    "input_messages": [],
+                    "output_text": "调度执行",
+                    "tool_calls": [],
+                },
+                {
+                    "node_name": "order_agent",
+                    "model_name": "qwen-plus",
+                    "input_messages": [],
+                    "output_text": "订单结果",
+                    "tool_calls": [],
+                },
+            ],
+            False,
+        )
+    )
+
+    thought_chain = saved_messages[-1]["thought_chain"]
+    assert thought_chain is not None
+    assert [item["node"] for item in thought_chain] == [
+        "coordinator_agent",
+        "planner",
+        "order_agent",
+    ]
+
+
+def test_should_persist_thought_chain_only_when_contains_coordinator_agent():
+    """测试目标：thought_chain 保存判定只认 coordinator_agent。"""
+
+    assert service_module._should_persist_thought_chain(None) is False
+    assert service_module._should_persist_thought_chain([]) is False
+    assert service_module._should_persist_thought_chain(
+        [{"node_name": "chat_agent"}]
+    ) is False
+    assert service_module._should_persist_thought_chain(
+        [{"node_name": "coordinator_agent"}]
+    ) is True
+
+
+def test_build_thought_chain_maps_execution_trace_to_frontend_shape():
+    """测试目标：execution_trace 可转换为前端 thoughtChain 结构。"""
+
+    thought_chain = service_module._build_thought_chain(
+        [
+            {
+                "node_name": "planner",
+                "model_name": "qwen-max",
+                "input_messages": [],
+                "output_text": "完成",
+                "tool_calls": [
+                    {
+                        "tool_name": "query_orders",
+                        "tool_input": {"limit": 10},
+                        "tool_output": {"rows": [1, 2]},
+                        "is_error": False,
+                        "error_message": None,
+                    }
+                ],
+            }
+        ]
+    )
+
+    assert thought_chain is not None
+    assert thought_chain[0]["node"] == "planner"
+    assert thought_chain[0]["status"] == "success"
+    assert thought_chain[0]["children"][0]["message"] == "正在调用工具"
+    assert thought_chain[0]["children"][0]["arguments"] == "{\"limit\": 10}"
+    assert "result" not in thought_chain[0]["children"][0]
+    assert "query_orders" not in thought_chain[0]["children"][0]["message"]
+
+
+def test_build_thought_chain_uses_chinese_tool_message_for_known_tools():
+    """测试目标：已知工具在 thought_chain 中写入中文文案。"""
+
+    thought_chain = service_module._build_thought_chain(
+        [
+            {
+                "node_name": "order_agent",
+                "model_name": "qwen-max",
+                "input_messages": [],
+                "output_text": "完成",
+                "tool_calls": [
+                    {
+                        "tool_name": "get_orders_detail",
+                        "tool_input": {"order_id": ["198"]},
+                        "tool_output": {"rows": [1]},
+                        "is_error": False,
+                        "error_message": None,
+                    }
+                ],
+            }
+        ]
+    )
+
+    assert thought_chain is not None
+    child = thought_chain[0]["children"][0]
+    assert child["name"] == "get_orders_detail"
+    assert child["message"] == "正在调用订单详情"
 
 
 def test_persist_failure_only_logs_warning(monkeypatch):
@@ -518,3 +799,68 @@ def test_load_history_reads_latest_window_and_returns_chronological(monkeypatch)
         "ascending": False,
     }
     assert [message.content for message in history_messages] == ["Q1", "A1", "Q2"]
+
+
+def test_conversation_messages_returns_latest_page_in_chronological_order(monkeypatch):
+    """测试目标：历史消息按页读取最新窗口，返回时按时间升序。"""
+
+    monkeypatch.setattr(service_module, "get_user_id", lambda: 100)
+    monkeypatch.setattr(
+        service_module,
+        "_load_admin_conversation",
+        lambda *, conversation_uuid, user_id: "507f1f77bcf86cd799439011",
+    )
+    mock_docs = [
+        {
+            "uuid": "msg-ai-2",
+            "role": MessageRole.ASSISTANT,
+            "status": MessageStatus.SUCCESS,
+            "content": "AI第二条",
+            "thought_chain": [
+                {
+                    "id": "node-1",
+                    "node": "planner",
+                    "message": "planner",
+                    "status": "success",
+                    "children": [
+                        {
+                            "id": "step-1",
+                            "message": "调用工具 query_orders",
+                            "name": "query_orders",
+                            "arguments": "{\"limit\": 10}",
+                            "result": "这个字段不应返回给前端",
+                            "status": "success",
+                        }
+                    ],
+                }
+            ],
+        },
+        {
+            "uuid": "msg-user-1",
+            "role": MessageRole.USER,
+            "status": MessageStatus.SUCCESS,
+            "content": "用户第一条",
+            "thought_chain": None,
+        },
+    ]
+    monkeypatch.setattr(
+        service_module,
+        "list_messages",
+        lambda **_kwargs: [
+            type("Doc", (), item)() for item in mock_docs
+        ],
+    )
+
+    result = service_module.conversation_messages(
+        conversation_uuid="conv-1",
+        page_request=PageRequest(page_num=1, page_size=50),
+    )
+
+    assert [item.id for item in result] == ["msg-user-1", "msg-ai-2"]
+    assert result[0].role == "user"
+    assert result[0].status is None
+    assert result[1].role == "ai"
+    assert result[1].status == "success"
+    thought_chain = result[1].model_dump(by_alias=True)["thoughtChain"]
+    assert thought_chain[0]["node"] == "planner"
+    assert "result" not in thought_chain[0]["children"][0]
