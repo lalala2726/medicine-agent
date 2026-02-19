@@ -103,7 +103,7 @@ async def delete_conversation(
     )
 
 
-@router.put("/conversation/{conversation_uuid}/title", summary="修改管理助手会话标题")
+@router.put("/conversation/{conversation_uuid}", summary="修改管理助手会话标题")
 @pre_authorize(
     lambda: has_role(RoleCode.SUPER_ADMIN) or has_permission("admin:assistant:update")
 )
@@ -125,7 +125,7 @@ async def update_conversation_title(
     )
 
 
-@router.get("/conversation/{conversation_uuid}/messages", summary="管理助手历史消息")
+@router.get("/history/{conversation_uuid}", summary="管理助手历史消息")
 @pre_authorize(
     lambda: has_role(RoleCode.SUPER_ADMIN) or has_permission("admin:assistant:access")
 )
