@@ -3,28 +3,24 @@ from __future__ import annotations
 import json
 from typing import Any, Iterable
 
-from langchain_core.messages import AIMessage, BaseMessage
+from langchain_core.messages import AIMessage
 
-from agent.admin.state import AgentState
-from app.agent.admin.agent_utils import build_execution_trace_update
-
-
-def serialize_messages(messages: Iterable[BaseMessage]) -> list[dict[str, Any]]:
-    """
-    Serialize LangChain messages for execution traces.
-    """
-    serialized: list[dict[str, Any]] = []
-    for message in messages:
-        serialized.append(
-            {
-                "role": str(getattr(message, "type", "") or message.__class__.__name__).strip().lower() or "unknown",
-                "content": getattr(message, "content", ""),
-            }
-        )
-    return serialized
+from app.agent.admin.agent_utils import build_execution_trace_update, serialize_messages
+from app.agent.admin.state import AgentState
 
 
 def _append_unique(items: list[str], values: Iterable[str]) -> list[str]:
+    """
+    将去重后的新值追加到已有列表末尾。
+
+    Args:
+        items: 已有字符串列表，会在原列表基础上就地追加。
+        values: 待追加的候选值序列，会自动进行 `str().strip()` 标准化。
+
+    Returns:
+        list[str]: 追加后的原列表对象。仅当候选值非空且此前不存在时才会写入。
+    """
+
     seen = set(items)
     for value in values:
         candidate = str(value).strip()
@@ -36,10 +32,34 @@ def _append_unique(items: list[str], values: Iterable[str]) -> list[str]:
 
 
 def _normalize_key(key: str) -> str:
+    """
+    将字典键名归一化为仅含字母数字的小写形式。
+
+    Args:
+        key: 原始键名字符串。
+
+    Returns:
+        str: 去除空白并删除非字母数字字符后的键名，可用于跨接口字段名匹配。
+    """
+
     return "".join(ch for ch in key.strip().lower() if ch.isalnum())
 
 
 def _extract_scalar_ids(raw: Any) -> list[str]:
+    """
+    从任意输入中提取可作为 ID 的标量值。
+
+    Args:
+        raw: 任意输入，支持 `str`、`int`、`list` 递归结构。
+
+    Returns:
+        list[str]: 提取到的 ID 字符串列表。
+            - `None` 返回空列表；
+            - `str/int` 返回单元素列表；
+            - `list` 递归展开后返回聚合结果；
+            - 其他类型返回空列表。
+    """
+
     if raw is None:
         return []
     if isinstance(raw, (str, int)):
@@ -58,6 +78,18 @@ def _collect_ids_by_target(
         target: str,
         path: list[str] | None = None,
 ) -> list[str]:
+    """
+    从嵌套工具输出中按目标类型递归提取 ID。
+
+    Args:
+        payload: 工具输出对象，支持 `dict/list` 的任意嵌套。
+        target: 目标类型，仅支持 `order` 或 `product`。
+        path: 当前递归路径（归一化后的键名列表），内部递归使用，外部无需传入。
+
+    Returns:
+        list[str]: 命中目标字段规则后提取到的 ID 列表，未命中时返回空列表。
+    """
+
     current_path = list(path or [])
     collected: list[str] = []
 
@@ -128,8 +160,17 @@ def extract_ids_from_tool_calls(
         target: str,
 ) -> list[str]:
     """
-    Extract IDs from tool outputs in diagnostics details.
+    从工具调用明细中提取订单或商品 ID。
+
+    Args:
+        tool_calls: `execute_tool_node` 产出的工具调用明细列表。
+            每个元素通常包含 `tool_output` 字段。
+        target: 提取目标，支持 `order` 或 `product`。
+
+    Returns:
+        list[str]: 去重后的 ID 列表，保持首次出现顺序。
     """
+
     ids: list[str] = []
     for detail in tool_calls:
         if not isinstance(detail, dict):
@@ -155,8 +196,23 @@ def merge_context_outputs(
         error: str | None,
 ) -> dict[str, Any]:
     """
-    Merge node output payload into shared context.
+    将当前 worker 的执行结果合并进共享 context。
+
+    Args:
+        context: 现有上下文字典。
+        node_name: 当前节点名称，如 `order_agent`。
+        content: 节点对用户输出文本。
+        status: 节点执行状态，常见值为 `completed` 或 `failed`。
+        tool_calls: 工具调用明细列表。
+        error: 节点错误信息，成功时可为 `None`。
+
+    Returns:
+        dict[str, Any]: 合并后的新上下文，关键字段说明：
+            - `agent_outputs[node_name]`: 当前节点执行快照；
+            - `last_agent` / `last_agent_response`: 最近一次节点与其输出；
+            - `extracted_order_ids` / `extracted_product_ids`: 从工具输出累计提取的 ID。
     """
+
     merged_context = dict(context)
     agent_outputs = dict(merged_context.get("agent_outputs") or {})
     agent_outputs[node_name] = {
@@ -204,8 +260,28 @@ def build_worker_update(
         error: str | None = None,
 ) -> dict[str, Any]:
     """
-    Build standardized worker node update payload.
+    生成统一的 worker 节点状态更新结构。
+
+    Args:
+        state: 当前图状态。
+        node_name: 当前节点名。
+        result_key: 写入 `results` 的目标键（如 `order`）。
+        content: 节点输出文本。
+        status: 节点执行状态。
+        model_name: 执行模型名。
+        input_messages: 模型输入消息（已序列化结构）。
+        tool_calls: 工具调用明细。
+        error: 错误信息；成功时可为空。
+
+    Returns:
+        dict[str, Any]: 标准化更新字典，包含：
+            - `results[result_key]`：输出内容与 `is_end`；
+            - `context`：合并后的共享上下文；
+            - `messages`：一条 `AIMessage`；
+            - `execution_traces`：执行追踪；
+            - `errors`（可选）：失败错误列表。
     """
+
     routing = dict(state.get("routing") or {})
     mode = str(routing.get("mode") or "")
     is_end = mode == "fast_lane"
@@ -244,3 +320,10 @@ def build_worker_update(
     )
     return update
 
+
+__all__ = [
+    "build_worker_update",
+    "extract_ids_from_tool_calls",
+    "merge_context_outputs",
+    "serialize_messages",
+]

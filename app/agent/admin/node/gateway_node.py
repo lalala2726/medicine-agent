@@ -5,12 +5,12 @@ from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from app.agent.admin.agent_utils import build_execution_trace_update
-from app.agent.admin.node.common import serialize_messages
+from app.agent.admin.agent_utils import build_execution_trace_update, serialize_messages
 from app.agent.admin.state import AgentState
 from app.core.langsmith import traceable
 from app.core.llm import create_chat_model
 
+# Gateway 可路由的目标节点白名单，确保路由输出可控。
 _ALLOWED_ROUTE_TARGETS = {
     "order_agent",
     "product_agent",
@@ -34,6 +34,19 @@ _GATEWAY_PROMPT = """
 
 
 def _resolve_mode(route_target: str) -> str:
+    """
+    根据 gateway 路由目标推导执行模式。
+
+    Args:
+        route_target: gateway 产出的目标节点名。
+
+    Returns:
+        str: 模式字符串：
+            - `fast_lane`: 订单/商品直达；
+            - `chat`: 闲聊节点；
+            - `supervisor_loop`: 进入动态主管慢车道。
+    """
+
     if route_target in {"order_agent", "product_agent"}:
         return "fast_lane"
     if route_target == "chat_agent":
@@ -44,8 +57,22 @@ def _resolve_mode(route_target: str) -> str:
 @traceable(name="Supervisor Gateway Router Node", run_type="chain")
 def gateway_router(state: AgentState) -> dict[str, Any]:
     """
-    First-layer gateway router.
+    执行前置意图网关路由。
+
+    Args:
+        state: 当前图状态，主要读取 `user_input` 与 `messages`（用于轻量历史辅助判断）。
+
+    Returns:
+        dict[str, Any]: gateway 的状态更新字典，字段说明如下：
+            - `routing.route_target`: 路由目标节点；
+            - `routing.mode`: 执行模式（fast_lane/chat/supervisor_loop）；
+            - `routing.turn`: 初始化为 0；
+            - `routing.finished`: 初始化为 `False`；
+            - `next_node`: 与 route_target 保持一致；
+            - `context`: 初始化共享上下文（含调用计数、agent_outputs、原始输入）；
+            - `execution_traces`: 路由决策追踪。
     """
+
     user_input = str(state.get("user_input") or "").strip()
     history_messages = list(state.get("messages") or [])
     input_messages: list[Any] = [SystemMessage(content=_GATEWAY_PROMPT)]
@@ -95,4 +122,3 @@ def gateway_router(state: AgentState) -> dict[str, Any]:
         )
     )
     return update
-

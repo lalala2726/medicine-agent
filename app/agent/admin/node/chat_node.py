@@ -4,15 +4,15 @@ from typing import Any
 
 from langchain_core.messages import AIMessage
 
-from app.agent.admin.agent_utils import build_execution_trace_update
+from app.agent.admin.agent_utils import build_execution_trace_update, serialize_messages
 from app.agent.admin.history_utils import build_messages_with_history
-from app.agent.admin.node.common import serialize_messages
 from app.agent.admin.state import AgentState
 from app.core.langsmith import traceable
 from app.core.llm import create_chat_model
 from app.schemas.prompt import base_prompt
 from app.utils.streaming_utils import extract_text, invoke
 
+# 聊天节点系统提示词：用于处理闲聊或通用说明，不承担业务数据查询。
 _CHAT_SYSTEM_PROMPT = (
         """
 你是药品商城后台管理助手中的聊天节点（chat_agent）。
@@ -26,8 +26,19 @@ _CHAT_SYSTEM_PROMPT = (
 @traceable(name="Supervisor Chat Agent Node", run_type="chain")
 def chat_agent(state: AgentState) -> dict[str, Any]:
     """
-    Execute chat node.
+    执行聊天节点并返回可直接结束的响应。
+
+    Args:
+        state: 当前图状态，主要读取 `user_input` 与 `messages` 以构造有记忆的聊天输入。
+
+    Returns:
+        dict[str, Any]: 聊天节点状态更新，字段说明如下：
+            - `results.chat`: 聊天输出，固定 `is_end=True`；
+            - `messages`: 新增一条 AI 回复消息；
+            - `context.last_agent/last_agent_response`: 最近节点及其回答；
+            - `execution_traces`: 输入与输出追踪。
     """
+
     user_input = str(state.get("user_input") or "").strip() or "你好"
     messages = build_messages_with_history(
         system_prompt=_CHAT_SYSTEM_PROMPT,

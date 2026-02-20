@@ -1,5 +1,7 @@
 """
-Supervisor workflow nodes.
+Supervisor 工作流节点导出模块。
+
+统一导出 gateway、supervisor 与各业务节点，供 `workflow.py` 构图时集中引用。
 """
 
 from app.agent.admin.node.chat_node import chat_agent
@@ -17,4 +19,3 @@ __all__ = [
     "excel_agent",
     "chat_agent",
 ]
-
