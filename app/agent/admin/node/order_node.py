@@ -1,117 +1,78 @@
-from langchain_core.prompts import SystemMessagePromptTemplate
+from __future__ import annotations
 
-from app.agent.admin.agent_utils import (
-    build_standard_node_update,
-    execute_tool_node,
-)
-from app.agent.admin.agent_state import AgentState
-from app.agent.admin.node.runtime_context import (
-    build_instruction_with_failure_policy,
-    build_step_runtime,
-)
-from app.agent.tools.admin_tools import get_orders_detail, get_order_list
+import json
+from typing import Any
+
+from langchain_core.messages import HumanMessage, SystemMessage
+
+from app.agent.admin.agent_utils import execute_tool_node
+from app.agent.admin.node.common import build_worker_update, serialize_messages
+from app.agent.admin.state import AgentState
+from app.agent.admin.tools.admin_tools import get_order_list, get_orders_detail
 from app.core.assistant_status import status_node
 from app.core.langsmith import traceable
 from app.core.llm import create_chat_model
 from app.schemas.prompt import base_prompt
-from app.utils.streaming_utils import is_final_node
 
-system_prompt = (
+_ORDER_SYSTEM_PROMPT = (
         """
-        # 系统角色定义
-        你是运行在智能药品商城系统中的一个智能体节点。系统中同时存在多个智能体节点，
-        你必须严格服从协调节点的统一调度与指挥，请你按照指令行事。
-    
-        # 职责范围
-        你的唯一职责是处理与订单相关的业务，包括但不限于：
-        - 订单查询
-        - 订单校验
-        - 订单状态判断
-    
-        # 订单有效性约束
-        你只能处理真实且有效的订单数据：
-        - 若订单信息不存在、缺失或无法校验为有效订单，必须返回空结果
-        - 严禁构造、猜测、补全或返回任何虚假的订单信息
-        你在获取订单列表的时候就能获取大部分订单信息，除非用户让你查询订单的详细信息，你才主动去调用获取订单详细信息的工具。
-        你每次只能调用一个工具，并且必须拿到订单数据之后才能进行下一步
-    
-        # 行为准则
-        - 不得处理非订单业务
-        - 不得返回虚假数据
-        - 不得违背协调节点的调度指令
-    
-        下面是你的任务描述: {instruction}
-         """
+你是药品商城后台的订单节点（order_agent）。
+只处理订单相关任务，不要处理商品/闲聊。
+
+执行要求：
+1. 优先使用输入 context 的已提取信息（例如订单ID），避免重复追问用户。
+2. 仅使用真实工具返回，不得编造。
+3. 如果无结果，明确返回“未查到相关订单信息”。
+4. 每次执行尽量给出可继续推进的结构化信息（如订单ID、商品ID）。
+
+输入 instruction 是 JSON。
+"""
         + base_prompt
 )
+
+
+def _build_instruction(state: AgentState) -> str:
+    payload = {
+        "user_input": state.get("user_input"),
+        "context": state.get("context") or {},
+    }
+    return json.dumps(payload, ensure_ascii=False, default=str)
 
 
 @status_node(
     node="order",
     start_message="正在处理订单问题",
-    display_when="after_coordinator",
+    display_when="always",
 )
-@traceable(name="Order Agent Node", run_type="chain")
-def order_agent(state: AgentState) -> dict:
+@traceable(name="Supervisor Order Agent Node", run_type="chain")
+def order_agent(state: AgentState) -> dict[str, Any]:
     """
-    执行订单领域节点。
-
-    作用：
-    - 读取当前步骤运行时配置（任务描述、依赖输出、上下文开关）；
-    - 构造订单域提示词并调用订单工具；
-    - 按统一结构回写 `results/step_outputs/execution_traces`。
-
-    Args:
-        state: 当前全局状态，包含 routing/plan/step_outputs 等上下文。
-
-    Returns:
-        dict: 节点增量更新，至少包含：
-            - `results["order"]`
-            - `step_outputs`（存在 step_id 时）
-            - `execution_traces`
+    Execute order node in gateway + supervisor workflow.
     """
-    # 统一读取当前步骤运行时信息：
-    # - task_description
-    # - read_from 对应的上游输出
-    # - include_user_input / include_chat_history 开关
-    runtime = build_step_runtime(
-        state,
-        "order_agent",
-        default_task_description="请处理订单相关任务",
-    )
-    # 生成给模型的 instruction 文本（统一包含失败策略提示拼接逻辑）。
-    instruction = build_instruction_with_failure_policy(runtime)
-    failure_policy = runtime.get("failure_policy") or {}
-
+    instruction = _build_instruction(state)
+    input_messages: list[Any] = [
+        SystemMessage(content=_ORDER_SYSTEM_PROMPT),
+        HumanMessage(content=instruction),
+    ]
     llm = create_chat_model(model="qwen3-max")
-    messages = SystemMessagePromptTemplate.from_template(
-        template=system_prompt
-    ).format_messages(instruction=instruction)
-
-    tools = [get_orders_detail, get_order_list]
-    # final_output=true 时允许节点内部 stream（用于最终对用户输出的节点）。
-    final_output = is_final_node(state, "order_agent")
     execution_result = execute_tool_node(
         llm=llm,
-        messages=messages,
-        tools=tools,
-        enable_stream=final_output,
-        failure_policy=failure_policy,
+        messages=input_messages,
+        tools=[get_order_list, get_orders_detail],
+        enable_stream=True,
+        failure_policy={},
         fallback_content="订单服务暂时不可用，请稍后重试。",
         fallback_error="order_agent 执行失败",
     )
-
-    return build_standard_node_update(
+    return build_worker_update(
         state=state,
-        runtime=runtime,
         node_name="order_agent",
         result_key="order",
-        execution_result=execution_result,
-        is_end=final_output,
-        step_output_payload={
-            "order": {
-                "content": execution_result.content,
-                "is_end": final_output,
-            }
-        },
+        content=execution_result.content,
+        status=execution_result.status,
+        model_name=execution_result.model_name,
+        input_messages=serialize_messages(input_messages),
+        tool_calls=execution_result.tool_calls,
+        error=execution_result.error,
     )
+

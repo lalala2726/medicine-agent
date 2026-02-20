@@ -11,7 +11,7 @@ from fastapi.responses import StreamingResponse
 from langchain_core.messages import HumanMessage, SystemMessage
 from loguru import logger
 
-from app.agent.admin.agent_state import ChatHistoryMessage
+from app.agent.admin.state import ChatHistoryMessage
 from app.agent.admin.workflow import build_graph
 from app.core.assistant_status import resolve_tool_call_messages
 from app.core.codes import ResponseCode
@@ -43,6 +43,7 @@ ADMIN_WORKFLOW = build_graph()
 STREAM_OUTPUT_NODES = {
     "order_agent",
     "product_agent",
+    "excel_agent",
     "chat_agent",
     "summary_agent",
     "chart_agent",
@@ -120,17 +121,23 @@ def _build_initial_state(
     所有节点共享该状态结构，避免执行过程中出现缺失键导致的分支判断复杂化。
     """
 
-    # 初始状态里预置 step_outputs/history_messages/execution_traces，让 DAG 节点与 planner
-    # 不需要做大量判空分支。
+    base_history = list(history_messages or [])
+    seed_messages = list(base_history)
+    if not seed_messages:
+        seed_messages = [HumanMessage(content=question)]
+
     return {
         "user_input": question,
-        "user_intent": {},
-        "plan": [],
+        "next_node": "",
         "routing": {},
-        "history_messages": list(history_messages or []),
-        "step_outputs": {},
+        "context": {
+            "node_call_counts": {},
+            "agent_outputs": {},
+            "original_user_input": question,
+        },
+        "messages": seed_messages,
+        "history_messages": base_history,
         "execution_traces": [],
-        "shared_memory": {},
         "results": {},
         "errors": [],
     }
@@ -143,12 +150,18 @@ def _should_stream_token(stream_node: str | None, latest_state: dict[str, Any]) 
     规则：
     1. 节点必须在可输出白名单中；
     2. chat 节点总是可输出；
-    3. 其他节点只有在被判定为最终输出节点时才可输出。
+    3. supervisor 慢车道（mode=supervisor_loop）下，业务节点每步都可见；
+    4. 其他场景仍沿用最终输出判定。
     """
 
     if stream_node not in STREAM_OUTPUT_NODES:
         return False
-    return stream_node == "chat_agent" or is_final_node(latest_state, stream_node)
+    if stream_node == "chat_agent":
+        return True
+    routing = latest_state.get("routing") or {}
+    if isinstance(routing, dict) and routing.get("mode") == "supervisor_loop":
+        return True
+    return is_final_node(latest_state, stream_node)
 
 
 def _map_exception(exc: Exception) -> str:

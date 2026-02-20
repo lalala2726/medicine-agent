@@ -129,6 +129,53 @@ def test_assistant_request_defaults_conversation_uuid_to_none(monkeypatch):
     assert captured["conversation_uuid"] is None
 
 
+def test_assistant_request_normalizes_question_and_conversation_uuid(monkeypatch):
+    captured: dict = {}
+    _mock_auth(monkeypatch)
+
+    def _fake_assistant_chat(*, question: str, conversation_uuid: str | None = None):
+        captured["question"] = question
+        captured["conversation_uuid"] = conversation_uuid
+        return _build_streaming_response("ok")
+
+    monkeypatch.setattr(assistant_module, "assistant_chat", _fake_assistant_chat)
+    client = TestClient(app)
+
+    response = client.post(
+        "/admin/assistant/chat",
+        headers=_auth_headers(),
+        json={"question": "  请帮我查订单  ", "conversation_uuid": "  conv-1  "},
+    )
+
+    assert response.status_code == 200
+    assert captured["question"] == "请帮我查订单"
+    assert captured["conversation_uuid"] == "conv-1"
+
+
+def test_assistant_request_rejects_blank_question_after_trim(monkeypatch):
+    called = {"value": False}
+    _mock_auth(monkeypatch)
+
+    def _fake_assistant_chat(*, question: str, conversation_uuid: str | None = None):
+        called["value"] = True
+        return _build_streaming_response("should-not-run")
+
+    monkeypatch.setattr(assistant_module, "assistant_chat", _fake_assistant_chat)
+    client = TestClient(app)
+
+    response = client.post(
+        "/admin/assistant/chat",
+        headers=_auth_headers(),
+        json={"question": "   ", "conversation_uuid": "conv-1"},
+    )
+
+    assert response.status_code == 400
+    body = response.json()
+    assert body["code"] == 400
+    assert body["message"] == "Validation Failed"
+    assert called["value"] is False
+
+
 def test_assistant_request_rejects_legacy_conversion_uuid(monkeypatch):
     called = {"value": False}
     _mock_auth(monkeypatch)
