@@ -16,6 +16,7 @@ def create_chat_model(
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
         response_format: Optional[dict[str, Any]] = None,
+        extra_body: Optional[dict[str, Any]] = None,
         **kwargs
 ) -> ChatOpenAI:
     """
@@ -26,6 +27,7 @@ def create_chat_model(
         api_key: API密钥，默认使用环境变量 DASHSCOPE_API_KEY
         base_url: API基础URL，默认使用环境变量 DASHSCOPE_BASE_URL
         response_format: 响应格式配置，如 {"type": "json_object"}
+        extra_body: 透传给模型提供方的扩展参数，如 {"enable_thinking": True}
         **kwargs: 其他传递给 ChatOpenAI 的参数
 
     Returns:
@@ -38,9 +40,12 @@ def create_chat_model(
     if not key:
         raise RuntimeError("DASHSCOPE_API_KEY is not set")
 
-    model_kwargs = {}
+    raw_model_kwargs = kwargs.pop("model_kwargs", None)
+    model_kwargs = dict(raw_model_kwargs or {})
     if response_format:
         model_kwargs["response_format"] = response_format
+    if extra_body:
+        model_kwargs["extra_body"] = extra_body
     if model_kwargs:
         kwargs["model_kwargs"] = model_kwargs
     # 默认开启 stream_usage，优先获取模型返回的真实 token 消耗。

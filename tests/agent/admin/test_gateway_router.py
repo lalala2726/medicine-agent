@@ -128,31 +128,39 @@ def test_planner_keeps_difficulty_in_valid_range(difficulty: str):
 
 
 @pytest.mark.parametrize(
-    ("difficulty", "expected_model"),
+    ("difficulty", "expected_model", "expected_enable_thinking"),
     [
-        ("simple", "qwen-flash"),
-        ("medium", "qwen-plus"),
-        ("complex", "qwen-max"),
-        ("unknown", "qwen-flash"),
+        ("simple", "qwen-max", False),
+        ("medium", "qwen-max", True),
+        ("complex", "qwen3.5-plus", True),
+        ("unknown", "qwen-max", False),
     ],
 )
 def test_coordinator_switches_model_by_difficulty(
-        monkeypatch: pytest.MonkeyPatch, difficulty: str, expected_model: str
+        monkeypatch: pytest.MonkeyPatch,
+        difficulty: str,
+        expected_model: str,
+        expected_enable_thinking: bool,
 ):
-    captured: dict[str, str] = {}
+    captured: dict[str, object] = {}
 
     class _CoordinatorModel:
         def invoke(self, _messages):
             return _DummyResponse(json.dumps({"plan": []}))
 
-    def _fake_create_chat_model(*, model: str, **_kwargs):
+    def _fake_create_chat_model(*, model: str, **kwargs):
         captured["model"] = model
+        captured["extra_body"] = kwargs.get("extra_body")
         return _CoordinatorModel()
 
     monkeypatch.setattr(coordinator_module, "create_chat_model", _fake_create_chat_model)
     coordinator_module.coordinator(_build_initial_state("生成计划", routing={"difficulty": difficulty}))
 
     assert captured["model"] == expected_model
+    if expected_enable_thinking:
+        assert captured["extra_body"] == {"enable_thinking": True}
+    else:
+        assert captured["extra_body"] is None
 
 
 def _valid_plan() -> list[dict]:

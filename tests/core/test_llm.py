@@ -33,3 +33,22 @@ def test_create_chat_model_passes_kwargs(monkeypatch):
     assert model.kwargs["base_url"] == "https://example.test"
     assert model.kwargs["model_kwargs"] == {"response_format": {"type": "json_object"}}
     assert model.kwargs["stream_usage"] is True
+
+
+def test_create_chat_model_merges_extra_body_into_model_kwargs(monkeypatch):
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "test-key")
+    monkeypatch.setattr(llm, "ChatOpenAI", DummyChatOpenAI)
+
+    model = llm.create_chat_model(
+        model="custom-model",
+        response_format={"type": "json_object"},
+        extra_body={"enable_thinking": True},
+        model_kwargs={"custom_flag": 1},
+    )
+
+    assert isinstance(model, DummyChatOpenAI)
+    assert model.kwargs["model_kwargs"] == {
+        "custom_flag": 1,
+        "response_format": {"type": "json_object"},
+        "extra_body": {"enable_thinking": True},
+    }

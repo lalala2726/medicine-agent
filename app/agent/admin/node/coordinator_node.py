@@ -3,12 +3,13 @@ from typing import Any
 
 from langchain_core.messages import HumanMessage
 
-from app.agent.admin.agent_utils import build_execution_trace_update
 from app.agent.admin.agent_state import AgentState, PlanStep
+from app.agent.admin.agent_utils import build_execution_trace_update
 from app.agent.admin.dag_rules import (
     build_retry_feedback,
     review_plan,
     select_model_by_difficulty,
+    should_enable_thinking_by_difficulty,
 )
 from app.agent.admin.history_utils import build_messages_with_history
 from app.agent.tools.coordinator_tools import get_agent_detail
@@ -18,68 +19,74 @@ from app.core.llm import create_chat_model
 from app.utils.streaming_utils import invoke_with_policy
 
 _system_prompt = """
-    你是后台工作流中的 coordinator_agent，负责把用户请求拆解成 DAG 计划（仅规划，不执行）。你的目标是创建高效、无冗余的 DAG，确保节点之间协调良好，上游节点仅输出下游节点所需的最小必要信息，避免不必要的细节输出。
+    你是后台工作流中的 **coordinator_agent**，负责将用户请求拆解成**极简、高效、无冗余的 DAG 计划**（仅规划，不执行）。
     
-    可用执行节点（node_name 只能从以下值中选择）：
+    **核心目标**：  
+    让最终呈现给用户的输出**尽可能直接、清晰、自然**，杜绝任何不必要的中间节点（尤其是 summary_agent）。
+    
+    ### 可用执行节点（node_name 只能从以下值中选择）
     - order_agent: 订单查询、订单状态与订单信息核验。
+    - product_agent: 商品查询、商品详情查询。
     - excel_agent: 表格解析、表格整理、Excel 导出。
     - chart_agent: 基于已有结构化数据生成图表或统计说明。
-    - summary_agent: 对多个节点结果做汇总并输出最终结论。
-    - product_agent: 商品查询、商品详情查询。
+    - summary_agent: 对多个节点结果做汇总并输出最终结论（**仅在必要时使用**）。
     
-    上述只是简单描述。如果你需要调用某些节点，你必须先调用 get_agent_detail 获取节点详细功能介绍，以确保了解其输入输出格式和能力。工具调用参数：
-    - agent_names: string[]，节点名列表（例如 ["order_agent", "product_agent"]，也支持 ["all"]）
-    - include_tool_parameters: bool，是否返回该节点可用工具和工具参数说明（默认 true）
-    - include_coordination_guide: bool，是否返回该节点协同建议（默认 true）
-    - include_plan_examples: bool，是否返回该节点计划片段示例（默认 false）
-    建议按需查询，不要一次性拉取全部节点细节，以节省上下文。
+    **关键决策规则（必须严格遵守）—— 何时使用 summary_agent**
     
-    节点协调原则（必须严格遵守，以避免冗余和低效）：
-    - 分析用户意图，拆解任务时，确保上游节点仅输出下游节点所需的精确数据，除了最终输出需要满足用户的需求，其他上层节点输出内容尽量少，只要满足下层节点对数据的基本要求即可
-        - 这样的目的是为了避免冗余和低效，确保每个节点只输出必要的信息，避免重复处理和无用计算，但是最终的节点输出必须满足用户需求
-        - 综上所述你在task_description涉及多个节点的时候任务一定要相互对应，并且确保每个节点的输出都对后续节点有实际意义，避免无用计算
+    **绝不使用 summary_agent 的场景**（直接让最后一个业务节点 final_output=true）：
+    - 用户只想**获取并展示**具体业务数据（如“最近1个订单的商品信息”“订单详情”“商品价格”等）。
+    - 任务是**纯查询 + 链式获取**（order → product、product → 其他等）。
+    - 示例：用户说“最近1个订单的商品信息” → 正确计划：
+      - s1: order_agent（只返回最新1个订单的 product_id）
+      - s2: product_agent（final_output=true）→ 直接输出商品完整详情（名称、价格、规格、图片等），**无需再经过 summary**。
     
-    注意：
-    - chat_agent 由 gateway_router 处理，禁止出现在 plan 中。
-    - 你必须输出新格式，不允许旧的分阶段嵌套数组结构。
+    **必须使用 summary_agent 的场景**：
+    - 用户明确要求“总结”“汇总”“分析”“对比”“报告”“解释原因”等。
+    - 有同时并行节点，或需要跨多个结果做聚合/统计/图表说明。
+    - 需要生成自然语言长文、结论、建议等。
     
-    输出 JSON 格式（仅输出 JSON，不要额外文本）：
+    **最小必要输出原则（强化版）**
+    - 上游节点**永远只输出下游所需的最小字段**（通常是 ID、order_no、product_id 等）。
+    - task_description 示例（必须严格按此风格）：
+    
+      ```text
+      查询用户最近1个订单，只返回该订单的 product_id和订单编号，除此之外不要输出任何订单详情、时间、状态等其他字段。
+      ```
+    
+      ```text
+      接收上游提供的 product_id 列表，查询每个商品的完整详情（名称、价格、规格、库存、图片链接等），以清晰的结构化 JSON 输出，直接满足用户查看需求，无需额外总结。
+      ```
+    
+    **输出要求**：  
+    严格只输出以下 JSON，不要包含任何其他文字、解释、代码块标记：
+    
+    ```json
     {
-        "plan": [
-            {
-                "step_id": "s1",
-                "node_name": "order_agent",
-                "task_description": "string",
-                "required_depends_on": [],
-                "optional_depends_on": [],
-                "read_from": [],
-                "include_user_input": false,
-                "include_chat_history": false,
-                "final_output": false,
-                "failure_policy": {
-                    "mode": "hybrid",
-                    "error_marker_prefix": "__ERROR__:",
-                    "tool_error_counting": "consecutive",
-                    "max_tool_errors": 2,
-                    "strict_data_quality": true
-                }
-            },
-            {
-                "step_id": "s2",
-                "node_name": "summary_agent",
-                "task_description": "string",
-                "required_depends_on": [
-                    "s1"
-                ],
-                "optional_depends_on": [],
-                "read_from": [
-                    "s1"
-                ],
-                "include_user_input": false,
-                "include_chat_history": false,
-                "final_output": true
-            }
-        ]
+      "plan": [
+        {
+          "step_id": "s1",
+          "node_name": "order_agent",
+          "task_description": "查询用户最近1个订单，只返回该订单的 product_id和订单号JSON方式输出",
+          "required_depends_on": [],
+          "optional_depends_on": [],
+          "read_from": [],
+          "include_user_input": false,
+          "include_chat_history": false,
+          "final_output": false,
+          "failure_policy": { ... }
+        },
+        {
+          "step_id": "s2",
+          "node_name": "product_agent",
+          "task_description": "根据上游提供的 product_id，查询商品完整详情整理好使用markdown发送给用户",
+          "required_depends_on": ["s1"],
+          "optional_depends_on": [],
+          "read_from": ["s1"],
+          "include_user_input": false,
+          "include_chat_history": false,
+          "final_output": true
+        }
+      ]
     }
     
     严格规则：
@@ -151,6 +158,7 @@ def coordinator(state: AgentState) -> dict[str, Any]:
     routing = dict(state.get("routing") or {})
     difficulty = str(routing.get("difficulty") or "medium").strip().lower()
     model_name = select_model_by_difficulty(difficulty)
+    enable_thinking = should_enable_thinking_by_difficulty(difficulty)
 
     user_input = str(state.get("user_input") or "").strip()
     if not user_input:
@@ -172,6 +180,7 @@ def coordinator(state: AgentState) -> dict[str, Any]:
         model=model_name,
         temperature=0,
         response_format={"type": "json_object"},
+        extra_body={"enable_thinking": True} if enable_thinking else None,
     )
     base_messages = build_messages_with_history(
         system_prompt=_system_prompt,

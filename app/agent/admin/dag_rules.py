@@ -13,9 +13,15 @@ from app.agent.admin.agent_state import (
 
 # coordinator 计划生成时按难度选择模型。
 _COORDINATOR_MODEL_BY_DIFFICULTY = {
-    "simple": "qwen-flash",
-    "medium": "qwen-plus",
-    "complex": "qwen-max",
+    "simple": "qwen-max",
+    "medium": "qwen-max",
+    "complex": "qwen3.5-plus",
+}
+# 是否开启深度思考
+_COORDINATOR_THINKING_BY_DIFFICULTY = {
+    "simple": False,
+    "medium": True,
+    "complex": True,
 }
 
 # plan 审核时允许的业务节点。
@@ -181,6 +187,23 @@ def select_model_by_difficulty(difficulty: str) -> str:
     key = str(difficulty or "simple").strip().lower()
     return _COORDINATOR_MODEL_BY_DIFFICULTY.get(
         key, _COORDINATOR_MODEL_BY_DIFFICULTY["simple"]
+    )
+
+
+def should_enable_thinking_by_difficulty(difficulty: str) -> bool:
+    """
+    根据任务复杂度决定 coordinator 是否开启深度思考。
+
+    规则：
+    - simple: 关闭
+    - medium/complex: 开启
+    """
+    key = str(difficulty or "simple").strip().lower()
+    return bool(
+        _COORDINATOR_THINKING_BY_DIFFICULTY.get(
+            key,
+            _COORDINATOR_THINKING_BY_DIFFICULTY["simple"],
+        )
     )
 
 
