@@ -14,16 +14,20 @@ def _build_ajax_response(payload: dict) -> httpx.Response:
     return httpx.Response(status_code=200, request=request, json=payload)
 
 
-def test_verify_authorization_success(monkeypatch):
+def test_verify_authorization_success_with_user_roles_permissions(monkeypatch):
     fake_response = _build_ajax_response(
         {
             "code": 200,
             "message": "success",
             "data": {
-                "id": 1,
-                "username": "alice",
-                "phoneNumber": "13800000000",
-                "realName": "Alice",
+                "user": {
+                    "id": 1,
+                    "username": "alice",
+                    "phoneNumber": "13800000000",
+                    "realName": "Alice",
+                },
+                "roles": ["super_admin"],
+                "permissions": ["admin:assistant:access"],
             },
         }
     )
@@ -49,6 +53,49 @@ def test_verify_authorization_success(monkeypatch):
     assert result.id == 1
     assert result.phone_number == "13800000000"
     assert result.real_name == "Alice"
+    assert result.roles == ["super_admin"]
+    assert result.permissions == ["admin:assistant:access"]
+
+
+def test_verify_authorization_defaults_empty_roles_permissions_when_null(monkeypatch):
+    fake_response = _build_ajax_response(
+        {
+            "code": 200,
+            "message": "success",
+            "data": {
+                "user": {
+                    "id": 1,
+                    "username": "alice",
+                    "phoneNumber": "13800000000",
+                    "realName": "Alice",
+                },
+                "roles": None,
+                "permissions": None,
+            },
+        }
+    )
+
+    class FakeHttpClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def get(self, _url):
+            return fake_response
+
+    monkeypatch.setattr(auth_service, "HttpClient", FakeHttpClient)
+
+    result = asyncio.run(auth_service.verify_authorization())
+
+    assert isinstance(result, AuthUser)
+    assert result.id == 1
+    assert result.roles == []
+    assert result.permissions == []
 
 
 def test_verify_authorization_maps_401(monkeypatch):
@@ -82,7 +129,7 @@ def test_verify_authorization_maps_401(monkeypatch):
     assert exc_info.value.message == "token invalid"
 
 
-def test_verify_authorization_maps_401x_to_401(monkeypatch):
+def test_verify_authorization_keeps_401x_code(monkeypatch):
     fake_response = _build_ajax_response(
         {
             "code": 4011,
@@ -109,11 +156,11 @@ def test_verify_authorization_maps_401x_to_401(monkeypatch):
     with pytest.raises(ServiceException) as exc_info:
         asyncio.run(auth_service.verify_authorization())
 
-    assert exc_info.value.code == ResponseCode.UNAUTHORIZED.code
+    assert exc_info.value.code == 4011
     assert exc_info.value.message == "访问令牌已过期"
 
 
-def test_verify_authorization_maps_500_to_503(monkeypatch):
+def test_verify_authorization_keeps_500_code(monkeypatch):
     fake_response = _build_ajax_response(
         {
             "code": 500,
@@ -140,7 +187,7 @@ def test_verify_authorization_maps_500_to_503(monkeypatch):
     with pytest.raises(ServiceException) as exc_info:
         asyncio.run(auth_service.verify_authorization())
 
-    assert exc_info.value.code == 503
+    assert exc_info.value.code == 500
 
 
 def test_verify_authorization_maps_network_error_to_503(monkeypatch):
@@ -165,13 +212,84 @@ def test_verify_authorization_maps_network_error_to_503(monkeypatch):
     assert exc_info.value.code == 503
 
 
-def test_verify_authorization_maps_non_json_to_503(monkeypatch):
+def test_verify_authorization_keeps_non_json_parse_error(monkeypatch):
     request = httpx.Request("GET", "http://test/agent/authorization")
     fake_response = httpx.Response(
         status_code=200,
         request=request,
         text="not json",
         headers={"content-type": "text/plain"},
+    )
+
+    class FakeHttpClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def get(self, _url):
+            return fake_response
+
+    monkeypatch.setattr(auth_service, "HttpClient", FakeHttpClient)
+
+    with pytest.raises(ServiceException) as exc_info:
+        asyncio.run(auth_service.verify_authorization())
+
+    assert exc_info.value.code == ResponseCode.OPERATION_FAILED.code
+
+
+def test_verify_authorization_maps_invalid_roles_to_503(monkeypatch):
+    fake_response = _build_ajax_response(
+        {
+            "code": 200,
+            "message": "success",
+            "data": {
+                "user": {
+                    "id": 1,
+                    "username": "alice",
+                },
+                "roles": "super_admin",
+                "permissions": ["admin:assistant:access"],
+            },
+        }
+    )
+
+    class FakeHttpClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def get(self, _url):
+            return fake_response
+
+    monkeypatch.setattr(auth_service, "HttpClient", FakeHttpClient)
+
+    with pytest.raises(ServiceException) as exc_info:
+        asyncio.run(auth_service.verify_authorization())
+
+    assert exc_info.value.code == 503
+
+
+def test_verify_authorization_maps_null_user_to_503(monkeypatch):
+    fake_response = _build_ajax_response(
+        {
+            "code": 200,
+            "message": "success",
+            "data": {
+                "user": None,
+                "roles": None,
+                "permissions": None,
+            },
+        }
     )
 
     class FakeHttpClient:

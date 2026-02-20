@@ -22,7 +22,25 @@ from app.services.auth_service import verify_authorization
 # 加载 .env 配置，确保本地开发环境变量生效
 load_dotenv()
 
-app = FastAPI()
+OPENAPI_DESCRIPTION = """
+## 项目简介
+
+本项目提供药品相关的 AI 能力接口，包含管理助手对话、药品图片解析、知识库导入与检索等功能。
+
+## 认证说明
+
+除 `/docs`、`/redoc`、`/openapi.json` 外，其他接口均需要认证。
+
+请由药品服务端提供访问令牌，并在请求头中携带：
+
+- `Authorization: Bearer <token>`
+"""
+
+app = FastAPI(
+    title="Medicine AI Agent API",
+    description=OPENAPI_DESCRIPTION,
+    version="0.1.0",
+)
 app.add_middleware(CORSMiddleware, **load_cors_config())
 app.include_router(api_router)
 

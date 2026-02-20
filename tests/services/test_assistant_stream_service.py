@@ -80,7 +80,7 @@ def _build_config(
         extract_final_content: Callable[[dict[str, Any]], str] | None = None,
         map_exception: Callable[[Exception], str] | None = None,
         initial_emitted_events: tuple[AssistantResponse, ...] = (),
-        on_answer_completed: Callable[[str, dict[str, Any] | None, list[dict[str, Any]] | None], None] | None = None,
+        on_answer_completed: Callable[..., None] | None = None,
 ) -> AssistantStreamConfig:
     return AssistantStreamConfig(
         workflow=workflow,
@@ -471,6 +471,44 @@ def test_on_answer_completed_receives_three_args():
     assert len(callback_args) == 1
     assert callback_args[0]["answer_text"] == "好"
     assert isinstance(callback_args[0]["execution_trace"], list)
+
+
+def test_on_answer_completed_supports_four_args_with_has_error():
+    """测试目标：4 参回调可收到 has_error 标志。"""
+
+    class _ErrorAsyncGraph:
+        async def astream(self, _state: dict, **_kwargs):
+            raise RuntimeError("爆炸")
+            yield  # pragma: no cover
+
+    callback_args: list[dict[str, Any]] = []
+
+    def _callback(
+            answer_text: str,
+            token_usage: dict[str, Any] | None,
+            execution_trace: list[dict[str, Any]] | None,
+            has_error: bool,
+    ) -> None:
+        callback_args.append(
+            {
+                "answer_text": answer_text,
+                "token_usage": token_usage,
+                "execution_trace": execution_trace,
+                "has_error": has_error,
+            }
+        )
+
+    _stream_with_config(
+        _build_config(
+            _ErrorAsyncGraph(),
+            map_exception=lambda exc: f"错误映射: {exc}",
+            on_answer_completed=_callback,
+        )
+    )
+
+    assert len(callback_args) == 1
+    assert callback_args[0]["answer_text"] == "错误映射: 爆炸"
+    assert callback_args[0]["has_error"] is True
 
 
 def test_execution_trace_summary_reads_full_graph_nodes():

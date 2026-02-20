@@ -1,11 +1,11 @@
 """
-LangGraph CLI entrypoint.
+LangGraph 运行入口。
 
-Expose a module-level compiled graph so `langgraph dev` can load it from
-`langgraph.json` via `./app/agent/admin/langgraph_app.py:graph`.
+该模块仅负责暴露编译后的 `graph` 变量，供 `langgraph.json` 或运行时
+通过 `module:path` 方式动态加载。
 """
 
 from app.agent.admin.workflow import build_graph
 
-# LangGraph CLI expects a top-level graph object.
+# 运行时读取的图实例。
 graph = build_graph()

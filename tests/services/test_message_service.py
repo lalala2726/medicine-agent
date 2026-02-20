@@ -6,7 +6,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 
 from app.core.codes import ResponseCode
 from app.core.exceptions import ServiceException
-from app.schemas.admin_message import AdminMessageDocument, MessageRole, TokenUsage
+from app.schemas.admin_message import AdminMessageDocument, MessageRole, MessageStatus, TokenUsage
 from app.services import message_service as service_module
 
 
@@ -20,6 +20,7 @@ class _DummyCursor:
         self._rows = list(rows)
         self.sort_field: str | None = None
         self.sort_direction: int | None = None
+        self.skip_value: int = 0
         self.limit_value: int | None = None
 
     def sort(self, field: str, direction: int):
@@ -31,6 +32,10 @@ class _DummyCursor:
         self.limit_value = value
         return self
 
+    def skip(self, value: int):
+        self.skip_value = value
+        return self
+
     def __iter__(self):
         rows = list(self._rows)
         if self.sort_field is not None:
@@ -38,6 +43,8 @@ class _DummyCursor:
                 key=lambda item: item.get(self.sort_field),
                 reverse=self.sort_direction == -1,
             )
+        if self.skip_value:
+            rows = rows[self.skip_value:]
         if self.limit_value is not None:
             rows = rows[: self.limit_value]
         return iter(rows)
@@ -97,6 +104,7 @@ def test_add_message_inserts_expected_document(monkeypatch):
     assert collection.last_inserted is not None
     assert collection.last_inserted["uuid"] == "msg-uuid-1"
     assert collection.last_inserted["role"] == MessageRole.USER
+    assert collection.last_inserted["status"] == MessageStatus.SUCCESS
     assert collection.last_inserted["content"] == "你好"
     assert collection.last_inserted["conversation_id"] == ObjectId("507f1f77bcf86cd799439011")
     assert collection.last_inserted["token_usage"] == {
@@ -172,6 +180,7 @@ def test_list_messages_returns_typed_models(monkeypatch):
     result = service_module.list_messages(
         conversation_id="507f1f77bcf86cd799439011",
         limit=2,
+        skip=0,
         ascending=True,
     )
 
@@ -182,6 +191,57 @@ def test_list_messages_returns_typed_models(monkeypatch):
     assert all(isinstance(item, AdminMessageDocument) for item in result)
     assert result[0].content == "a"
     assert result[1].content == "b"
+
+
+def test_list_messages_supports_skip_with_descending_order(monkeypatch):
+    """验证 list_messages：支持 skip 分页，且可按 created_at 倒序读取。"""
+
+    collection = _DummyCollection()
+    collection.find_rows = [
+        {
+            "_id": ObjectId("507f1f77bcf86cd799439020"),
+            "uuid": "msg-1",
+            "conversation_id": ObjectId("507f1f77bcf86cd799439011"),
+            "role": "assistant",
+            "content": "a",
+            "created_at": datetime.datetime(2026, 1, 1, 10, 0, 1),
+            "updated_at": datetime.datetime(2026, 1, 1, 10, 0, 1),
+        },
+        {
+            "_id": ObjectId("507f1f77bcf86cd799439021"),
+            "uuid": "msg-2",
+            "conversation_id": ObjectId("507f1f77bcf86cd799439011"),
+            "role": "assistant",
+            "content": "b",
+            "created_at": datetime.datetime(2026, 1, 1, 10, 0, 2),
+            "updated_at": datetime.datetime(2026, 1, 1, 10, 0, 2),
+        },
+        {
+            "_id": ObjectId("507f1f77bcf86cd799439022"),
+            "uuid": "msg-3",
+            "conversation_id": ObjectId("507f1f77bcf86cd799439011"),
+            "role": "assistant",
+            "content": "c",
+            "created_at": datetime.datetime(2026, 1, 1, 10, 0, 3),
+            "updated_at": datetime.datetime(2026, 1, 1, 10, 0, 3),
+        },
+    ]
+    monkeypatch.setattr(
+        service_module,
+        "get_mongo_database",
+        lambda: {"admin_messages": collection},
+    )
+    monkeypatch.setattr(service_module, "_resolve_collection_name", lambda: "admin_messages")
+
+    result = service_module.list_messages(
+        conversation_id="507f1f77bcf86cd799439011",
+        limit=1,
+        skip=1,
+        ascending=False,
+    )
+
+    assert len(result) == 1
+    assert result[0].uuid == "msg-2"
 
 
 def test_add_message_rejects_invalid_conversation_id(monkeypatch):
@@ -301,6 +361,24 @@ def test_add_message_persists_execution_trace_for_assistant(monkeypatch):
             ],
         }
     ]
+
+
+def test_add_message_persists_error_status(monkeypatch):
+    """验证 add_message：支持显式写入 error 状态。"""
+
+    collection = _DummyCollection()
+    monkeypatch.setattr(service_module, "get_mongo_database", lambda: {"admin_messages": collection})
+    monkeypatch.setattr(service_module, "_resolve_collection_name", lambda: "admin_messages")
+
+    service_module.add_message(
+        conversation_id="507f1f77bcf86cd799439011",
+        role=MessageRole.ASSISTANT,
+        status=MessageStatus.ERROR,
+        content="查询失败",
+    )
+
+    assert collection.last_inserted is not None
+    assert collection.last_inserted["status"] == MessageStatus.ERROR
 
 
 def test_add_message_user_still_auto_builds_token_usage(monkeypatch):

@@ -11,11 +11,43 @@ DEFAULT_EMBEDDING_MODEL = os.getenv("DASHSCOPE_EMBEDDING_MODEL", "text-embedding
 DEFAULT_BASE_URL = os.getenv("DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
 
 
+def _resolve_extra_body(
+        model_kwargs: dict[str, Any],
+        *,
+        extra_body: Optional[dict[str, Any]],
+        think: bool,
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """
+    从 `model_kwargs` 中提取并合并 `extra_body`，同时按需开启深度思考。
+
+    Args:
+        model_kwargs: 当前 `model_kwargs` 字典（会复制后处理，不会原地修改入参）。
+            兼容从该字典中读取旧写法 `extra_body`。
+        extra_body: 调用方显式传入的扩展参数。
+        think: 是否开启深度思考；开启时会强制写入 `enable_thinking=True`。
+
+    Returns:
+        tuple[dict[str, Any], dict[str, Any] | None]:
+            - 第一个元素为清理后的 `model_kwargs`（已移除 `extra_body`）；
+            - 第二个元素为合并后的 `extra_body`（无内容时为 None）。
+    """
+
+    cleaned_model_kwargs = dict(model_kwargs)
+    nested_extra_body = dict(cleaned_model_kwargs.pop("extra_body", None) or {})
+    if extra_body:
+        nested_extra_body.update(extra_body)
+    if think:
+        nested_extra_body["enable_thinking"] = True
+    return cleaned_model_kwargs, (nested_extra_body or None)
+
+
 def create_chat_model(
         model: str = DEFAULT_CHAT_MODEL,
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
         response_format: Optional[dict[str, Any]] = None,
+        extra_body: Optional[dict[str, Any]] = None,
+        think: bool = False,
         **kwargs
 ) -> ChatOpenAI:
     """
@@ -26,6 +58,8 @@ def create_chat_model(
         api_key: API密钥，默认使用环境变量 DASHSCOPE_API_KEY
         base_url: API基础URL，默认使用环境变量 DASHSCOPE_BASE_URL
         response_format: 响应格式配置，如 {"type": "json_object"}
+        extra_body: 透传给模型提供方的扩展参数，如 {"enable_thinking": True}
+        think: 是否开启深度思考。为 True 时自动透传 `extra_body.enable_thinking=True`
         **kwargs: 其他传递给 ChatOpenAI 的参数
 
     Returns:
@@ -38,11 +72,20 @@ def create_chat_model(
     if not key:
         raise RuntimeError("DASHSCOPE_API_KEY is not set")
 
-    model_kwargs = {}
+    raw_model_kwargs = kwargs.pop("model_kwargs", None)
+    model_kwargs = dict(raw_model_kwargs or {})
     if response_format:
         model_kwargs["response_format"] = response_format
+    model_kwargs, resolved_extra_body = _resolve_extra_body(
+        model_kwargs,
+        extra_body=extra_body,
+        think=think,
+    )
     if model_kwargs:
         kwargs["model_kwargs"] = model_kwargs
+    if resolved_extra_body:
+        # 使用显式参数传递 `extra_body`，避免 langsmith 对 model_kwargs 的告警。
+        kwargs["extra_body"] = resolved_extra_body
     # 默认开启 stream_usage，优先获取模型返回的真实 token 消耗。
     # 若供应商未返回 usage，业务层会使用 tiktoken 估算兜底。
     kwargs.setdefault("stream_usage", True)
@@ -53,6 +96,21 @@ def create_chat_model(
         base_url=base_url or DEFAULT_BASE_URL,
         **kwargs,
     )
+
+
+def create_chat_mode(*args, **kwargs) -> ChatOpenAI:
+    """
+    `create_chat_model` 的兼容别名。
+
+    Args:
+        *args: 透传给 `create_chat_model` 的位置参数。
+        **kwargs: 透传给 `create_chat_model` 的关键字参数。
+
+    Returns:
+        ChatOpenAI: 聊天模型客户端实例。
+    """
+
+    return create_chat_model(*args, **kwargs)
 
 
 def create_embedding_model(

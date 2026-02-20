@@ -1,108 +1,128 @@
-from langchain_core.prompts import SystemMessagePromptTemplate
+from __future__ import annotations
+
+import json
+from typing import Any
 
 from app.agent.admin.agent_utils import (
-    build_standard_node_update,
-    execute_tool_node,
+    build_mode_aware_instruction_payload,
+    run_standard_tool_worker,
 )
-from app.agent.admin.agent_state import AgentState
-from app.agent.admin.node.runtime_context import (
-    build_instruction_with_failure_policy,
-    build_step_runtime,
+from app.agent.admin.state import AgentState
+from app.agent.admin.tools.admin_tools import (
+    get_drug_detail,
+    get_product_detail,
+    get_product_list,
 )
-from app.agent.tools.admin_tools import get_product_list, get_product_detail
 from app.core.assistant_status import status_node
 from app.core.langsmith import traceable
-from app.core.llm import create_chat_model
 from app.schemas.prompt import base_prompt
-from app.utils.streaming_utils import is_final_node
 
-system_prompt = (
+# 商品节点系统提示词：约束该节点只处理商品域任务，并按执行模式使用历史或主管指令。
+_PRODUCT_SYSTEM_PROMPT = (
         """
-        # 系统角色定义
-        你是运行在智能药品商城系统中的商品智能体节点。
-        你必须严格服从协调节点调度，只处理商品域任务。
-
-        # 职责范围
-        - 商品列表查询与筛选
-        - 商品详情查询
-        - 商品状态与价格相关核验
-        大部分情况下你在调用商品列表商品列表给你返回的信息就可以获取大部分信息，除非用户的需求商品列表无法满足你可以调用商品详情获取更加详细的信息
+        你是药品商城后台的商品节点（product_agent）。
+        只处理商品相关任务，不要处理订单/闲聊。
         
-        # 工具使用
-        - 商品列表查询：调用 get_product_list 工具，根据商品名称、分类、价格区间、品牌等条件进行商品列表查询。
-        - 商品详情查询：调用 get_product_detail 工具，根据商品 ID 获取商品详情信息。当你需要查询多个商品详情时，这边优先一次性传递多个商品 ID 进行批量查询。
-            应该尽量避免一次传递1个商品 ID，优先一次性传递多个商品 ID 进行批量查询。
-
-        # 数据约束
-        - 只能使用真实返回数据，不得编造
-        - 若查询无结果，明确返回空结果
-
-        下面是你的任务描述: {instruction}
-         """
+        输入约定：
+        1. 你收到的是 instruction JSON，包含 user_input/context/execution_mode/task_difficulty。
+        2. execution_mode=supervisor_loop 时，必须优先执行 node_goal。
+        3. execution_mode=fast_lane 时，可结合 chat_history 理解上下文。
+        
+核心规则：
+1. 只基于真实工具结果回答，不得编造。
+2. 优先执行 supervisor 下发的 node_goal，不要偏离任务目标。
+3. 调用 get_product_detail/get_drug_detail 时，product_id 必须为 List[str] JSON 数组。
+        4. 有多个商品ID时优先批量查询，不要逐个重复调用。
+        5. 输出要直接、简洁，不要重复段落，不要输出“我将调用某工具”。
+        6. 若无结果，明确返回“未查到相关商品信息”，并给出可执行下一步建议。
+        7. 若用户目标涉及上下架/库存判断，返回时优先包含状态字段和结论。
+        
+        示例 A（fast_lane）：
+        instruction:
+        {
+          "user_input": "查商品2001库存和上下架状态",
+          "execution_mode": "fast_lane",
+          "context": {}
+        }
+        期望行为：
+        调用商品详情相关工具，参数示例 {"product_id":["2001"]}，返回库存与状态。
+        
+        示例 B（supervisor_loop，跨域第二步）：
+instruction:
+{
+  "execution_mode": "supervisor_loop",
+  "node_goal": "基于已传递的商品ID列表批量查询商品详情",
+  "context": {}
+}
+        期望行为：
+        批量调用详情工具，输出商品关键信息并给出汇总结论。
+        
+        示例 C（药品详情）：
+instruction:
+{
+  "user_input": "查这些商品的药品说明",
+  "context": {},
+  "execution_mode": "supervisor_loop",
+  "node_goal": "查询药品说明书信息"
+}
+        期望行为：
+        调用 get_drug_detail，参数 {"product_id":["2001","2003"]}，输出适应症/用法用量等要点。
+        
+        输入 instruction 是 JSON。
+"""
         + base_prompt
 )
+
+
+def _build_instruction(state: AgentState) -> str:
+    """
+    生成商品节点 instruction JSON 字符串。
+
+    该函数保留给现有测试与调试调用，同时内部复用公共 helper，
+    保证与 `order_node` 的构建逻辑一致。
+
+    Args:
+        state: 当前图状态，需包含 `routing.mode` 以及可选的 `messages/context/node_goal`。
+
+    Returns:
+        str: JSON 字符串形式的 instruction，字段由
+            `build_mode_aware_instruction_payload` 统一生成。
+    """
+
+    payload = build_mode_aware_instruction_payload(state)
+    return json.dumps(payload, ensure_ascii=False, default=str)
 
 
 @status_node(
     node="product",
     start_message="正在处理商品问题",
-    display_when="after_coordinator",
+    display_when="always",
 )
-@traceable(name="Product Agent Node", run_type="chain")
-def product_agent(state: AgentState) -> dict:
+@traceable(name="Supervisor Product Agent Node", run_type="chain")
+def product_agent(state: AgentState) -> dict[str, Any]:
     """
-    执行商品领域节点。
-
-    作用：
-    - 基于步骤配置构造商品查询任务；
-    - 调用商品工具（列表/详情）完成业务处理；
-    - 输出标准化节点结果与执行追踪。
+    执行商品 worker 节点并返回标准状态更新。
 
     Args:
-        state: 当前全局状态，含步骤映射、上游输出与上下文开关。
+        state: 当前 LangGraph 状态，包含用户输入、上下文、路由模式与历史消息。
 
     Returns:
-        dict: 节点增量更新（results、step_outputs、execution_traces）。
+        dict[str, Any]: 节点增量更新结果，至少包含：
+            - `results.product`：商品节点输出内容与是否结束标志；
+            - `context`：合并后的共享上下文（含提取 ID 与最新节点输出）；
+            - `messages`：一条 AI 回复消息；
+            - `execution_traces`：执行链路追踪信息；
+            - `errors`（可选）：失败时的错误说明。
     """
-    # 从 planner 当前步骤中读取运行时配置与上游可读输出。
-    runtime = build_step_runtime(
-        state,
-        "product_agent",
-        default_task_description="请处理商品相关任务",
-    )
-    # 将任务描述 + 上游输出 + 可选上下文整合，并统一附加失败策略提示。
-    instruction = build_instruction_with_failure_policy(runtime)
-    failure_policy = runtime.get("failure_policy") or {}
 
-    llm = create_chat_model(model="qwen3-max")
-    messages = SystemMessagePromptTemplate.from_template(
-        template=system_prompt
-    ).format_messages(instruction=instruction)
-
-    tools = [get_product_list, get_product_detail]
-    # 只有最终输出步骤才开启 stream 分支。
-    final_output = is_final_node(state, "product_agent")
-    execution_result = execute_tool_node(
-        llm=llm,
-        messages=messages,
-        tools=tools,
-        enable_stream=final_output,
-        failure_policy=failure_policy,
-        fallback_content="商品服务暂时不可用，请稍后重试。",
-        fallback_error="product_agent 执行失败",
-    )
-
-    return build_standard_node_update(
+    return run_standard_tool_worker(
         state=state,
-        runtime=runtime,
         node_name="product_agent",
         result_key="product",
-        execution_result=execution_result,
-        is_end=final_output,
-        step_output_payload={
-            "product": {
-                "content": execution_result.content,
-                "is_end": final_output,
-            }
-        },
+        system_prompt=_PRODUCT_SYSTEM_PROMPT,
+        tools=[get_product_list, get_product_detail, get_drug_detail],
+        fallback_content="商品服务暂时不可用，请稍后重试。",
+        fallback_error="product_agent 执行失败",
+        enable_stream=True,
+        failure_policy={},
     )

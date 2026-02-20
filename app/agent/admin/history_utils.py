@@ -4,7 +4,7 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
-from app.agent.admin.agent_state import ChatHistoryMessage
+from app.agent.admin.state import ChatHistoryMessage
 
 
 def _extract_message_text(message: ChatHistoryMessage) -> str:

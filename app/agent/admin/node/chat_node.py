@@ -1,129 +1,125 @@
-import json
+from __future__ import annotations
+
 from typing import Any
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage
 
-from app.agent.admin.agent_utils import build_execution_trace_update
-from app.agent.admin.agent_state import AgentState
+from app.agent.admin.agent_utils import build_execution_trace_update, serialize_messages
 from app.agent.admin.history_utils import build_messages_with_history
+from app.agent.admin.model_policy import normalize_task_difficulty, resolve_model_profile
+from app.agent.admin.state import AgentState
+from app.core.assistant_status import emit_thinking_notice
 from app.core.langsmith import traceable
 from app.core.llm import create_chat_model
 from app.schemas.prompt import base_prompt
-from app.utils.streaming_utils import extract_text, invoke
+from app.utils.streaming_utils import invoke, stream_with_reasoning
 
 _CHAT_SYSTEM_PROMPT = (
-        """
-    你是药品商城后台管理助手里的聊天节点（chat_agent）。
-    你的职责是处理非业务问题，例如日常问候、使用方式说明、通用建议等轻量对话。
-    
-    约束：
-    1. 不编造订单、售后、库存、报表等业务数据。
-    2. 若用户问题明显属于业务查询/处理，请礼貌提示该问题应走业务节点。
-    3. 回复尽量简洁、自然、直接。
     """
-        + base_prompt
-)
+你是药品商城后台管理助手中的聊天节点（chat_agent）。
+你只处理闲聊、寒暄、通用说明，不负责订单/商品结果汇总。
 
-_FALLBACK_CHAT_SYSTEM_PROMPT = (
-        """
-    你是药品商城后台管理助手里的兜底解释节点（chat_agent fallback mode）。
-    你将收到一个调度失败上下文（包含失败步骤与部分成功结果），你的输出目标是：
-    1. 先说明本次未能完整执行的核心原因（简洁、直接，不使用技术术语堆砌）；
-    2. 再给出已成功完成的部分结果摘要；
-    3. 如果失败原因里包含具体步骤和错误信息，要用用户可理解的话转述；
-    4. 不要编造任何不存在的数据。
-    """
-        + base_prompt
+回复规则：
+1. 简洁、礼貌、自然，不要重复句子。
+2. 不要输出“我将调用工具”或内部调度细节。
+3. 若用户明显是业务查询（订单/商品/表格），给一句简短引导即可，不臆测数据。
+"""
+    + base_prompt
 )
 
 
-def _serialize_messages(messages: list[Any]) -> list[dict[str, Any]]:
+@traceable(name="Supervisor Chat Agent Node", run_type="chain")
+def chat_agent(state: AgentState) -> dict[str, Any]:
     """
-    序列化节点输入消息，供 execution_trace 存储。
+    执行纯闲聊节点并返回聊天结果。
 
     Args:
-        messages: 待序列化的消息列表。
+        state: 当前图状态，函数读取 `messages` 与 `user_input` 组装聊天输入。
 
     Returns:
-        list[dict[str, Any]]: 统一结构的消息字典列表。
+        dict[str, Any]: 聊天节点状态增量，核心字段如下：
+            - `results.chat`: 闲聊输出（`mode=chat`，`is_end=True`）；
+            - `messages`: 新增一条 AIMessage；
+            - `context.last_agent/last_agent_response`: 最近输出节点信息；
+            - `execution_traces`: 输入与输出追踪。
     """
-    return [
-        {
-            "role": str(getattr(message, "type", "") or message.__class__.__name__).strip().lower() or "unknown",
-            "content": getattr(message, "content", ""),
-        }
-        for message in messages
-    ]
 
+    user_input = str(state.get("user_input") or "").strip() or "你好"
+    routing = dict(state.get("routing") or {})
+    task_difficulty = normalize_task_difficulty(routing.get("task_difficulty"))
+    model_profile = resolve_model_profile(task_difficulty)
 
-@traceable(name="Chat Agent Node", run_type="chain")
-def chat_agent(state: AgentState) -> AgentState:
-    """
-    执行聊天节点（含 fallback 聊天模式）。
+    messages = build_messages_with_history(
+        system_prompt=_CHAT_SYSTEM_PROMPT,
+        history_messages=list(state.get("messages") or []),
+        fallback_user_input=user_input,
+    )
 
-    Args:
-        state: 当前全局状态，包含用户输入、历史对话和 fallback 上下文。
-
-    Returns:
-        AgentState: 增量更新结果，包含：
-            - `results["chat"]`
-            - `execution_traces`（记录节点输入输出）
-    """
-    routing = state.get("routing") or {}
-    fallback_context = routing.get("fallback_context")
-    is_fallback = isinstance(fallback_context, dict) and bool(fallback_context)
-
-    user_input = str(state.get("user_input") or "").strip()
-    if not user_input:
-        user_input = "你好"
-    history_messages = list(state.get("history_messages") or [])
-
-    model_name = "qwen-flash"
-    messages: list[Any] = []
+    model_name = str(model_profile.get("model") or "qwen-plus")
+    think_enabled = bool(model_profile.get("think"))
+    content = "聊天服务暂时不可用，请稍后重试。"
     try:
         llm = create_chat_model(
-            temperature=1.3,
             model=model_name,
+            think=think_enabled,
+            temperature=1.0,
         )
-        if is_fallback:
-            fallback_input = json.dumps(fallback_context, ensure_ascii=False)
-            messages = [
-                SystemMessage(content=_FALLBACK_CHAT_SYSTEM_PROMPT),
-                HumanMessage(content=fallback_input),
-            ]
-        else:
-            messages = build_messages_with_history(
-                system_prompt=_CHAT_SYSTEM_PROMPT,
-                history_messages=history_messages,
-                fallback_user_input=user_input,
-            )
         if hasattr(llm, "stream") and callable(getattr(llm, "stream")):
-            streamed_parts: list[str] = []
-            for chunk in llm.stream(messages):
-                part = extract_text(chunk)
-                if part:
-                    streamed_parts.append(part)
-            content = "".join(streamed_parts)
-            if not content:
-                content = invoke(llm, messages)
+            answer_chunks, reasoning_chunks = stream_with_reasoning(llm, messages)
+            if think_enabled and reasoning_chunks:
+                emit_thinking_notice(
+                    node="chat_agent",
+                    state="thinking_start",
+                    meta={
+                        "model": model_name,
+                        "task_difficulty": task_difficulty,
+                    },
+                )
+                for chunk in reasoning_chunks:
+                    emit_thinking_notice(
+                        node="chat_agent",
+                        state="thinking_delta",
+                        text=chunk,
+                        meta={
+                            "model": model_name,
+                            "task_difficulty": task_difficulty,
+                        },
+                    )
+                emit_thinking_notice(
+                    node="chat_agent",
+                    state="thinking_end",
+                    meta={
+                        "model": model_name,
+                        "task_difficulty": task_difficulty,
+                    },
+                )
+            content = "".join(answer_chunks) or invoke(llm, messages)
         else:
             content = invoke(llm, messages)
     except Exception:
-        content = "聊天服务暂时不可用，请稍后重试。"
+        pass
 
     results = dict(state.get("results") or {})
     results["chat"] = {
-        "mode": "fallback" if is_fallback else "chat",
+        "mode": "chat",
         "content": content,
+        "is_end": True,
     }
-    result_update: dict[str, Any] = {"results": results}
-    result_update.update(
+    update: dict[str, Any] = {
+        "results": results,
+        "messages": [AIMessage(content=content)],
+        "context": {
+            "last_agent": "chat_agent",
+            "last_agent_response": content,
+        },
+    }
+    update.update(
         build_execution_trace_update(
             node_name="chat_agent",
             model_name=model_name,
-            input_messages=_serialize_messages(messages),
+            input_messages=serialize_messages(messages),
             output_text=content,
             tool_calls=[],
         )
     )
-    return result_update
+    return update

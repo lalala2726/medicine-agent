@@ -15,6 +15,13 @@ class MessageRole(str, Enum):
     ASSISTANT = "assistant"
 
 
+class MessageStatus(str, Enum):
+    """管理助手消息状态。"""
+
+    SUCCESS = "success"
+    ERROR = "error"
+
+
 class TokenUsageBreakdownItem(BaseModel):
     """单个节点的 Token 消耗明细。"""
 
@@ -73,6 +80,7 @@ class AdminMessageCreate(BaseModel):
     uuid: str = Field(..., min_length=1, description="消息业务唯一ID（UUID）")
     conversation_id: str = Field(..., min_length=1, description="所属会话ID")
     role: MessageRole = Field(..., description="消息角色")
+    status: MessageStatus = Field(default=MessageStatus.SUCCESS, description="消息状态")
     content: str = Field(..., min_length=1, description="消息内容")
     thought_chain: list[Any] | None = Field(default=None, description="思维链结构")
     token_usage: TokenUsage | None = Field(default=None, description="Token 消耗明细")
@@ -88,6 +96,7 @@ class AdminMessageDocument(BaseModel):
     uuid: str = Field(..., description="消息业务唯一ID（UUID）")
     conversation_id: str = Field(..., description="所属会话ID")
     role: MessageRole = Field(..., description="消息角色")
+    status: MessageStatus = Field(default=MessageStatus.SUCCESS, description="消息状态")
     content: str = Field(..., description="消息内容")
     thought_chain: list[Any] | None = Field(default=None, description="思维链结构")
     token_usage: TokenUsage | None = Field(default=None, description="Token 消耗明细")

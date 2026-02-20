@@ -95,6 +95,8 @@ class AuthUser(BaseModel):
         default=None,
         validation_alias=AliasChoices("is_delete", "isDelete"),
     )
+    roles: list[str] = Field(default_factory=list)
+    permissions: list[str] = Field(default_factory=list)
 
     @field_validator(
         "birthday",
@@ -107,3 +109,27 @@ class AuthUser(BaseModel):
     @classmethod
     def _parse_datetime_fields(cls, value: Any) -> datetime | None:
         return _parse_datetime_value(value)
+
+
+class AuthorizationContext(BaseModel):
+    """
+    `/agent/authorization` 返回的用户上下文结构。
+
+    约束：
+    - user 必填且不可为空
+    - roles / permissions 可为空（null）
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    user: AuthUser
+    roles: list[str] | None = None
+    permissions: list[str] | None = None
+
+    def to_auth_user(self) -> AuthUser:
+        return self.user.model_copy(
+            update={
+                "roles": self.roles or [],
+                "permissions": self.permissions or [],
+            }
+        )

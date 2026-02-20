@@ -7,7 +7,7 @@ from typing import Any, Callable, Literal
 
 from loguru import logger
 
-from app.schemas.sse_response import AssistantResponse
+from app.schemas.sse_response import AssistantResponse, Content, MessageType
 
 EventPayload = dict[str, Any]
 EventContent = dict[str, Any]
@@ -36,6 +36,7 @@ _TOOL_FUNCTION_CALL_MESSAGES: dict[str, dict[str, str]] = {
 }
 
 _DEFAULT_TOOL_TIMELY_MESSAGE = "工具正在持续处理中，请稍后查看结果"
+_ALLOWED_THINKING_STATES = {"thinking_start", "thinking_delta", "thinking_end"}
 
 
 def set_status_emitter(emitter: EventEmitter | None) -> Token:
@@ -46,6 +47,20 @@ def set_status_emitter(emitter: EventEmitter | None) -> Token:
 def reset_status_emitter(token: Token) -> None:
     """重置状态事件发射器，避免跨请求污染。"""
     _status_emitter.reset(token)
+
+
+def has_status_emitter() -> bool:
+    """
+    判断当前请求上下文是否已设置状态事件发射器。
+
+    Args:
+        无。
+
+    Returns:
+        bool: 已设置 emitter 返回 True，否则返回 False。
+    """
+
+    return _status_emitter.get() is not None
 
 
 def _build_event_content(
@@ -176,6 +191,47 @@ def emit_sse_response(response: AssistantResponse) -> None:
     normalized_response = response.model_copy(update={"is_end": False})
     payload = normalized_response.model_dump(mode="json", exclude_none=True)
     _emit_payload(payload=payload, source="emit_sse_response")
+
+
+def emit_thinking_notice(
+        *,
+        node: str,
+        state: str,
+        text: str | None = None,
+        meta: dict[str, Any] | None = None,
+) -> None:
+    """
+    发射深度思考通知事件（NOTICE）。
+
+    Args:
+        node: 事件所属节点名（如 `order_agent`、`chat_agent`）。
+        state: 思考阶段状态，允许值为 `thinking_start`、`thinking_delta`、`thinking_end`。
+        text: 思考文本分片。`thinking_delta` 场景建议传入，其他阶段可为空。
+        meta: 附加元数据（如模型名、任务难度）。
+
+    Returns:
+        None: 该函数仅负责向当前 SSE emitter 发射通知事件。
+    """
+
+    normalized_state = str(state or "").strip()
+    if normalized_state not in _ALLOWED_THINKING_STATES:
+        logger.warning(
+            "Thinking notice ignored because state is invalid: state={}",
+            normalized_state,
+        )
+        return
+
+    emit_sse_response(
+        AssistantResponse(
+            content=Content(
+                text=text,
+                node=node,
+                state=normalized_state,
+            ),
+            type=MessageType.NOTICE,
+            meta=meta,
+        )
+    )
 
 
 def resolve_tool_call_messages(tool_name: str) -> tuple[str, str, str]:
