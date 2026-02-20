@@ -6,7 +6,7 @@ import app.agent.admin.agent_utils as admin_utils
 from app.agent.admin.agent_utils import NodeExecutionResult
 
 
-def _build_state(mode: str, *, directive: str = "") -> dict:
+def _build_state(mode: str, *, directive: str = "", task_difficulty: str = "normal") -> dict:
     return {
         "user_input": "帮我查一下",
         "messages": [
@@ -18,6 +18,7 @@ def _build_state(mode: str, *, directive: str = "") -> dict:
         "routing": {
             "mode": mode,
             "directive": directive,
+            "task_difficulty": task_difficulty,
         },
         "results": {},
         "execution_traces": [],
@@ -80,3 +81,43 @@ def test_run_standard_tool_worker_returns_standard_structure(monkeypatch):
     assert update["context"]["extracted_order_ids"] == ["123"]
     assert update["execution_traces"][0]["node_name"] == "order_agent"
     assert update["messages"][0].content == "已查到订单123"
+
+
+def test_run_standard_tool_worker_uses_complex_profile_with_thinking(monkeypatch):
+    captured_kwargs: dict[str, object] = {}
+
+    class _DummyLLM:
+        pass
+
+    def _fake_create_chat_model(**kwargs):
+        captured_kwargs.update(kwargs)
+        return _DummyLLM()
+
+    def _fake_execute_tool_node(**_kwargs):
+        return NodeExecutionResult(
+            content="已处理复杂任务",
+            status="completed",
+            error=None,
+            model_name="qwen-max",
+            input_messages=[],
+            tool_calls=[],
+            diagnostics={},
+            stream_chunks=[],
+            reasoning_chunks=[],
+        )
+
+    monkeypatch.setattr(admin_utils, "create_chat_model", _fake_create_chat_model)
+    monkeypatch.setattr(admin_utils, "execute_tool_node", _fake_execute_tool_node)
+
+    admin_utils.run_standard_tool_worker(
+        state=_build_state("supervisor_loop", directive="执行复杂任务", task_difficulty="complex"),
+        node_name="order_agent",
+        result_key="order",
+        system_prompt="你是订单助手",
+        tools=[],
+        fallback_content="fallback",
+        fallback_error="error",
+    )
+
+    assert captured_kwargs["model"] == "qwen-max"
+    assert captured_kwargs["think"] is True

@@ -7,6 +7,11 @@ from typing import TYPE_CHECKING, Any, Iterable, Sequence
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.agent.admin.history_utils import history_to_role_dicts
+from app.agent.admin.model_policy import (
+    normalize_task_difficulty,
+    resolve_model_profile,
+)
+from app.core.assistant_status import emit_thinking_notice
 from app.core.llm import create_chat_model
 from app.utils.streaming_utils import invoke_with_policy
 
@@ -30,6 +35,7 @@ class NodeExecutionResult:
         tool_calls: 工具调用明细列表，通常来自 `invoke_with_policy` 的诊断信息。
         diagnostics: 诊断信息原始字典（如阈值触发、工具错误统计等）。
         stream_chunks: 流式输出分片列表，便于定位流式阶段问题。
+        reasoning_chunks: 深度思考分片列表（当模型开启 thinking 且供应商返回时存在）。
     """
 
     content: str
@@ -40,6 +46,7 @@ class NodeExecutionResult:
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
     diagnostics: dict[str, Any] = field(default_factory=dict)
     stream_chunks: list[str] = field(default_factory=list)
+    reasoning_chunks: list[str] = field(default_factory=list)
 
 
 def serialize_message(message: Any) -> dict[str, Any]:
@@ -259,6 +266,7 @@ def execute_tool_node(
             tool_calls=list((diagnostics or {}).get("tool_call_details") or []),
             diagnostics=diagnostics or {},
             stream_chunks=list((diagnostics or {}).get("stream_chunks") or []),
+            reasoning_chunks=list((diagnostics or {}).get("reasoning_chunks") or []),
         )
     except Exception as exc:
         return NodeExecutionResult(
@@ -270,6 +278,7 @@ def execute_tool_node(
             tool_calls=[],
             diagnostics={},
             stream_chunks=[],
+            reasoning_chunks=[],
         )
 
 
@@ -290,6 +299,7 @@ def build_mode_aware_instruction_payload(state: AgentState) -> dict[str, Any]:
             - `user_input`: 用户当前轮输入。
             - `context`: 跨节点共享上下文。
             - `execution_mode`: 执行模式（`fast_lane`/`supervisor_loop`/其他）。
+            - `task_difficulty`: 当前任务难度（simple/normal/complex）。
             - `chat_history`（可选）: 仅 `fast_lane` 时存在，值为 role/content 历史列表。
             - `directive`（可选）: 仅 `supervisor_loop` 时存在，值为主管下发指令。
     """
@@ -301,6 +311,7 @@ def build_mode_aware_instruction_payload(state: AgentState) -> dict[str, Any]:
         "user_input": state.get("user_input"),
         "context": state.get("context") or {},
         "execution_mode": execution_mode,
+        "task_difficulty": normalize_task_difficulty(routing.get("task_difficulty")),
     }
 
     if execution_mode == "fast_lane":
@@ -343,7 +354,8 @@ def run_standard_tool_worker(
         tools: Sequence[Any],
         fallback_content: str,
         fallback_error: str,
-        model_name: str = "qwen3-max",
+        model_name: str | None = None,
+        think: bool | None = None,
         enable_stream: bool = True,
         failure_policy: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -364,7 +376,8 @@ def run_standard_tool_worker(
         tools: 该节点可调用的工具集合。
         fallback_content: 执行异常时返回给用户的兜底文本。
         fallback_error: 执行异常时记录到 `errors` 的错误前缀。
-        model_name: 节点执行模型名称，默认 `qwen3-max`。
+        model_name: 可选模型覆盖。未传时按 `routing.task_difficulty` 自动选择模型。
+        think: 可选深度思考覆盖。未传时按 `routing.task_difficulty` 自动选择。
         enable_stream: 是否开启流式工具调用，默认开启。
         failure_policy: 失败策略配置，会透传给 `execute_tool_node`。
 
@@ -379,10 +392,19 @@ def run_standard_tool_worker(
 
     from app.agent.admin.node.common import build_worker_update
 
+    routing = dict(state.get("routing") or {})
+    task_difficulty = normalize_task_difficulty(routing.get("task_difficulty"))
+    profile = resolve_model_profile(task_difficulty)
+    selected_model = str(model_name or profile.get("model") or "qwen-plus")
+    think_enabled = bool(profile.get("think")) if think is None else bool(think)
+
     instruction_payload = build_mode_aware_instruction_payload(state)
     input_messages = build_worker_input_messages(system_prompt, instruction_payload)
 
-    llm = create_chat_model(model=model_name)
+    llm = create_chat_model(
+        model=selected_model,
+        think=think_enabled,
+    )
     execution_result = execute_tool_node(
         llm=llm,
         messages=input_messages,
@@ -392,6 +414,34 @@ def run_standard_tool_worker(
         fallback_content=fallback_content,
         fallback_error=fallback_error,
     )
+
+    if think_enabled and execution_result.reasoning_chunks:
+        emit_thinking_notice(
+            node=node_name,
+            state="thinking_start",
+            meta={
+                "model": selected_model,
+                "task_difficulty": task_difficulty,
+            },
+        )
+        for chunk in execution_result.reasoning_chunks:
+            emit_thinking_notice(
+                node=node_name,
+                state="thinking_delta",
+                text=chunk,
+                meta={
+                    "model": selected_model,
+                    "task_difficulty": task_difficulty,
+                },
+            )
+        emit_thinking_notice(
+            node=node_name,
+            state="thinking_end",
+            meta={
+                "model": selected_model,
+                "task_difficulty": task_difficulty,
+            },
+        )
 
     return build_worker_update(
         state=state,

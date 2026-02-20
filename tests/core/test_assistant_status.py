@@ -4,6 +4,7 @@ import pytest
 
 import app.core.assistant_status as status_module
 from app.core.assistant_status import (
+    emit_thinking_notice,
     emit_sse_response,
     reset_status_emitter,
     set_status_emitter,
@@ -449,3 +450,45 @@ def test_emit_sse_response_logs_warning_when_emitter_raises(monkeypatch):
     assert warnings[0][0] == "SSE event ignored because emitter failed: source={} error={}"
     assert warnings[0][1][0] == "emit_sse_response"
     assert isinstance(warnings[0][1][1], RuntimeError)
+
+
+def test_emit_thinking_notice_emits_notice_payload():
+    events: list[dict] = []
+    token = set_status_emitter(events.append)
+
+    emit_thinking_notice(
+        node="order_agent",
+        state="thinking_delta",
+        text="正在推理",
+        meta={"model": "qwen-max"},
+    )
+    reset_status_emitter(token)
+
+    assert len(events) == 1
+    assert events[0]["type"] == "notice"
+    assert events[0]["is_end"] is False
+    assert events[0]["content"] == {
+        "text": "正在推理",
+        "node": "order_agent",
+        "state": "thinking_delta",
+    }
+    assert events[0]["meta"] == {"model": "qwen-max"}
+    assert isinstance(events[0]["timestamp"], int)
+
+
+def test_emit_thinking_notice_ignores_invalid_state(monkeypatch):
+    events: list[dict] = []
+    warnings: list[tuple[str, tuple]] = []
+    token = set_status_emitter(events.append)
+
+    monkeypatch.setattr(
+        status_module.logger,
+        "warning",
+        lambda message, *args: warnings.append((message, args)),
+    )
+    emit_thinking_notice(node="order_agent", state="bad_state", text="xx")
+    reset_status_emitter(token)
+
+    assert events == []
+    assert warnings
+    assert warnings[0][0] == "Thinking notice ignored because state is invalid: state={}"

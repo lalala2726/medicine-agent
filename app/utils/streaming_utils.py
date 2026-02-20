@@ -37,7 +37,10 @@ from langchain_core.messages import ToolMessage
 from loguru import logger
 
 from app.agent.admin.state import AgentState
-from app.core.assistant_status import emit_function_call, resolve_tool_call_messages
+from app.core.assistant_status import (
+    emit_function_call,
+    resolve_tool_call_messages,
+)
 
 # 工具调用最大轮次，防止无限循环
 MAX_TOOL_ROUNDS = 20
@@ -56,6 +59,7 @@ def _empty_policy_diagnostics() -> dict[str, Any]:
         "tool_error_messages": [],
         "tool_call_details": [],
         "stream_chunks": [],
+        "reasoning_chunks": [],
     }
 
 
@@ -145,6 +149,82 @@ def extract_text(message: Any) -> str:
     return "" if content is None else str(content)
 
 
+def extract_reasoning_text(message: Any) -> str:
+    """
+    从流式分片中提取深度思考文本。
+
+    兼容以下常见结构：
+    1. `chunk.reasoning_content`
+    2. `chunk.additional_kwargs.reasoning_content`
+    3. OpenAI 兼容格式 `chunk.choices[0].delta.reasoning_content`
+
+    Args:
+        message: 任意消息/分片对象。
+
+    Returns:
+        str: 提取到的思考文本；未命中时返回空字符串。
+    """
+
+    direct_reasoning = getattr(message, "reasoning_content", None)
+    if isinstance(direct_reasoning, str):
+        return direct_reasoning
+
+    additional_kwargs = getattr(message, "additional_kwargs", None)
+    if isinstance(additional_kwargs, dict):
+        candidate = additional_kwargs.get("reasoning_content")
+        if isinstance(candidate, str):
+            return candidate
+
+    choices = getattr(message, "choices", None)
+    if isinstance(choices, list) and choices:
+        delta = getattr(choices[0], "delta", None)
+        reasoning_content = getattr(delta, "reasoning_content", None)
+        if isinstance(reasoning_content, str):
+            return reasoning_content
+
+    return ""
+
+
+def stream_with_reasoning(
+        llm: Any,
+        messages: list[Any],
+        *,
+        tools: Optional[Sequence[Any]] = None,
+) -> tuple[list[str], list[str]]:
+    """
+    执行 stream 并分离“正文分片”和“思考分片”。
+
+    Args:
+        llm: LangChain ChatModel 实例。
+        messages: 输入消息列表。
+        tools: 可选工具集合；传入后会先执行 `bind_tools` 再 stream。
+
+    Returns:
+        tuple[list[str], list[str]]: `(answer_chunks, reasoning_chunks)`。
+            - `answer_chunks`: 正文文本分片列表；
+            - `reasoning_chunks`: 思考文本分片列表。
+    """
+
+    answer_chunks: list[str] = []
+    reasoning_chunks: list[str] = []
+
+    llm_for_stream = llm.bind_tools(tools) if tools else llm
+    stream_fn = getattr(llm_for_stream, "stream", None)
+    if not callable(stream_fn):
+        return answer_chunks, reasoning_chunks
+
+    for chunk in stream_fn(messages):
+        reasoning = extract_reasoning_text(chunk)
+        if reasoning:
+            reasoning_chunks.append(reasoning)
+
+        text = extract_text(chunk)
+        if text:
+            answer_chunks.append(text)
+
+    return answer_chunks, reasoning_chunks
+
+
 def invoke(
         llm: Any,
         messages: list[Any],
@@ -196,13 +276,11 @@ def invoke_with_optional_stream(
     """
     stream_chunks: list[str] = []
     if enable_stream:
-        llm_for_stream = llm.bind_tools(tools) if tools else llm
-        stream_fn = getattr(llm_for_stream, "stream", None)
-        if callable(stream_fn):
-            for chunk in stream_fn(messages):
-                text = extract_text(chunk)
-                if text:
-                    stream_chunks.append(text)
+        stream_chunks, _ = stream_with_reasoning(
+            llm,
+            messages,
+            tools=tools,
+        )
 
     if stream_chunks:
         return "".join(stream_chunks), stream_chunks
@@ -239,17 +317,16 @@ def invoke_with_policy(
     """
     diagnostics = _empty_policy_diagnostics()
     if enable_stream:
-        stream_chunks: list[str] = []
-        llm_for_stream = llm.bind_tools(tools) if tools else llm
-        stream_fn = getattr(llm_for_stream, "stream", None)
-        if callable(stream_fn):
-            for chunk in stream_fn(messages):
-                text = extract_text(chunk)
-                if text:
-                    stream_chunks.append(text)
-        if stream_chunks:
-            diagnostics["stream_chunks"] = stream_chunks
-            return "".join(stream_chunks), diagnostics
+        answer_chunks, reasoning_chunks = stream_with_reasoning(
+            llm,
+            messages,
+            tools=tools,
+        )
+        if reasoning_chunks:
+            diagnostics["reasoning_chunks"] = reasoning_chunks
+        if answer_chunks:
+            diagnostics["stream_chunks"] = answer_chunks
+            return "".join(answer_chunks), diagnostics
 
     if tools:
         return _invoke_with_tools_with_diagnostics(

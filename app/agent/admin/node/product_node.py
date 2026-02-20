@@ -86,7 +86,6 @@ def product_agent(state: AgentState) -> dict[str, Any]:
         tools=[get_product_list, get_product_detail, get_drug_detail],
         fallback_content="商品服务暂时不可用，请稍后重试。",
         fallback_error="product_agent 执行失败",
-        model_name="qwen3-max",
         enable_stream=True,
         failure_policy={},
     )
