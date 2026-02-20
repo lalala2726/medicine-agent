@@ -23,15 +23,33 @@ _GATEWAY_PROMPT = """
 1) route_target: order_agent|product_agent|chat_agent|supervisor_agent
 2) task_difficulty: simple|normal|complex
 
-路由规则：
-1. 单域且简单（纯订单或纯商品） -> order_agent 或 product_agent；
-2. 闲聊、寒暄、无明确业务动作 -> chat_agent；
-3. 跨域、多步骤、依赖上下文决策、复杂任务 -> supervisor_agent。
+通用要求：
+1. 只输出一个 JSON 对象，不要输出任何解释、Markdown、代码块。
+2. 若用户输入很短（如“查询啊”），允许结合最近对话上下文延续同一业务域。
+3. 若上下文不足以判断业务域，优先路由 chat_agent，避免误调用业务节点。
+
+路由规则（优先级从高到低）：
+1. 跨域、多步骤、依赖上下文决策、需要节点协作 -> supervisor_agent。
+2. 单域订单任务（查订单/订单详情/收货人/退款单） -> order_agent。
+3. 单域商品任务（查商品/库存/上下架/药品详情） -> product_agent。
+4. 闲聊、寒暄、无明确业务动作 -> chat_agent。
 
 难度规则：
-1. simple：单步、参数明确、直接查询。
-2. normal：需要少量推理或条件筛选。
-3. complex：跨域、多阶段、依赖上下文/策略判断。
+1. simple: 单步、参数明确、直接查询。
+2. normal: 需要少量推理或条件筛选。
+3. complex: 跨域、多阶段、依赖上下文/策略判断。
+
+示例：
+- 用户: "查一下订单123"
+  输出: {"route_target":"order_agent","task_difficulty":"simple"}
+- 用户: "查商品2001库存"
+  输出: {"route_target":"product_agent","task_difficulty":"simple"}
+- 用户: "在吗"
+  输出: {"route_target":"chat_agent","task_difficulty":"simple"}
+- 用户: "把上个月退款超过2次的订单找出来，把对应商品下架"
+  输出: {"route_target":"supervisor_agent","task_difficulty":"complex"}
+- 上下文: 最近在查订单收货人，用户当前输入: "查询啊"
+  输出: {"route_target":"order_agent","task_difficulty":"normal"}
 """
 
 
