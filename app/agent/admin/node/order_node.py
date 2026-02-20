@@ -82,7 +82,6 @@ def order_agent(state: AgentState) -> dict[str, Any]:
         tools=[get_order_list, get_orders_detail],
         fallback_content="订单服务暂时不可用，请稍后重试。",
         fallback_error="order_agent 执行失败",
-        model_name="qwen3-max",
         enable_stream=True,
         failure_policy={},
     )

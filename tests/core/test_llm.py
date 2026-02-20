@@ -52,3 +52,32 @@ def test_create_chat_model_merges_extra_body_into_model_kwargs(monkeypatch):
         "response_format": {"type": "json_object"},
         "extra_body": {"enable_thinking": True},
     }
+
+
+def test_create_chat_model_think_true_merges_with_existing_extra_body(monkeypatch):
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "test-key")
+    monkeypatch.setattr(llm, "ChatOpenAI", DummyChatOpenAI)
+
+    model = llm.create_chat_model(
+        model="custom-model",
+        think=True,
+        extra_body={"foo": "bar"},
+        model_kwargs={"extra_body": {"biz": "value"}},
+    )
+
+    assert isinstance(model, DummyChatOpenAI)
+    assert model.kwargs["model_kwargs"]["extra_body"] == {
+        "biz": "value",
+        "foo": "bar",
+        "enable_thinking": True,
+    }
+
+
+def test_create_chat_mode_alias(monkeypatch):
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "test-key")
+    monkeypatch.setattr(llm, "ChatOpenAI", DummyChatOpenAI)
+
+    model = llm.create_chat_mode(model="alias-model")
+
+    assert isinstance(model, DummyChatOpenAI)
+    assert model.kwargs["model"] == "alias-model"
