@@ -367,8 +367,17 @@ def test_assistant_chat_schedules_user_persist_without_blocking_main_flow(monkey
     assert isinstance(response, StreamingResponse)
     assert captured["question"] == "代理测试"
     stream_config = captured["config"]
-    assert stream_config.build_initial_state("x")["execution_traces"] == []
-    assert [message.content for message in stream_config.build_initial_state("x")["history_messages"]] == [
+    initial_state = stream_config.build_initial_state("x")
+    assert initial_state["execution_traces"] == []
+    assert initial_state["next_node"] == ""
+    assert "context" in initial_state
+    assert "messages" in initial_state
+    assert [message.content for message in initial_state["history_messages"]] == [
+        "历史问题",
+        "历史回答",
+        "代理测试",
+    ]
+    assert [message.content for message in initial_state["messages"]] == [
         "历史问题",
         "历史回答",
         "代理测试",

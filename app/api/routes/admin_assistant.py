@@ -2,7 +2,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Path
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.core.pre_authorize import RoleCode, has_permission, has_role, pre_authorize
 from app.schemas.admin_assistant_history import (
@@ -33,6 +33,38 @@ class AssistantRequest(BaseModel):
         description="会话UUID",
     )
 
+    @field_validator("question")
+    @classmethod
+    def validate_question(cls, value: str) -> str:
+        """
+        标准化用户问题文本。
+
+        作用：
+        1. 去掉首尾空白，避免把仅空格内容传入聊天主流程；
+        2. 在路由层提前阻断无效请求，减少下游 service 分支处理复杂度。
+        """
+
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("问题不能为空")
+        return normalized
+
+    @field_validator("conversation_uuid")
+    @classmethod
+    def validate_conversation_uuid(cls, value: str | None) -> str | None:
+        """
+        标准化会话 UUID。
+
+        作用：
+        1. 去掉首尾空白，确保 service 层拿到的 UUID 稳定；
+        2. 对于纯空白 UUID，统一视为 None，表示创建新会话。
+        """
+
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
+
 
 class ConversationListRequest(BaseModel):
     """智能助手会话列表请求参数。"""
@@ -50,12 +82,12 @@ class UpdateConversationTitleRequest(BaseModel):
     title: str = Field(..., min_length=1, max_length=100, description="会话标题")
 
 
-@router.post("/chat", summary="普通对话")
+@router.post("/chat", summary="管理助手对话（Gateway + Supervisor）")
 @pre_authorize(
     lambda: has_role(RoleCode.SUPER_ADMIN) or has_permission("admin:assistant:access")
 )
 async def assistant(request: AssistantRequest) -> StreamingResponse:
-    """管理助手聊天接口（SSE 流式返回）。"""
+    """管理助手聊天入口（SSE 流式返回，基于 Gateway + Supervisor 工作流）。"""
 
     return assistant_chat(
         question=request.question,
@@ -103,7 +135,7 @@ async def delete_conversation(
     )
 
 
-@router.put("/conversation/{conversation_uuid}", summary="修改管理助手会话标题")
+@router.put("/conversation/{conversation_uuid}/title", summary="修改管理助手会话标题")
 @pre_authorize(
     lambda: has_role(RoleCode.SUPER_ADMIN) or has_permission("admin:assistant:update")
 )
@@ -125,7 +157,7 @@ async def update_conversation_title(
     )
 
 
-@router.get("/history/{conversation_uuid}", summary="管理助手历史消息")
+@router.get("/conversation/{conversation_uuid}/messages", summary="管理助手历史消息")
 @pre_authorize(
     lambda: has_role(RoleCode.SUPER_ADMIN) or has_permission("admin:assistant:access")
 )
