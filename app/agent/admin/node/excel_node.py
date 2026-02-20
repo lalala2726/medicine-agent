@@ -33,7 +33,11 @@ def excel_agent(state: AgentState) -> dict[str, Any]:
             - `errors`：固定写入“未实现”错误信息。
     """
 
-    content = "表格能力暂未实现，请稍后重试。"
+    node_goal = str((state.get("routing") or {}).get("node_goal") or "").strip()
+    if node_goal:
+        content = f"表格能力暂未实现，当前目标：{node_goal}"
+    else:
+        content = "表格能力暂未实现，请稍后重试。"
     return build_worker_update(
         state=state,
         node_name="excel_agent",

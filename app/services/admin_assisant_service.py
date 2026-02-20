@@ -128,7 +128,6 @@ def _build_initial_state(
 
     return {
         "user_input": question,
-        "next_node": "",
         "routing": {},
         "context": {
             "node_call_counts": {},
@@ -149,18 +148,21 @@ def _should_stream_token(stream_node: str | None, latest_state: dict[str, Any]) 
 
     规则：
     1. 节点必须在可输出白名单中；
-    2. chat 节点总是可输出；
-    3. supervisor 慢车道（mode=supervisor_loop）下，业务节点每步都可见；
-    4. 其他场景仍沿用最终输出判定。
+    2. supervisor 慢车道（mode=supervisor_loop）下，仅 summary 节点可见；
+    3. chat 节点仅在 `mode=chat`（闲聊）时可输出；
+    4. 其他场景沿用最终输出判定。
     """
 
     if stream_node not in STREAM_OUTPUT_NODES:
         return False
-    if stream_node == "chat_agent":
-        return True
     routing = latest_state.get("routing") or {}
-    if isinstance(routing, dict) and routing.get("mode") == "supervisor_loop":
-        return True
+    mode = str(routing.get("mode") or "") if isinstance(routing, dict) else ""
+    if mode == "supervisor_loop":
+        return stream_node == "summary_agent"
+    if stream_node == "chat_agent":
+        return mode == "chat"
+    if stream_node == "summary_agent":
+        return False
     return is_final_node(latest_state, stream_node)
 
 

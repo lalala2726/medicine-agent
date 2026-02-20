@@ -9,6 +9,7 @@ from app.agent.admin.node.excel_node import excel_agent
 from app.agent.admin.node.gateway_node import gateway_router
 from app.agent.admin.node.order_node import order_agent
 from app.agent.admin.node.product_node import product_agent
+from app.agent.admin.node.summary_node import summary_agent
 from app.agent.admin.node.supervisor_node import supervisor_agent
 
 __all__ = [
@@ -18,4 +19,5 @@ __all__ = [
     "product_agent",
     "excel_agent",
     "chat_agent",
+    "summary_agent",
 ]

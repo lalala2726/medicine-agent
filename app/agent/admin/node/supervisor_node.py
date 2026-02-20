@@ -7,6 +7,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.agent.admin.agent_utils import build_execution_trace_update, serialize_messages
 from app.agent.admin.model_policy import (
+    DEFAULT_NODE_GOAL,
     NORMAL_DIFFICULTY,
     apply_model_profile_to_routing,
     build_supervisor_decision,
@@ -19,61 +20,65 @@ from app.core.langsmith import traceable
 from app.core.llm import create_chat_model
 from app.schemas.sse_response import AssistantResponse, Content, MessageType
 
-# 同一节点最大允许被 supervisor 调用次数，用于循环保护。
+# 同一目标节点在单轮任务中的最大调度次数，超过后强制切到 summary 防止死循环。
 _MAX_NODE_CALLS = 2
 
 _SUPERVISOR_PROMPT = """
-你是药品商城后台的动态主管 Supervisor。
-你每次只负责选择“下一步调用哪个节点”，不是一次性规划完整流程。
-
-你只能输出 JSON，格式必须是：
-{"next_node":"order_agent|product_agent|excel_agent|FINISH","directive":"给下游节点的可执行指令","task_difficulty":"simple|normal|complex"}
-
-通用约束：
-1. 只输出 JSON，不要输出任何解释文本、Markdown、代码块。
-2. 优先使用 context 中已有结构化信息，禁止重复索要用户已提供参数。
-3. 当 next_node 为 order_agent/product_agent/excel_agent 时，directive 必须具体可执行且不能为空。
-4. 当任务完成、不可推进、或继续执行收益很低时输出 FINISH，并将 directive 置空。
-5. task_difficulty 只能是 simple/normal/complex，不确定时输出 normal。
-
-调度策略：
-1. 跨域任务优先“先订单后商品”：
-   先让 order_agent 获取订单详情并提取 product_id，再让 product_agent 查询商品信息。
-2. 若 context.extracted_product_ids 已存在且目标是商品信息，直接调度 product_agent。
-3. 若同一目标节点连续失败且没有新增关键信息，优先 FINISH，避免死循环。
-4. 对“查询啊/继续查”等模糊续接指令，要结合最近上下文做最小闭环动作，不要空转。
-
-directive 编写要求：
-1. 写清目标、输入来源、输出字段（例如“写回 context.extracted_product_ids”）。
-2. 写清参数类型，尤其批量 ID 必须为字符串数组 JSON（List[str]）。
-3. 不要让 worker 输出“我将调用工具...”，要直接执行并返回结果。
-
-示例 1（跨域第一步）：
-输入摘要：user_input=“把退款超2次的订单找出来并查商品详情”，context 无 product_id
-输出：
-{"next_node":"order_agent","directive":"查询退款相关订单并提取对应product_id写入context.extracted_product_ids，同时返回关键订单信息","task_difficulty":"complex"}
-
-示例 2（跨域第二步）：
-输入摘要：context.extracted_product_ids=["2001","2003"], user_input=“继续查商品详情”
-输出：
-{"next_node":"product_agent","directive":"基于context.extracted_product_ids批量查询商品详情并返回库存/上下架状态","task_difficulty":"normal"}
-
-示例 3（无可推进信息）：
-输入摘要：最近两轮同一节点失败且无新增ID/条件
-输出：
-{"next_node":"FINISH","directive":"","task_difficulty":"normal"}
+        你是药品商城后台管理系统的动态主管节点（supervisor_agent）。
+        你的职责只有一个：基于当前上下文决定“下一步调用哪个业务节点”。
+        
+        你不是最终回答节点，不直接对用户输出答案，不做流式回复。
+        你必须只输出一个 JSON 对象，且格式必须严格为：
+        {"target_node":"order_agent|product_agent|excel_agent|summary_agent","task_difficulty":"simple|normal|complex","node_goal":"该节点本步目标"}
+        
+        【节点能力说明（按工具能力）】
+        1) order_agent（订单域）
+        - 可调用工具：get_order_list, get_orders_detail
+        - 适用：查订单列表、订单详情、收货人信息、从订单明细提取 product_id。
+        
+        2) product_agent（商品域）
+        - 可调用工具：get_product_list, get_product_detail, get_drug_detail
+        - 适用：查商品详情、库存/上下架状态、药品说明书与药品详情。
+        
+        3) excel_agent（表格域）
+        - 当前为占位能力（尚未实现完整工具链）。
+        - 仅在明确表格处理任务且其他节点无法完成时调度。
+        
+        4) summary_agent（最终汇总）
+        - 当你判断任务已可收敛时，直接输出 target_node=summary_agent。
+        - node_goal 必须写清用户最关心的信息和整理方式（例如：表格、按订单分组、先结论后明细）。
+        
+        【硬约束】
+        1. 只输出 JSON，不得输出解释文本、Markdown、代码块。
+        2. 优先复用 context.agent_outputs 中已有结构化信息，禁止重复索要用户已给参数。
+        3. target_node 只能是 order_agent/product_agent/excel_agent/summary_agent。
+        4. task_difficulty 只能是 simple|normal|complex，不确定时输出 normal。
+        5. node_goal 必须非空，且要可执行、可落地，避免空泛描述。
+        6. order_agent 与 product_agent 不直接互读对方输出；你必须把需要传递的信息写进 node_goal。
+        7. 若是跨域任务，优先先订单后商品；当已收集足够信息时再调度 summary_agent。
+        
+        【示例：用户要前5个订单的商品说明书】
+        示例输出1（先查订单并提取商品ID）：
+        {"target_node":"order_agent","task_difficulty":"complex","node_goal":"查询最近5个订单，只输出订单编号与商品ID映射，减少无关字段输出。"}
+        
+        示例输出2（基于商品ID查说明书）：
+        {"target_node":"product_agent","task_difficulty":"normal","node_goal":"使用 order_agent 已输出的商品ID（P1,P2,P3）批量查询药品说明书，返回每个商品的说明书要点。"}
+        
+        示例输出3（交给最终汇总）：
+        {"target_node":"summary_agent","task_difficulty":"normal","node_goal":"围绕用户关心的商品说明书给出结论，先给总体结论，再按订单分组用表格展示订单号、商品ID、说明书要点；缺失项单独说明原因和下一步建议。"}
 """
 
 
 def _emit_supervisor_enter_notice(routing: dict[str, Any]) -> None:
     """
-    发射“进入 Supervisor 节点”的通知事件。
+    发射“进入 Supervisor 决策轮”的状态通知。
 
     Args:
-        routing: 当前 routing 元信息，用于补充 turn/难度等上下文。
+        routing: 当前路由元信息字典，主要用于补充 `turn` 与 `task_difficulty`
+            到事件元数据，便于前端和日志侧定位当前决策轮次。
 
     Returns:
-        None: 仅用于发射 SSE NOTICE 事件。
+        None: 该函数只做 SSE NOTICE 事件发射，不返回业务数据。
     """
 
     if not has_status_emitter():
@@ -96,30 +101,28 @@ def _emit_supervisor_enter_notice(routing: dict[str, Any]) -> None:
 
 
 def _emit_supervisor_dispatch_notice(
-        *,
-        next_node: str,
-        directive: str,
-        routing: dict[str, Any],
+    *,
+    target_node: str,
+    routing: dict[str, Any],
 ) -> None:
     """
-    发射 Supervisor 决策结果通知，向前端明确下一跳节点信息。
+    发射 Supervisor 下一跳通知（不输出 node_goal 详情，避免前端重复冗长文案）。
 
     Args:
-        next_node: Supervisor 决策出的下一跳节点（或 `FINISH`）。
-        directive: 下发给 worker 的执行指令文本。
-        routing: 已更新的 routing 元信息（含模型与难度）。
+        target_node: Supervisor 本轮决策的下一跳目标节点。
+        routing: 已更新完成的路由字典，用于附带难度与模型策略元信息。
 
     Returns:
-        None: 仅用于发射 SSE NOTICE 事件。
+        None: 该函数仅负责发射 NOTICE 事件，不参与状态计算。
     """
 
     if not has_status_emitter():
         return
 
     message = (
-        "Supervisor 判断任务完成，准备结束流程"
-        if next_node == "FINISH"
-        else f"Supervisor 下一跳节点: {next_node}"
+        "Supervisor 判断任务完成，准备交给 summary_agent 汇总输出"
+        if target_node == "summary_agent"
+        else f"Supervisor 下一跳节点: {target_node}"
     )
     emit_sse_response(
         AssistantResponse(
@@ -127,13 +130,11 @@ def _emit_supervisor_dispatch_notice(
                 node="supervisor_agent",
                 state="dispatch",
                 message=message,
-                name=next_node,
-                arguments=directive or None,
+                name=target_node,
             ),
             type=MessageType.NOTICE,
             meta={
-                "next_node": next_node,
-                "directive": directive,
+                "target_node": target_node,
                 "task_difficulty": routing.get("task_difficulty"),
                 "selected_model": routing.get("selected_model"),
                 "think_enabled": routing.get("think_enabled"),
@@ -146,20 +147,26 @@ def _emit_supervisor_dispatch_notice(
 @traceable(name="Supervisor Agent Node", run_type="chain")
 def supervisor_agent(state: AgentState) -> dict[str, Any]:
     """
-    执行动态主管决策：每轮仅选择下一跳节点并下发指令。
+    执行 Supervisor 单步决策，并把下一跳写回共享状态。
+
+    行为边界：
+    1. 只做“下一步调用谁”的决策，不直接向用户回答业务结果；
+    2. 只输出受控 JSON 契约字段（经模型输出解析后写入状态）；
+    3. 保留同节点调用次数限制，避免慢车道无限回环。
 
     Args:
-        state: 当前图状态，需包含：
-            - `messages`: 全量历史消息；
-            - `context`: 共享上下文（含节点调用计数、结构化提取信息）；
-            - `routing`: 路由元信息（mode/turn/task_difficulty 等）。
+        state: 当前图状态，核心读取字段如下：
+            - `messages`: 全量历史消息（用于记忆与上下文续接）。
+            - `context`: 共享上下文（提取 ID、历史工具产出、调用计数等）。
+            - `routing`: 路由元信息（mode、turn、task_difficulty 等）。
 
     Returns:
-        dict[str, Any]: supervisor 的状态增量更新，字段说明如下：
-            - `next_node`: 下一跳节点名或 `FINISH`；
-            - `routing`: 更新后的路由元信息（含 `turn/finished/directive/route_target/task_difficulty`）；
-            - `context.node_call_counts`: 叠加后的节点调用次数；
-            - `execution_traces`: 当前轮决策追踪记录。
+        dict[str, Any]: Supervisor 状态增量，关键字段如下：
+            - `routing.target_node`: 下一跳业务节点（含 `summary_agent`）。
+            - `routing.node_goal`: 下游节点本步执行目标。
+            - `routing`: 更新后的路由信息（含 `finished`、模型策略字段）。
+            - `context.node_call_counts`: 节点调用计数更新结果。
+            - `execution_traces`: 本轮模型输入与决策结果追踪。
     """
 
     context = dict(state.get("context") or {})
@@ -179,15 +186,10 @@ def supervisor_agent(state: AgentState) -> dict[str, Any]:
         "routing": routing,
         "messages": serialize_messages(all_messages),
     }
-
     input_messages: list[Any] = [
         SystemMessage(content=_SUPERVISOR_PROMPT),
         HumanMessage(content=json.dumps(supervisor_input, ensure_ascii=False, default=str)),
     ]
-
-    next_node = "FINISH"
-    directive = ""
-    task_difficulty = current_difficulty
 
     supervisor_model_name = str(current_profile.get("model") or "qwen-plus")
     supervisor_think_enabled = bool(current_profile.get("think"))
@@ -200,21 +202,19 @@ def supervisor_agent(state: AgentState) -> dict[str, Any]:
         )
         response = llm.invoke(input_messages)
         payload = json.loads(str(response.content))
-        next_node, directive, task_difficulty = build_supervisor_decision(
+        target_node, node_goal, task_difficulty = build_supervisor_decision(
             payload,
             fallback_task_difficulty=current_difficulty,
         )
     except Exception:
-        next_node, directive, task_difficulty = "FINISH", "", current_difficulty
+        target_node, node_goal, task_difficulty = "summary_agent", DEFAULT_NODE_GOAL, current_difficulty
 
-    # 循环保护：同一节点调用达到阈值后直接 FINISH。
-    if next_node != "FINISH" and int(counts.get(next_node, 0)) >= _MAX_NODE_CALLS:
-        next_node = "FINISH"
-        directive = ""
+    if target_node != "summary_agent" and int(counts.get(target_node, 0)) >= _MAX_NODE_CALLS:
+        target_node = "summary_agent"
+        node_goal = DEFAULT_NODE_GOAL
 
-    if next_node != "FINISH":
-        counts[next_node] = int(counts.get(next_node, 0)) + 1
-
+    if target_node != "summary_agent":
+        counts[target_node] = int(counts.get(target_node, 0)) + 1
     context["node_call_counts"] = counts
 
     resolved_profile = resolve_model_profile(task_difficulty)
@@ -224,24 +224,19 @@ def supervisor_agent(state: AgentState) -> dict[str, Any]:
         profile=resolved_profile,
     )
     routing["turn"] = int(routing.get("turn") or 0) + 1
-    routing["next_node"] = next_node
-    routing["finished"] = next_node == "FINISH"
-    routing["directive"] = directive
-    if next_node != "FINISH":
-        routing["route_target"] = next_node
-    else:
-        routing["route_target"] = "supervisor_agent"
+    routing["target_node"] = target_node
+    routing["finished"] = target_node == "summary_agent"
+    routing["node_goal"] = str(node_goal or "").strip() or DEFAULT_NODE_GOAL
+    routing["route_target"] = target_node
 
     _emit_supervisor_dispatch_notice(
-        next_node=next_node,
-        directive=directive,
+        target_node=target_node,
         routing=routing,
     )
 
     update: dict[str, Any] = {
         "routing": routing,
         "context": context,
-        "next_node": next_node,
     }
     update.update(
         build_execution_trace_update(

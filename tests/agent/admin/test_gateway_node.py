@@ -41,7 +41,7 @@ def test_gateway_routes_order_agent(monkeypatch: pytest.MonkeyPatch):
     assert result["routing"]["task_difficulty"] == "simple"
     assert result["routing"]["selected_model"] == "qwen-flash"
     assert result["routing"]["think_enabled"] is False
-    assert result["next_node"] == "order_agent"
+    assert result["routing"]["target_node"] == "order_agent"
 
 
 def test_gateway_routes_chat_agent(monkeypatch: pytest.MonkeyPatch):
@@ -63,7 +63,7 @@ def test_gateway_routes_chat_agent(monkeypatch: pytest.MonkeyPatch):
     assert result["routing"]["task_difficulty"] == "normal"
     assert result["routing"]["selected_model"] == "qwen-plus"
     assert result["routing"]["think_enabled"] is False
-    assert result["next_node"] == "chat_agent"
+    assert result["routing"]["target_node"] == "chat_agent"
 
 
 def test_gateway_falls_back_to_supervisor_on_invalid_target(monkeypatch: pytest.MonkeyPatch):
@@ -78,7 +78,7 @@ def test_gateway_falls_back_to_supervisor_on_invalid_target(monkeypatch: pytest.
     assert result["routing"]["task_difficulty"] == "normal"
     assert result["routing"]["selected_model"] == "qwen-plus"
     assert result["routing"]["think_enabled"] is False
-    assert result["next_node"] == "supervisor_agent"
+    assert result["routing"]["target_node"] == "supervisor_agent"
 
 
 def test_gateway_falls_back_to_supervisor_on_model_error(monkeypatch: pytest.MonkeyPatch):
@@ -92,7 +92,7 @@ def test_gateway_falls_back_to_supervisor_on_model_error(monkeypatch: pytest.Mon
     assert result["routing"]["task_difficulty"] == "normal"
     assert result["routing"]["selected_model"] == "qwen-plus"
     assert result["routing"]["think_enabled"] is False
-    assert result["next_node"] == "supervisor_agent"
+    assert result["routing"]["target_node"] == "supervisor_agent"
 
 
 def test_gateway_normalizes_invalid_task_difficulty(monkeypatch: pytest.MonkeyPatch):

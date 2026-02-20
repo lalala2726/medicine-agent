@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.agent.admin.model_policy import (
+    DEFAULT_NODE_GOAL,
     apply_model_profile_to_routing,
     build_gateway_decision,
     build_supervisor_decision,
@@ -51,25 +52,33 @@ def test_build_gateway_decision_with_fallbacks():
 
 
 def test_build_supervisor_decision_with_fallbacks():
-    next_node, directive, task_difficulty = build_supervisor_decision(
+    target_node, node_goal, task_difficulty = build_supervisor_decision(
         {
-            "next_node": "product_agent",
-            "directive": "查询商品2001",
+            "target_node": "product_agent",
+            "node_goal": "查询商品2001",
             "task_difficulty": "complex",
         },
         fallback_task_difficulty="normal",
     )
-    assert next_node == "product_agent"
-    assert directive == "查询商品2001"
+    assert target_node == "product_agent"
+    assert node_goal == "查询商品2001"
     assert task_difficulty == "complex"
 
-    next_node, directive, task_difficulty = build_supervisor_decision(
-        {"next_node": "bad", "directive": "ignore"},
+    target_node, node_goal, task_difficulty = build_supervisor_decision(
+        {"target_node": "bad", "node_goal": "ignore"},
         fallback_task_difficulty="simple",
     )
-    assert next_node == "FINISH"
-    assert directive == ""
+    assert target_node == "summary_agent"
+    assert node_goal == "ignore"
     assert task_difficulty == "simple"
+
+    target_node, node_goal, task_difficulty = build_supervisor_decision(
+        {"target_node": "summary_agent", "node_goal": ""},
+        fallback_task_difficulty="normal",
+    )
+    assert target_node == "summary_agent"
+    assert node_goal == DEFAULT_NODE_GOAL
+    assert task_difficulty == "normal"
 
 
 def test_apply_model_profile_to_routing():

@@ -1,3 +1,12 @@
+"""
+管理后台工具集合（订单/商品/药品）。
+
+约定：
+1. 所有批量 ID 参数必须传 JSON 数组（List[str]），不能传逗号拼接字符串；
+2. 所有参数命名以工具函数签名为准，Agent 调用时必须传同名字段；
+3. 详情类工具在收到空 ID 或全空白 ID 时会直接报错并拒绝调用后端接口。
+"""
+
 from typing import Optional
 
 from langchain_core.tools import tool
@@ -21,8 +30,37 @@ def format_ids_to_string(ids: list[str]) -> str:
     return ",".join(str(id_) for id_ in ids)
 
 
+def _normalize_id_list(ids: list[str], *, field_name: str) -> list[str]:
+    """
+    规范化并校验批量 ID 参数。
+
+    Args:
+        ids: 原始 ID 列表，要求元素可转字符串。
+        field_name: 当前参数名，用于报错提示（如 `order_id`、`product_id`）。
+
+    Returns:
+        list[str]: 去首尾空白并移除空值后的 ID 列表。
+
+    Raises:
+        ValueError: 当入参不是非空字符串数组时抛出，防止请求路径拼成 `/agent/order/`。
+    """
+
+    normalized = [str(item).strip() for item in ids if str(item).strip()]
+    if not normalized:
+        raise ValueError(f"{field_name} 必须为非空字符串数组（List[str]），例如 [\"A1\",\"A2\"]")
+    return normalized
+
+
 class MallProductListQueryRequest(BaseModel):
-    """商城商品列表查询请求参数"""
+    """
+    商城商品列表查询请求参数。
+
+    传参说明：
+    1. 至少传分页参数 `page_num/page_size`；
+    2. 其余筛选参数按需传，不需要的字段不要传空字符串；
+    3. 推荐示例：
+       `{"page_num": 1, "page_size": 10, "name": "感冒", "status": 1}`。
+    """
     page_num: Optional[int] = Field(
         default=1,
         description="页码，从 1 开始，默认为 1"
@@ -58,7 +96,15 @@ class MallProductListQueryRequest(BaseModel):
 
 
 class MallOrderListRequest(BaseModel):
-    """商城订单列表查询请求参数"""
+    """
+    商城订单列表查询请求参数。
+
+    传参说明：
+    1. 至少传分页参数 `page_num/page_size`；
+    2. 其余筛选字段按需传，不要构造无意义空值；
+    3. 推荐示例：
+       `{"page_num": 1, "page_size": 10, "receiver_name": "张三"}`。
+    """
     page_num: Optional[int] = Field(
         default=1,
         description="页码，从 1 开始，默认为 1"
@@ -94,23 +140,56 @@ class MallOrderListRequest(BaseModel):
 
 
 class ProductInfoRequest(BaseModel):
-    """商品详情查询请求参数"""
+    """
+    商品详情查询请求参数。
+
+    传参示例：
+    `{"product_id": ["2001", "2003"]}`
+    """
+
     product_id: list[str] = Field(
-        description="商品ID，支持单个或多个批量查询。"
+        min_length=1,
+        description=(
+            "商品ID字符串数组（List[str]），支持批量查询。"
+            "必须传 JSON 数组，不能传 '2001,2003' 这种逗号字符串。"
+        ),
+        examples=[["2001"], ["2001", "2003"]],
     )
 
 
 class DrugDetailRequest(BaseModel):
-    """药品详情查询请求参数"""
+    """
+    药品详情查询请求参数。
+
+    传参示例：
+    `{"product_id": ["2001", "2003"]}`
+    """
+
     product_id: list[str] = Field(
-        description="药品商品ID列表，支持批量查询。"
+        min_length=1,
+        description=(
+            "药品商品ID字符串数组（List[str]），支持批量查询。"
+            "必须传 JSON 数组，不能传逗号拼接字符串。"
+        ),
+        examples=[["2001"], ["2001", "2003"]],
     )
 
 
 class OrderDetailRequest(BaseModel):
-    """订单详情查询请求参数"""
+    """
+    订单详情查询请求参数。
+
+    传参示例：
+    `{"order_id": ["O20260101", "O20260102"]}`
+    """
+
     order_id: list[str] = Field(
-        description="订单ID，支持单个或多个批量查询。"
+        min_length=1,
+        description=(
+            "订单ID字符串数组（List[str]），支持批量查询。"
+            "必须传 JSON 数组，不能传 'O1,O2' 这种字符串。"
+        ),
+        examples=[["O20260101"], ["O20260101", "O20260102"]],
     )
 
 
@@ -189,8 +268,16 @@ async def get_product_list(
         return HttpResponse.parse_data(response)
 
 
-@tool(args_schema=ProductInfoRequest, description="根据商品ID获取详细信息，支持批量查询。"
-                                                  "调用时机：用户明确询问某个或某些商品的详细信息时。")
+@tool(
+    args_schema=ProductInfoRequest,
+    description=(
+        "根据商品ID获取详细信息，支持批量查询。"
+        "参数传递规则：product_id 必须是字符串数组 List[str]，例如 "
+        "{\"product_id\": [\"2001\", \"2003\"]}；"
+        "不要传逗号拼接字符串。"
+        "调用时机：用户明确询问某个或某些商品的详细信息时。"
+    ),
+)
 @tool_call_status(
     tool_name="获取商品详情",
     start_message="正在查询商品详情",
@@ -200,22 +287,32 @@ async def get_product_list(
 async def get_product_detail(product_id: list[str]) -> dict:
     """
     根据商品ID获取详细信息，支持批量查询。
-    后端路径格式：`/agent/products/{ids}`，例如 `/agent/products/1001,1002`。
+    后端路径格式：`/agent/product/{ids}`，例如 `/agent/product/1001,1002`。
 
     Args:
-        product_id: 商品 ID 列表（支持批量）。
+        product_id: 商品 ID 字符串数组（List[str]），例如 `["2001", "2003"]`。
+            不能为空，不能传逗号拼接字符串。
 
     Returns:
         dict: 商品详情结果字典。
     """
-    ids_str = format_ids_to_string(product_id)
+    normalized_ids = _normalize_id_list(product_id, field_name="product_id")
+    ids_str = format_ids_to_string(normalized_ids)
     async with HttpClient() as client:
         response = await client.get(url=f"/agent/product/{ids_str}")
         return HttpResponse.parse_data(response)
 
 
-@tool(args_schema=DrugDetailRequest, description="根据商品ID获取药品详细信息，包括说明书、适应症、用法用量等，支持批量查询。"
-                                                 "调用时机：用户询问药品的详细说明书、适应症、用法用量等信息时。")
+@tool(
+    args_schema=DrugDetailRequest,
+    description=(
+        "根据商品ID获取药品详细信息，包括说明书、适应症、用法用量等，支持批量查询。"
+        "参数传递规则：product_id 必须是字符串数组 List[str]，例如 "
+        "{\"product_id\": [\"2001\", \"2003\"]}；"
+        "不要传逗号拼接字符串。"
+        "调用时机：用户询问药品说明书、适应症、用法用量等信息时。"
+    ),
+)
 @tool_call_status(
     tool_name="获取药品详情",
     start_message="正在查询药品详情",
@@ -228,20 +325,29 @@ async def get_drug_detail(product_id: list[str]) -> dict:
     支持批量查询多个药品。
 
     Args:
-        product_id: 药品商品 ID 列表。
+        product_id: 药品商品 ID 字符串数组（List[str]），例如 `["2001", "2003"]`。
+            不能为空，不能传逗号拼接字符串。
 
     Returns:
         dict: 药品详情结果字典。
     """
-    ids_str = format_ids_to_string(product_id)
+    normalized_ids = _normalize_id_list(product_id, field_name="product_id")
+    ids_str = format_ids_to_string(normalized_ids)
     async with HttpClient() as client:
         response = await client.get(url=f"/agent/drug/{ids_str}")
         return HttpResponse.parse_data(response)
 
 
-@tool(args_schema=MallOrderListRequest, description="获取订单列表，支持按订单号、状态、收货人信息等条件筛选。"
-                                                    "注意：若用户需要更详细的订单信息（如收货地址、物流详情），请调用 get_orders_detail 工具。"
-                                                    "调用时机：用户需要浏览或搜索订单时。")
+@tool(
+    args_schema=MallOrderListRequest,
+    description=(
+        "获取订单列表，支持按订单号、状态、收货人信息等条件筛选。"
+        "参数传递规则：使用结构化字段（如 order_no、receiver_name），"
+        "不要把多个筛选条件拼成单字符串。"
+        "注意：若用户需要收货地址、物流详情等明细，请调用 get_orders_detail。"
+        "调用时机：用户需要浏览或搜索订单时。"
+    ),
+)
 @tool_call_status(
     tool_name="获取订单列表",
     start_message="正在查询订单列表",
@@ -289,8 +395,16 @@ async def get_order_list(
         return HttpResponse.parse_data(response)
 
 
-@tool(args_schema=OrderDetailRequest, description="根据订单ID获取详细信息，包括收货地址、物流信息、商品明细等，支持批量查询。"
-                                                  "调用时机：用户询问某个或某些订单的详细信息时，或订单列表信息无法满足用户需求时。")
+@tool(
+    args_schema=OrderDetailRequest,
+    description=(
+        "根据订单ID获取详细信息，包括收货地址、物流信息、商品明细等，支持批量查询。"
+        "参数传递规则：order_id 必须是字符串数组 List[str]，例如 "
+        "{\"order_id\": [\"O20260101\", \"O20260102\"]}；"
+        "不要传 'O20260101,O20260102'。"
+        "调用时机：用户询问订单明细，或订单列表信息不足时。"
+    ),
+)
 @tool_call_status(
     tool_name="获取订单详情",
     start_message="正在查询订单详情",
@@ -300,15 +414,17 @@ async def get_order_list(
 async def get_orders_detail(order_id: list[str]) -> dict:
     """
     获取订单详情，支持批量查询。
-    后端路径格式：`/agent/orders/{ids}`，例如 `/agent/orders/1,2,3`。
+    后端路径格式：`/agent/order/{order_id}`，例如 `/agent/order/O20260101,O20260102`。
 
     Args:
-        order_id: 订单 ID 列表（支持批量）。
+        order_id: 订单ID 字符串数组（List[str]），例如 `["O20260101", "O20260102"]`。
+            不能为空，不能传逗号拼接字符串。
 
     Returns:
         dict: 订单详情结果字典。
     """
-    ids_str = format_ids_to_string(order_id)
+    normalized_ids = _normalize_id_list(order_id, field_name="order_id")
+    ids_str = format_ids_to_string(normalized_ids)
     async with HttpClient() as client:
         response = await client.get(url=f"/agent/order/{ids_str}")
         return HttpResponse.parse_data(response)

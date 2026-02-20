@@ -11,6 +11,7 @@ from app.agent.admin.node import (
     gateway_router,
     order_agent,
     product_agent,
+    summary_agent,
     supervisor_agent,
 )
 from app.agent.admin.state import AgentState
@@ -29,7 +30,7 @@ SUPERVISOR_ROUTE_MAP = {
     "order_agent": "order_agent",
     "product_agent": "product_agent",
     "excel_agent": "excel_agent",
-    END: END,
+    "summary_agent": "summary_agent",
 }
 
 # worker 执行后路由映射：快车道结束，慢车道强制回 supervisor。
@@ -62,19 +63,18 @@ def _route_from_supervisor(state: AgentState) -> str:
     读取 supervisor 输出并决定下一跳。
 
     Args:
-        state: 当前图状态，需包含 `next_node`。
+        state: 当前图状态，需包含 `routing.target_node`。
 
     Returns:
-        str: 当 `next_node == FINISH` 时返回 `END`，
-            否则在允许集合中返回业务节点名；非法值统一回退 `END`。
+        str: 当 `target_node` 合法时返回对应目标节点；
+            非法值统一回退 `summary_agent`。
     """
 
-    next_node = str(state.get("next_node") or "FINISH")
-    if next_node == "FINISH":
-        return END
-    if next_node in {"order_agent", "product_agent", "excel_agent"}:
-        return next_node
-    return END
+    routing = state.get("routing") or {}
+    target_node = str(routing.get("target_node") or "summary_agent")
+    if target_node in {"order_agent", "product_agent", "excel_agent", "summary_agent"}:
+        return target_node
+    return "summary_agent"
 
 
 def _route_after_worker(state: AgentState) -> str:
@@ -103,9 +103,11 @@ def build_graph() -> Any:
     拓扑结构：
     1. `START -> gateway_router`；
     2. `gateway_router -> order_agent|product_agent|chat_agent|supervisor_agent`；
-    3. `supervisor_agent -> order_agent|product_agent|excel_agent|END`；
+    3. `supervisor_agent -> order_agent|product_agent|excel_agent|summary_agent`；
+       其中 `target_node=summary_agent` 时由 `summary_agent` 做最终汇总后结束；
     4. `order/product/excel -> END(快车道) 或 supervisor_agent(慢车道)`；
-    5. `chat_agent -> END`。
+    5. `chat_agent -> END`（闲聊）。
+    6. `summary_agent -> END`（最终汇总）。
 
     Args:
         无。
@@ -122,6 +124,7 @@ def build_graph() -> Any:
     graph.add_node("product_agent", product_agent)
     graph.add_node("excel_agent", excel_agent)
     graph.add_node("chat_agent", chat_agent)
+    graph.add_node("summary_agent", summary_agent)
 
     graph.add_edge(START, "gateway_router")
     graph.add_conditional_edges(
@@ -140,5 +143,6 @@ def build_graph() -> Any:
     graph.add_conditional_edges("product_agent", _route_after_worker, WORKER_NEXT_MAP)
     graph.add_conditional_edges("excel_agent", _route_after_worker, WORKER_NEXT_MAP)
     graph.add_edge("chat_agent", END)
+    graph.add_edge("summary_agent", END)
 
     return graph.compile()

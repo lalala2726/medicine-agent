@@ -17,39 +17,39 @@ from app.core.langsmith import traceable
 from app.core.llm import create_chat_model
 
 _GATEWAY_PROMPT = """
-你是药品商城后台助手的前置意图网关（Intent Gateway）。
-
-你只能输出 JSON，且必须包含两个字段：
-1) route_target: order_agent|product_agent|chat_agent|supervisor_agent
-2) task_difficulty: simple|normal|complex
-
-通用要求：
-1. 只输出一个 JSON 对象，不要输出任何解释、Markdown、代码块。
-2. 若用户输入很短（如“查询啊”），允许结合最近对话上下文延续同一业务域。
-3. 若上下文不足以判断业务域，优先路由 chat_agent，避免误调用业务节点。
-
-路由规则（优先级从高到低）：
-1. 跨域、多步骤、依赖上下文决策、需要节点协作 -> supervisor_agent。
-2. 单域订单任务（查订单/订单详情/收货人/退款单） -> order_agent。
-3. 单域商品任务（查商品/库存/上下架/药品详情） -> product_agent。
-4. 闲聊、寒暄、无明确业务动作 -> chat_agent。
-
-难度规则：
-1. simple: 单步、参数明确、直接查询。
-2. normal: 需要少量推理或条件筛选。
-3. complex: 跨域、多阶段、依赖上下文/策略判断。
-
-示例：
-- 用户: "查一下订单123"
-  输出: {"route_target":"order_agent","task_difficulty":"simple"}
-- 用户: "查商品2001库存"
-  输出: {"route_target":"product_agent","task_difficulty":"simple"}
-- 用户: "在吗"
-  输出: {"route_target":"chat_agent","task_difficulty":"simple"}
-- 用户: "把上个月退款超过2次的订单找出来，把对应商品下架"
-  输出: {"route_target":"supervisor_agent","task_difficulty":"complex"}
-- 上下文: 最近在查订单收货人，用户当前输入: "查询啊"
-  输出: {"route_target":"order_agent","task_difficulty":"normal"}
+    你是药品商城后台助手的前置意图网关（Intent Gateway）。
+    
+    你只能输出 JSON，且必须包含两个字段：
+    1) route_target: order_agent|product_agent|chat_agent|supervisor_agent
+    2) task_difficulty: simple|normal|complex
+    
+    通用要求：
+    1. 只输出一个 JSON 对象，不要输出任何解释、Markdown、代码块。
+    2. 若用户输入很短（如“查询啊”），允许结合最近对话上下文延续同一业务域。
+    3. 若上下文不足以判断业务域，优先路由 chat_agent，避免误调用业务节点。
+    
+    路由规则（优先级从高到低）：
+    1. 跨域、多步骤、依赖上下文决策、需要节点协作 -> supervisor_agent。
+    2. 单域订单任务（查订单/订单详情/收货人/退款单） -> order_agent。
+    3. 单域商品任务（查商品/库存/上下架/药品详情） -> product_agent。
+    4. 闲聊、寒暄、无明确业务动作 -> chat_agent。
+    
+    难度规则：
+    1. simple: 单步、参数明确、直接查询。
+    2. normal: 需要少量推理或条件筛选。
+    3. complex: 跨域、多阶段、依赖上下文/策略判断。
+    
+    示例：
+    - 用户: "查一下订单123"
+      输出: {"route_target":"order_agent","task_difficulty":"simple"}
+    - 用户: "查商品2001库存"
+      输出: {"route_target":"product_agent","task_difficulty":"simple"}
+    - 用户: "在吗"
+      输出: {"route_target":"chat_agent","task_difficulty":"simple"}
+    - 用户: "把上个月退款超过2次的订单找出来，把对应商品下架"
+      输出: {"route_target":"supervisor_agent","task_difficulty":"complex"}
+    - 上下文: 最近在查订单收货人，用户当前输入: "查询啊"
+      输出: {"route_target":"order_agent","task_difficulty":"normal"}
 """
 
 
@@ -85,11 +85,11 @@ def gateway_router(state: AgentState) -> dict[str, Any]:
     Returns:
         dict[str, Any]: gateway 的状态更新字典，字段说明如下：
             - `routing.route_target`: 路由目标节点；
+            - `routing.target_node`: 与 `route_target` 对齐的当前目标节点；
             - `routing.mode`: 执行模式（fast_lane/chat/supervisor_loop）；
             - `routing.task_difficulty`: 任务难度（simple/normal/complex）；
             - `routing.selected_model`: 下游建议模型名；
             - `routing.think_enabled`: 是否开启深度思考；
-            - `next_node`: 与 route_target 保持一致；
             - `context`: 初始化共享上下文（含调用计数、agent_outputs、原始输入）；
             - `execution_traces`: 路由决策追踪。
     """
@@ -124,6 +124,7 @@ def gateway_router(state: AgentState) -> dict[str, Any]:
     routing = apply_model_profile_to_routing(
         {
             "route_target": route_target,
+            "target_node": route_target,
             "mode": mode,
             "turn": 0,
             "finished": False,
@@ -134,7 +135,6 @@ def gateway_router(state: AgentState) -> dict[str, Any]:
 
     update: dict[str, Any] = {
         "routing": routing,
-        "next_node": route_target,
         "context": {
             "node_call_counts": {},
             "agent_outputs": {},

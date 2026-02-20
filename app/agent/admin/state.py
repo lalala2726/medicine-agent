@@ -53,10 +53,9 @@ class AgentState(MessagesState, total=False):
 
     Attributes:
         user_input: 当前轮用户输入文本。
-        next_node: supervisor 下发的下一跳节点名，或 `FINISH`。
         context: 跨节点共享上下文（如提取出的订单/商品 ID、节点输出缓存等）。
-        routing: 路由元数据（如 `mode`、`route_target`、`turn`、`directive`、`finished`、
-            `task_difficulty`、`selected_model`、`think_enabled`）。
+        routing: 路由元数据（如 `mode`、`route_target`、`target_node`、`node_goal`、
+            `turn`、`finished`、`task_difficulty`、`selected_model`、`think_enabled`）。
         history_messages: 兼容现有服务层的历史字段（迁移期保留）。
         results: 节点输出聚合结果字典。
         execution_traces: 节点执行追踪列表（输入消息、工具调用、输出文本等）。
@@ -64,12 +63,11 @@ class AgentState(MessagesState, total=False):
     """
 
     user_input: str
-    next_node: str
 
     # 节点间共享结构化上下文。
     context: Annotated[dict[str, Any], _merge_dict]
 
-    # 路由相关元数据，包含 mode/route_target/turn/directive/finished 等字段。
+    # 路由相关元数据，包含 mode/route_target/target_node/node_goal/turn/finished 等字段。
     routing: Annotated[dict[str, Any], _merge_dict]
 
     # 保持历史字段以兼容当前服务层落库流程。

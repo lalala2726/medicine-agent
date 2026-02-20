@@ -82,6 +82,65 @@ class UpdateConversationTitleRequest(BaseModel):
     title: str = Field(..., min_length=1, max_length=100, description="会话标题")
 
 
+def _build_conversation_messages_response(
+        *,
+        conversation_uuid: str,
+        request: ConversationMessagesRequest,
+) -> ApiResponse[list[dict[str, Any]]]:
+    """
+    统一构造会话消息分页响应，供新旧路由复用。
+
+    Args:
+        conversation_uuid: 会话 UUID。
+        request: 分页请求参数（`page_num/page_size`）。
+
+    Returns:
+        ApiResponse[list[dict[str, Any]]]: 序列化后的历史消息数组响应。
+    """
+
+    messages = conversation_messages_service(
+        conversation_uuid=conversation_uuid,
+        page_request=PageRequest(
+            page_num=request.page_num,
+            page_size=request.page_size,
+        ),
+    )
+    serialized_messages = [
+        message.model_dump(by_alias=True, exclude_none=True)
+        for message in messages
+    ]
+    return ApiResponse.success(data=serialized_messages)
+
+
+def _build_update_conversation_title_response(
+        *,
+        conversation_uuid: str,
+        request: UpdateConversationTitleRequest,
+) -> ApiResponse[dict[str, str]]:
+    """
+    统一构造会话标题修改响应，供新旧路由复用。
+
+    Args:
+        conversation_uuid: 会话 UUID。
+        request: 标题更新请求对象，读取 `title` 字段。
+
+    Returns:
+        ApiResponse[dict[str, str]]: 修改结果，包含会话 UUID 与标准化标题。
+    """
+
+    normalized_title = update_conversation_title_service(
+        conversation_uuid=conversation_uuid,
+        title=request.title,
+    )
+    return ApiResponse.success(
+        data={
+            "conversation_uuid": conversation_uuid,
+            "title": normalized_title,
+        },
+        message="修改成功",
+    )
+
+
 @router.post("/chat", summary="管理助手对话（Gateway + Supervisor）")
 @pre_authorize(
     lambda: has_role(RoleCode.SUPER_ADMIN) or has_permission("admin:assistant:access")
@@ -135,7 +194,7 @@ async def delete_conversation(
     )
 
 
-@router.put("/conversation/{conversation_uuid}/title", summary="修改管理助手会话标题")
+@router.put("/conversation/{conversation_uuid}", summary="修改管理助手会话标题")
 @pre_authorize(
     lambda: has_role(RoleCode.SUPER_ADMIN) or has_permission("admin:assistant:update")
 )
@@ -143,21 +202,20 @@ async def update_conversation_title(
         request: UpdateConversationTitleRequest,
         conversation_uuid: str = Path(..., min_length=1, description="会话UUID"),
 ) -> ApiResponse[dict[str, str]]:
-    """修改管理助手会话标题"""
-    normalized_title = update_conversation_title_service(
+    """
+    修改管理助手会话标题（新路径）。
+
+    说明：保留该路径以兼容当前实现，同时在 `/conversation/{conversation_uuid}/title`
+    提供等价旧路径，避免历史客户端与测试用例出现 404。
+    """
+
+    return _build_update_conversation_title_response(
         conversation_uuid=conversation_uuid,
-        title=request.title,
-    )
-    return ApiResponse.success(
-        data={
-            "conversation_uuid": conversation_uuid,
-            "title": normalized_title,
-        },
-        message="修改成功",
+        request=request,
     )
 
 
-@router.get("/conversation/{conversation_uuid}/messages", summary="管理助手历史消息")
+@router.get("/history/{conversation_uuid}", summary="管理助手历史消息")
 @pre_authorize(
     lambda: has_role(RoleCode.SUPER_ADMIN) or has_permission("admin:assistant:access")
 )
@@ -165,16 +223,64 @@ async def conversation_messages(
         conversation_uuid: str = Path(..., min_length=1, description="会话UUID"),
         request: ConversationMessagesRequest = Depends(),
 ) -> ApiResponse[list[dict[str, Any]]]:
-    """分页查询管理助手历史消息。"""
-    messages = conversation_messages_service(
+    """
+    分页查询管理助手历史消息（新路径）。
+
+    说明：保留该路径以兼容当前实现，同时在 `/conversation/{conversation_uuid}/messages`
+    提供等价旧路径，避免历史客户端与测试用例出现 404。
+    """
+
+    return _build_conversation_messages_response(
         conversation_uuid=conversation_uuid,
-        page_request=PageRequest(
-            page_num=request.page_num,
-            page_size=request.page_size,
-        ),
+        request=request,
     )
-    serialized_messages = [
-        message.model_dump(by_alias=True, exclude_none=True)
-        for message in messages
-    ]
-    return ApiResponse.success(data=serialized_messages)
+
+
+@router.put("/conversation/{conversation_uuid}/title", summary="修改管理助手会话标题（兼容路径）")
+@pre_authorize(
+    lambda: has_role(RoleCode.SUPER_ADMIN) or has_permission("admin:assistant:update")
+)
+async def update_conversation_title_legacy(
+        request: UpdateConversationTitleRequest,
+        conversation_uuid: str = Path(..., min_length=1, description="会话UUID"),
+) -> ApiResponse[dict[str, str]]:
+    """
+    修改会话标题（旧路径兼容）。
+
+    Args:
+        request: 标题更新请求对象。
+        conversation_uuid: 会话 UUID。
+
+    Returns:
+        ApiResponse[dict[str, str]]: 修改结果，结构与新路径一致。
+    """
+
+    return _build_update_conversation_title_response(
+        conversation_uuid=conversation_uuid,
+        request=request,
+    )
+
+
+@router.get("/conversation/{conversation_uuid}/messages", summary="管理助手历史消息（兼容路径）")
+@pre_authorize(
+    lambda: has_role(RoleCode.SUPER_ADMIN) or has_permission("admin:assistant:access")
+)
+async def conversation_messages_legacy(
+        conversation_uuid: str = Path(..., min_length=1, description="会话UUID"),
+        request: ConversationMessagesRequest = Depends(),
+) -> ApiResponse[list[dict[str, Any]]]:
+    """
+    查询会话历史消息（旧路径兼容）。
+
+    Args:
+        conversation_uuid: 会话 UUID。
+        request: 分页请求参数。
+
+    Returns:
+        ApiResponse[list[dict[str, Any]]]: 会话历史消息列表响应。
+    """
+
+    return _build_conversation_messages_response(
+        conversation_uuid=conversation_uuid,
+        request=request,
+    )

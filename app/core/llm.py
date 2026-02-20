@@ -11,34 +11,34 @@ DEFAULT_EMBEDDING_MODEL = os.getenv("DASHSCOPE_EMBEDDING_MODEL", "text-embedding
 DEFAULT_BASE_URL = os.getenv("DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
 
 
-def _merge_extra_body(
+def _resolve_extra_body(
         model_kwargs: dict[str, Any],
         *,
         extra_body: Optional[dict[str, Any]],
         think: bool,
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
     """
-    合并模型调用扩展参数并按需开启深度思考。
+    从 `model_kwargs` 中提取并合并 `extra_body`，同时按需开启深度思考。
 
     Args:
-        model_kwargs: 当前 `model_kwargs` 字典（会复制后返回，不会原地修改入参）。
+        model_kwargs: 当前 `model_kwargs` 字典（会复制后处理，不会原地修改入参）。
+            兼容从该字典中读取旧写法 `extra_body`。
         extra_body: 调用方显式传入的扩展参数。
-        think: 是否开启深度思考；开启时会写入 `enable_thinking=True`。
+        think: 是否开启深度思考；开启时会强制写入 `enable_thinking=True`。
 
     Returns:
-        dict[str, Any]: 合并后的 `model_kwargs`。当存在扩展参数时，
-            会在 `model_kwargs["extra_body"]` 下整合所有字段。
+        tuple[dict[str, Any], dict[str, Any] | None]:
+            - 第一个元素为清理后的 `model_kwargs`（已移除 `extra_body`）；
+            - 第二个元素为合并后的 `extra_body`（无内容时为 None）。
     """
 
-    merged = dict(model_kwargs)
-    nested_extra_body = dict(merged.get("extra_body") or {})
+    cleaned_model_kwargs = dict(model_kwargs)
+    nested_extra_body = dict(cleaned_model_kwargs.pop("extra_body", None) or {})
     if extra_body:
         nested_extra_body.update(extra_body)
     if think:
         nested_extra_body["enable_thinking"] = True
-    if nested_extra_body:
-        merged["extra_body"] = nested_extra_body
-    return merged
+    return cleaned_model_kwargs, (nested_extra_body or None)
 
 
 def create_chat_model(
@@ -76,13 +76,16 @@ def create_chat_model(
     model_kwargs = dict(raw_model_kwargs or {})
     if response_format:
         model_kwargs["response_format"] = response_format
-    model_kwargs = _merge_extra_body(
+    model_kwargs, resolved_extra_body = _resolve_extra_body(
         model_kwargs,
         extra_body=extra_body,
         think=think,
     )
     if model_kwargs:
         kwargs["model_kwargs"] = model_kwargs
+    if resolved_extra_body:
+        # 使用显式参数传递 `extra_body`，避免 langsmith 对 model_kwargs 的告警。
+        kwargs["extra_body"] = resolved_extra_body
     # 默认开启 stream_usage，优先获取模型返回的真实 token 消耗。
     # 若供应商未返回 usage，业务层会使用 tiktoken 估算兜底。
     kwargs.setdefault("stream_usage", True)

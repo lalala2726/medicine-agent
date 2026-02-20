@@ -35,7 +35,7 @@ def test_create_chat_model_passes_kwargs(monkeypatch):
     assert model.kwargs["stream_usage"] is True
 
 
-def test_create_chat_model_merges_extra_body_into_model_kwargs(monkeypatch):
+def test_create_chat_model_merges_extra_body_into_explicit_parameter(monkeypatch):
     monkeypatch.setenv("DASHSCOPE_API_KEY", "test-key")
     monkeypatch.setattr(llm, "ChatOpenAI", DummyChatOpenAI)
 
@@ -50,8 +50,8 @@ def test_create_chat_model_merges_extra_body_into_model_kwargs(monkeypatch):
     assert model.kwargs["model_kwargs"] == {
         "custom_flag": 1,
         "response_format": {"type": "json_object"},
-        "extra_body": {"enable_thinking": True},
     }
+    assert model.kwargs["extra_body"] == {"enable_thinking": True}
 
 
 def test_create_chat_model_think_true_merges_with_existing_extra_body(monkeypatch):
@@ -66,7 +66,7 @@ def test_create_chat_model_think_true_merges_with_existing_extra_body(monkeypatc
     )
 
     assert isinstance(model, DummyChatOpenAI)
-    assert model.kwargs["model_kwargs"]["extra_body"] == {
+    assert model.kwargs["extra_body"] == {
         "biz": "value",
         "foo": "bar",
         "enable_thinking": True,

@@ -4,6 +4,7 @@ import pytest
 from langchain_core.messages import HumanMessage
 
 import app.agent.admin.node.supervisor_node as supervisor_module
+from app.agent.admin.model_policy import DEFAULT_NODE_GOAL
 
 
 class _DummyResponse:
@@ -36,14 +37,14 @@ def _build_state(
     }
 
 
-def test_supervisor_returns_valid_next_node(monkeypatch: pytest.MonkeyPatch):
+def test_supervisor_returns_valid_target_node(monkeypatch: pytest.MonkeyPatch):
     class _Model:
         def invoke(self, _messages):
             return _DummyResponse(
                 json.dumps(
                     {
-                        "next_node": "product_agent",
-                        "directive": "查询商品ID=2001库存并返回状态",
+                        "target_node": "product_agent",
+                        "node_goal": "查询商品ID=2001库存并返回状态",
                         "task_difficulty": "complex",
                     }
                 )
@@ -51,23 +52,23 @@ def test_supervisor_returns_valid_next_node(monkeypatch: pytest.MonkeyPatch):
 
     monkeypatch.setattr(supervisor_module, "create_chat_model", lambda **_kwargs: _Model())
     result = supervisor_module.supervisor_agent(_build_state())
-    assert result["next_node"] == "product_agent"
+    assert result["routing"]["target_node"] == "product_agent"
     assert result["routing"]["finished"] is False
-    assert result["routing"]["directive"] == "查询商品ID=2001库存并返回状态"
+    assert result["routing"]["node_goal"] == "查询商品ID=2001库存并返回状态"
     assert result["routing"]["task_difficulty"] == "complex"
     assert result["routing"]["selected_model"] == "qwen-max"
     assert result["routing"]["think_enabled"] is True
     assert result["context"]["node_call_counts"]["product_agent"] == 1
 
 
-def test_supervisor_falls_back_to_finish_on_invalid_next_node(monkeypatch: pytest.MonkeyPatch):
+def test_supervisor_falls_back_to_summary_on_invalid_target(monkeypatch: pytest.MonkeyPatch):
     class _Model:
         def invoke(self, _messages):
             return _DummyResponse(
                 json.dumps(
                     {
-                        "next_node": "bad_node",
-                        "directive": "忽略",
+                        "target_node": "bad_node",
+                        "node_goal": "忽略",
                         "task_difficulty": "simple",
                     }
                 )
@@ -75,21 +76,22 @@ def test_supervisor_falls_back_to_finish_on_invalid_next_node(monkeypatch: pytes
 
     monkeypatch.setattr(supervisor_module, "create_chat_model", lambda **_kwargs: _Model())
     result = supervisor_module.supervisor_agent(_build_state())
-    assert result["next_node"] == "FINISH"
+    assert result["routing"]["target_node"] == "summary_agent"
     assert result["routing"]["finished"] is True
-    assert result["routing"]["directive"] == ""
+    assert result["routing"]["node_goal"] == "忽略"
+    assert result["routing"]["route_target"] == "summary_agent"
     assert result["routing"]["task_difficulty"] == "simple"
     assert result["routing"]["selected_model"] == "qwen-flash"
     assert result["routing"]["think_enabled"] is False
 
 
-def test_supervisor_falls_back_to_finish_when_directive_missing(monkeypatch: pytest.MonkeyPatch):
+def test_supervisor_fills_default_goal_when_node_goal_missing(monkeypatch: pytest.MonkeyPatch):
     class _Model:
         def invoke(self, _messages):
             return _DummyResponse(
                 json.dumps(
                     {
-                        "next_node": "order_agent",
+                        "target_node": "order_agent",
                         "task_difficulty": "complex",
                     }
                 )
@@ -97,15 +99,16 @@ def test_supervisor_falls_back_to_finish_when_directive_missing(monkeypatch: pyt
 
     monkeypatch.setattr(supervisor_module, "create_chat_model", lambda **_kwargs: _Model())
     result = supervisor_module.supervisor_agent(_build_state())
-    assert result["next_node"] == "FINISH"
-    assert result["routing"]["finished"] is True
-    assert result["routing"]["directive"] == ""
+    assert result["routing"]["target_node"] == "order_agent"
+    assert result["routing"]["finished"] is False
+    assert result["routing"]["node_goal"] == DEFAULT_NODE_GOAL
     assert result["routing"]["task_difficulty"] == "complex"
     assert result["routing"]["selected_model"] == "qwen-max"
     assert result["routing"]["think_enabled"] is True
+    assert result["context"]["node_call_counts"]["order_agent"] == 1
 
 
-def test_supervisor_loop_guard_finishes_when_same_node_reaches_limit(
+def test_supervisor_loop_guard_routes_to_summary_when_limit_reached(
         monkeypatch: pytest.MonkeyPatch,
 ):
     class _Model:
@@ -113,8 +116,8 @@ def test_supervisor_loop_guard_finishes_when_same_node_reaches_limit(
             return _DummyResponse(
                 json.dumps(
                     {
-                        "next_node": "order_agent",
-                        "directive": "查询订单123的退款记录",
+                        "target_node": "order_agent",
+                        "node_goal": "查询订单123的退款记录",
                         "task_difficulty": "complex",
                     }
                 )
@@ -124,9 +127,10 @@ def test_supervisor_loop_guard_finishes_when_same_node_reaches_limit(
     result = supervisor_module.supervisor_agent(
         _build_state(counts={"order_agent": 2}, turn=1)
     )
-    assert result["next_node"] == "FINISH"
+    assert result["routing"]["target_node"] == "summary_agent"
     assert result["routing"]["finished"] is True
-    assert result["routing"]["directive"] == ""
+    assert result["routing"]["node_goal"] == DEFAULT_NODE_GOAL
+    assert result["routing"]["route_target"] == "summary_agent"
     assert result["routing"]["task_difficulty"] == "complex"
     assert result["routing"]["selected_model"] == "qwen-max"
     assert result["routing"]["think_enabled"] is True
@@ -142,8 +146,8 @@ def test_supervisor_uses_full_messages_instead_of_tail(monkeypatch: pytest.Monke
             return _DummyResponse(
                 json.dumps(
                     {
-                        "next_node": "product_agent",
-                        "directive": "检查商品2001",
+                        "target_node": "product_agent",
+                        "node_goal": "检查商品2001",
                         "task_difficulty": "normal",
                     }
                 )
@@ -166,8 +170,8 @@ def test_supervisor_falls_back_to_existing_task_difficulty_when_missing(monkeypa
             return _DummyResponse(
                 json.dumps(
                     {
-                        "next_node": "product_agent",
-                        "directive": "查询商品2001库存",
+                        "target_node": "product_agent",
+                        "node_goal": "查询商品2001库存",
                     }
                 )
             )
@@ -191,8 +195,8 @@ def test_supervisor_emits_enter_and_dispatch_notice_when_emitter_available(
             return _DummyResponse(
                 json.dumps(
                     {
-                        "next_node": "product_agent",
-                        "directive": "查询商品2001库存并返回状态",
+                        "target_node": "product_agent",
+                        "node_goal": "查询商品2001库存并返回状态",
                         "task_difficulty": "normal",
                     }
                 )
@@ -213,4 +217,6 @@ def test_supervisor_emits_enter_and_dispatch_notice_when_emitter_available(
     assert dispatch.content.node == "supervisor_agent"
     assert dispatch.content.state == "dispatch"
     assert dispatch.content.name == "product_agent"
-    assert dispatch.meta["next_node"] == "product_agent"
+    assert dispatch.content.arguments is None
+    assert dispatch.meta["target_node"] == "product_agent"
+    assert "node_goal" not in dispatch.meta

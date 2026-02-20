@@ -369,7 +369,6 @@ def test_assistant_chat_schedules_user_persist_without_blocking_main_flow(monkey
     stream_config = captured["config"]
     initial_state = stream_config.build_initial_state("x")
     assert initial_state["execution_traces"] == []
-    assert initial_state["next_node"] == ""
     assert "context" in initial_state
     assert "messages" in initial_state
     assert [message.content for message in initial_state["history_messages"]] == [
@@ -873,3 +872,25 @@ def test_conversation_messages_returns_latest_page_in_chronological_order(monkey
     thought_chain = result[1].model_dump(by_alias=True)["thoughtChain"]
     assert thought_chain[0]["node"] == "planner"
     assert "result" not in thought_chain[0]["children"][0]
+
+
+def test_should_stream_token_hides_worker_output_in_supervisor_loop():
+    """测试目标：慢车道下仅 summary 节点可输出 token。"""
+
+    latest_state = {
+        "routing": {"mode": "supervisor_loop"},
+        "route_target": "supervisor_agent",
+    }
+    assert service_module._should_stream_token("order_agent", latest_state) is False
+    assert service_module._should_stream_token("product_agent", latest_state) is False
+    assert service_module._should_stream_token("chat_agent", latest_state) is False
+    assert service_module._should_stream_token("summary_agent", latest_state) is True
+
+
+def test_should_stream_token_allows_fast_lane_final_worker():
+    """测试目标：快车道下最终业务节点仍可输出 token。"""
+
+    latest_state = {
+        "routing": {"mode": "fast_lane", "route_target": "order_agent"},
+    }
+    assert service_module._should_stream_token("order_agent", latest_state) is True

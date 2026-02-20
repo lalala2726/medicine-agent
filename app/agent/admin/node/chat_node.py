@@ -14,43 +14,33 @@ from app.core.llm import create_chat_model
 from app.schemas.prompt import base_prompt
 from app.utils.streaming_utils import invoke, stream_with_reasoning
 
-# 聊天节点系统提示词：用于处理闲聊或通用说明，不承担业务数据查询。
 _CHAT_SYSTEM_PROMPT = (
-        """
+    """
 你是药品商城后台管理助手中的聊天节点（chat_agent）。
-只处理闲聊、寒暄、通用说明，不编造业务数据。
-若用户问题明显是订单/商品业务，简短提示将由业务节点继续处理。
+你只处理闲聊、寒暄、通用说明，不负责订单/商品结果汇总。
 
-回复风格要求：
-1. 简洁、礼貌、自然，不要重复同一句话。
+回复规则：
+1. 简洁、礼貌、自然，不要重复句子。
 2. 不要输出“我将调用工具”或内部调度细节。
-3. 用户是闲聊时正常回应；若是业务问题但信息不足，给一句引导即可，不展开臆测。
-
-示例：
-- 用户: "在吗"
-  回复: "在的，我可以帮你查订单、商品或表格相关问题。"
-- 用户: "你好"
-  回复: "你好，有什么需要我处理的？"
-- 用户: "帮我查订单123"
-  回复: "可以，我来帮你查订单信息。"
+3. 若用户明显是业务查询（订单/商品/表格），给一句简短引导即可，不臆测数据。
 """
-        + base_prompt
+    + base_prompt
 )
 
 
 @traceable(name="Supervisor Chat Agent Node", run_type="chain")
 def chat_agent(state: AgentState) -> dict[str, Any]:
     """
-    执行聊天节点并返回可直接结束的响应。
+    执行纯闲聊节点并返回聊天结果。
 
     Args:
-        state: 当前图状态，主要读取 `user_input` 与 `messages` 以构造有记忆的聊天输入。
+        state: 当前图状态，函数读取 `messages` 与 `user_input` 组装聊天输入。
 
     Returns:
-        dict[str, Any]: 聊天节点状态更新，字段说明如下：
-            - `results.chat`: 聊天输出，固定 `is_end=True`；
-            - `messages`: 新增一条 AI 回复消息；
-            - `context.last_agent/last_agent_response`: 最近节点及其回答；
+        dict[str, Any]: 聊天节点状态增量，核心字段如下：
+            - `results.chat`: 闲聊输出（`mode=chat`，`is_end=True`）；
+            - `messages`: 新增一条 AIMessage；
+            - `context.last_agent/last_agent_response`: 最近输出节点信息；
             - `execution_traces`: 输入与输出追踪。
     """
 
@@ -75,10 +65,7 @@ def chat_agent(state: AgentState) -> dict[str, Any]:
             temperature=1.0,
         )
         if hasattr(llm, "stream") and callable(getattr(llm, "stream")):
-            answer_chunks, reasoning_chunks = stream_with_reasoning(
-                llm,
-                messages,
-            )
+            answer_chunks, reasoning_chunks = stream_with_reasoning(llm, messages)
             if think_enabled and reasoning_chunks:
                 emit_thinking_notice(
                     node="chat_agent",

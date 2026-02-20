@@ -22,12 +22,18 @@ ALLOWED_GATEWAY_ROUTE_TARGETS = {
 }
 
 # Supervisor 下一跳白名单。
-ALLOWED_SUPERVISOR_NEXT_NODES = {
+ALLOWED_SUPERVISOR_TARGET_NODES = {
     "order_agent",
     "product_agent",
     "excel_agent",
-    "FINISH",
+    "summary_agent",
 }
+
+# Supervisor 下发 `node_goal` 为空时的默认目标文案。
+DEFAULT_NODE_GOAL = (
+    "围绕用户当前问题给出结论，优先展示与用户目标直接相关的信息，"
+    "按“结论 -> 关键明细 -> 失败原因与下一步建议”组织输出。"
+)
 
 
 def normalize_task_difficulty(value: Any) -> str:
@@ -134,30 +140,24 @@ def build_supervisor_decision(
         fallback_task_difficulty: 当输出缺失或非法时使用的难度回退值。
 
     Returns:
-        tuple[str, str, str]: `(next_node, directive, task_difficulty)`。
-            - `next_node` 非法时回退 `FINISH`；
-            - `next_node != FINISH` 且 `directive` 为空时回退 `FINISH`；
-            - `FINISH` 场景下 directive 固定为空字符串；
+        tuple[str, str, str]: `(target_node, node_goal, task_difficulty)`。
+            - `target_node` 非法时回退 `summary_agent`；
+            - `node_goal` 为空时回退默认目标文案；
             - 难度字段缺失或非法时回退到 `fallback_task_difficulty`。
     """
 
-    next_node = str(payload.get("next_node") or "").strip()
-    if next_node not in ALLOWED_SUPERVISOR_NEXT_NODES:
-        next_node = "FINISH"
+    target_node = str(payload.get("target_node") or "").strip()
+    if target_node not in ALLOWED_SUPERVISOR_TARGET_NODES:
+        target_node = "summary_agent"
 
-    directive = str(payload.get("directive") or "").strip()
-    if next_node != "FINISH" and not directive:
-        next_node = "FINISH"
-        directive = ""
-    if next_node == "FINISH":
-        directive = ""
+    node_goal = str(payload.get("node_goal") or "").strip() or DEFAULT_NODE_GOAL
 
     if "task_difficulty" in payload:
         task_difficulty = normalize_task_difficulty(payload.get("task_difficulty"))
     else:
         task_difficulty = normalize_task_difficulty(fallback_task_difficulty)
 
-    return next_node, directive, task_difficulty
+    return target_node, node_goal, task_difficulty
 
 
 def apply_model_profile_to_routing(
@@ -195,7 +195,8 @@ __all__ = [
     "COMPLEX_DIFFICULTY",
     "ALLOWED_TASK_DIFFICULTIES",
     "ALLOWED_GATEWAY_ROUTE_TARGETS",
-    "ALLOWED_SUPERVISOR_NEXT_NODES",
+    "ALLOWED_SUPERVISOR_TARGET_NODES",
+    "DEFAULT_NODE_GOAL",
     "normalize_task_difficulty",
     "resolve_model_profile",
     "build_gateway_decision",

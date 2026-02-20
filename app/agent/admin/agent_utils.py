@@ -289,7 +289,7 @@ def build_mode_aware_instruction_payload(state: AgentState) -> dict[str, Any]:
     规则说明：
     1. 总是写入 `user_input`、`context`、`execution_mode`；
     2. `fast_lane` 下附加 `chat_history`，让直达节点具备历史记忆；
-    3. `supervisor_loop` 下仅附加 `directive`，避免重复消耗历史 token。
+    3. `supervisor_loop` 下仅传精简上下文与 `node_goal`，避免节点之间直接读取彼此原始输出。
 
     Args:
         state: 当前图状态，至少应包含 `routing`、`context`、`messages`、`user_input` 字段。
@@ -297,19 +297,28 @@ def build_mode_aware_instruction_payload(state: AgentState) -> dict[str, Any]:
     Returns:
         dict[str, Any]: 供下游 worker 使用的 instruction 字典，核心字段说明如下：
             - `user_input`: 用户当前轮输入。
-            - `context`: 跨节点共享上下文。
+            - `context`: 当前节点可见上下文。
             - `execution_mode`: 执行模式（`fast_lane`/`supervisor_loop`/其他）。
             - `task_difficulty`: 当前任务难度（simple/normal/complex）。
             - `chat_history`（可选）: 仅 `fast_lane` 时存在，值为 role/content 历史列表。
-            - `directive`（可选）: 仅 `supervisor_loop` 时存在，值为主管下发指令。
+            - `node_goal`（可选）: 仅 `supervisor_loop` 时存在，值为主管下发的节点目标。
     """
 
     routing = dict(state.get("routing") or {})
+    context = dict(state.get("context") or {})
     execution_mode = str(routing.get("mode") or "")
+
+    if execution_mode == "supervisor_loop":
+        # 慢车道 worker 只读取 supervisor 明确下发的信息，避免跨节点直接互读输出。
+        visible_context: dict[str, Any] = {}
+        if context.get("original_user_input") is not None:
+            visible_context["original_user_input"] = context.get("original_user_input")
+    else:
+        visible_context = context
 
     payload: dict[str, Any] = {
         "user_input": state.get("user_input"),
-        "context": state.get("context") or {},
+        "context": visible_context,
         "execution_mode": execution_mode,
         "task_difficulty": normalize_task_difficulty(routing.get("task_difficulty")),
     }
@@ -317,9 +326,41 @@ def build_mode_aware_instruction_payload(state: AgentState) -> dict[str, Any]:
     if execution_mode == "fast_lane":
         payload["chat_history"] = history_to_role_dicts(list(state.get("messages") or []))
     elif execution_mode == "supervisor_loop":
-        payload["directive"] = str(routing.get("directive") or "").strip()
+        payload["node_goal"] = str(routing.get("node_goal") or "").strip()
 
     return payload
+
+
+def build_goal_enforced_system_prompt(
+        *,
+        system_prompt: str,
+        state: AgentState,
+) -> str:
+    """
+    构造带有 supervisor 下发目标约束的系统提示词。
+
+    Args:
+        system_prompt: 节点基础系统提示词。
+        state: 当前图状态，主要读取 `routing.mode` 与 `routing.node_goal`。
+
+    Returns:
+        str: 最终系统提示词。
+            - `supervisor_loop` 且 `node_goal` 非空时，会附加“必须优先执行该目标”的硬约束段落；
+            - 其他场景返回原始提示词。
+    """
+
+    routing = dict(state.get("routing") or {})
+    mode = str(routing.get("mode") or "")
+    node_goal = str(routing.get("node_goal") or "").strip()
+    if mode != "supervisor_loop" or not node_goal:
+        return system_prompt
+
+    return (
+        f"{system_prompt}\n\n"
+        "【Supervisor 下发本步目标（必须优先执行）】\n"
+        f"{node_goal}\n"
+        "你必须先完成该目标，再补充必要结果。"
+    )
 
 
 def build_worker_input_messages(
@@ -384,7 +425,7 @@ def run_standard_tool_worker(
     Returns:
         dict[str, Any]: 可直接用于 LangGraph 状态合并的增量更新字典，字段语义如下：
             - `results[result_key]`: 当前节点输出内容与 `is_end` 标记。
-            - `context`: 追加 `agent_outputs`、`last_agent`、提取到的 ID 等共享上下文。
+            - `context`: 追加 `agent_outputs` 与最近节点输出等共享上下文。
             - `messages`: 追加一条 `AIMessage` 作为本节点对话输出。
             - `execution_traces`: 记录输入消息、模型名、工具调用与输出文本。
             - `errors`（可选）: 当节点失败时写入错误信息。
@@ -399,7 +440,11 @@ def run_standard_tool_worker(
     think_enabled = bool(profile.get("think")) if think is None else bool(think)
 
     instruction_payload = build_mode_aware_instruction_payload(state)
-    input_messages = build_worker_input_messages(system_prompt, instruction_payload)
+    resolved_system_prompt = build_goal_enforced_system_prompt(
+        system_prompt=system_prompt,
+        state=state,
+    )
+    input_messages = build_worker_input_messages(resolved_system_prompt, instruction_payload)
 
     llm = create_chat_model(
         model=selected_model,
@@ -464,6 +509,7 @@ __all__ = [
     "build_execution_trace_update",
     "execute_tool_node",
     "build_mode_aware_instruction_payload",
+    "build_goal_enforced_system_prompt",
     "build_worker_input_messages",
     "run_standard_tool_worker",
 ]
