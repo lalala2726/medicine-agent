@@ -4,7 +4,7 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, SystemMessage
 
-from app.agent.admin.state import AgentState, ExecutionTraceState
+from app.agent.assistant.state import AgentState, ExecutionTraceState
 from app.core.langsmith import traceable
 from app.core.llm import create_chat_model
 from app.schemas.prompt import base_prompt

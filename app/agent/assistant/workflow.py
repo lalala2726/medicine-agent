@@ -5,12 +5,12 @@ from typing import Any
 from langgraph.constants import END, START
 from langgraph.graph import StateGraph
 
-from app.agent.admin.node import (
+from app.agent.assistant.node import (
     chat_agent,
     gateway_router,
     supervisor_agent,
 )
-from app.agent.admin.state import AgentState
+from app.agent.assistant.state import AgentState
 
 
 def _route_from_gateway(state: AgentState) -> str:

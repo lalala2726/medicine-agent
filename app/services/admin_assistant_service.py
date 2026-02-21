@@ -10,8 +10,8 @@ from fastapi.responses import StreamingResponse
 from langchain_core.messages import HumanMessage, SystemMessage
 from loguru import logger
 
-from app.agent.admin.state import ChatHistoryMessage, ExecutionTraceState, TokenUsageState
-from app.agent.admin.workflow import build_graph
+from app.agent.assistant.state import ChatHistoryMessage, ExecutionTraceState, TokenUsageState
+from app.agent.assistant.workflow import build_graph
 from app.core.codes import ResponseCode
 from app.core.exceptions import ServiceException
 from app.core.langsmith import build_langsmith_runnable_config

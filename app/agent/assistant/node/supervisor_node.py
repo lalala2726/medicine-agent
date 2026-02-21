@@ -4,9 +4,9 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, SystemMessage
 
-from app.agent.admin.node.order_tool import order_tool_agent
-from app.agent.admin.node.product_tool import product_tool_agent
-from app.agent.admin.state import AgentState, ExecutionTraceState
+from app.agent.assistant.state import AgentState, ExecutionTraceState
+from app.agent.assistant.tools.order_tool import order_tool_agent
+from app.agent.assistant.tools.product_tool import product_tool_agent
 from app.core.langsmith import traceable
 from app.core.llm import create_chat_model
 from app.schemas.prompt import base_prompt
@@ -34,7 +34,7 @@ _SUPERVISOR_PROMPT = """
 def supervisor_agent(state: AgentState) -> dict[str, Any]:
     llm = create_chat_model(
         model="qwen-flash",
-        temperature=1.0,
+        temperature=1.3,
     )
     history_messages = list(state.get("history_messages") or [])
 

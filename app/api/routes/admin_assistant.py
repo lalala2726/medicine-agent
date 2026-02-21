@@ -10,7 +10,7 @@ from app.schemas.admin_assistant_history import (
 )
 from app.schemas.base_request import PageRequest
 from app.schemas.response import ApiResponse, PageResponse
-from app.services.admin_assisant_service import (
+from app.services.admin_assistant_service import (
     assistant_chat,
     conversation_list as conversation_list_service,
     conversation_messages as conversation_messages_service,

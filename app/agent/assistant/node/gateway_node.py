@@ -5,7 +5,7 @@ from typing import Any
 
 from langchain_core.messages import SystemMessage
 
-from app.agent.admin.state import AgentState, ExecutionTraceState
+from app.agent.assistant.state import AgentState, ExecutionTraceState
 from app.core.langsmith import traceable
 from app.core.llm import create_chat_model
 from app.services.token_usage_service import append_trace_and_refresh_token_usage

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Sequence
 
-from app.agent.admin.state import (
+from app.agent.assistant.state import (
     ExecutionTraceState,
     NodeTokenBreakdownState,
     TokenUsageState,

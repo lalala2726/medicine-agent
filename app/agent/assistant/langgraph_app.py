@@ -5,7 +5,7 @@ LangGraph 运行入口。
 通过 `module:path` 方式动态加载。
 """
 
-from app.agent.admin.workflow import build_graph
+from app.agent.assistant.workflow import build_graph
 
 # 运行时读取的图实例。
 graph = build_graph()

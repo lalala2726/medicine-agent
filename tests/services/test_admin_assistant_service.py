@@ -10,7 +10,7 @@ from app.core.exceptions import ServiceException
 from app.schemas.admin_message import MessageRole, MessageStatus
 from app.schemas.base_request import PageRequest
 from app.schemas.sse_response import MessageType
-from app.services import admin_assisant_service as service_module
+from app.services import admin_assistant_service as service_module
 from app.services.assistant_stream_service import AssistantStreamConfig
 
 

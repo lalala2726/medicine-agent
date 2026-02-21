@@ -36,7 +36,7 @@ from typing import Any, Mapping, Optional, Sequence
 from langchain_core.messages import ToolMessage
 from loguru import logger
 
-from app.agent.admin.state import AgentState
+from app.agent.assistant.state import AgentState
 from app.core.assistant_status import (
     emit_function_call,
     resolve_tool_call_messages,
