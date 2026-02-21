@@ -120,6 +120,7 @@ class StreamRuntimeState:
     has_emitted_error: bool = False
     aggregated_answer_parts: list[str] = field(default_factory=list)
     aggregated_answer_text: str = ""
+    active_tool_calls: int = 0
 
 
 @dataclass
@@ -439,6 +440,36 @@ def _append_answer_text(runtime_state: StreamRuntimeState, text: str) -> str:
     runtime_state.aggregated_answer_text += delta_text
     return delta_text
 
+
+def _update_tool_call_depth(runtime_state: StreamRuntimeState, payload: Any) -> None:
+    """
+    根据 emitted 的 function_call 事件维护工具调用深度计数。
+
+    Args:
+        runtime_state: 流式运行时状态。
+        payload: emitted 事件原始负载。
+
+    Returns:
+        None
+    """
+
+    if not isinstance(payload, dict):
+        return
+    if str(payload.get("type") or "").strip() != MessageType.FUNCTION_CALL.value:
+        return
+
+    content = payload.get("content")
+    if not isinstance(content, dict):
+        return
+
+    state = str(content.get("state") or "").strip()
+    if state == "start":
+        runtime_state.active_tool_calls += 1
+        return
+    if state == "end":
+        runtime_state.active_tool_calls = max(0, runtime_state.active_tool_calls - 1)
+
+
 def handle_graph_message_chunk(
         *,
         chunk: Any,
@@ -469,6 +500,11 @@ def handle_graph_message_chunk(
 
     should_emit = should_stream_token(stream_node, runtime_state.latest_state)
     if not should_emit:
+        return result
+
+    # 工具执行期间会触发工具内部 LLM 调用，这些 token 不应直接对前端输出，
+    # 否则会与最终 supervisor 汇总结果重复。
+    if runtime_state.active_tool_calls > 0:
         return result
 
     token_text = extract_text(message_chunk)
@@ -539,6 +575,7 @@ def _process_stream_event(
     """
 
     if event_type == EVENT_EMITTED:
+        _update_tool_call_depth(runtime_state, payload)
         emitted_response = build_emitted_response(payload, hide_node_types)
         result = EventProcessResult()
         if emitted_response is None:

@@ -798,6 +798,19 @@ def _exec_tool_with_meta(
         if log_enabled:
             logger.info("工具调用: name={} args={}", name, args)
 
+        start_message, error_tip_message, _ = resolve_tool_call_messages(name)
+        emit_function_call(
+            node=tool_node,
+            state="start",
+            message=start_message,
+            name=name,
+            arguments=(
+                json.dumps(args, ensure_ascii=False, default=str)
+                if isinstance(args, (dict, list))
+                else str(args)
+            ),
+        )
+
         result = _run_async(tool_fn.ainvoke(args))
         if log_enabled:
             logger.info(
@@ -814,6 +827,13 @@ def _exec_tool_with_meta(
         error_message = str(result.get("error") or "").strip() if isinstance(result, dict) else ""
         tool_detail["is_error"] = is_error
         tool_detail["error_message"] = error_message or None
+        emit_function_call(
+            node=tool_node,
+            state="end",
+            result="error" if is_error else "success",
+            message=error_message or ("工具调用成功" if not is_error else error_tip_message),
+            name=name,
+        )
         return (
             result_text,
             is_error,
@@ -826,6 +846,13 @@ def _exec_tool_with_meta(
         message = f"工具执行失败: {name}, {exc}"
         tool_detail["is_error"] = True
         tool_detail["error_message"] = message
+        emit_function_call(
+            node=tool_node,
+            state="end",
+            result="error",
+            message=message,
+            name=name,
+        )
         return (
             json.dumps({"error": message}, ensure_ascii=False),
             True,
