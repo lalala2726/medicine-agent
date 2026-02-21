@@ -58,6 +58,24 @@ class ProductInfoRequest(BaseModel):
     )
 
 
+class DrugDetailRequest(BaseModel):
+    """
+    药品详情查询请求参数。
+
+    传参示例：
+    `{"product_id": ["2001", "2003"]}`
+    """
+
+    product_id: list[str] = Field(
+        min_length=1,
+        description=(
+            "药品商品ID字符串数组（List[str]），支持批量查询。"
+            "必须传 JSON 数组，不能传逗号拼接字符串。"
+        ),
+        examples=[["2001"], ["2001", "2003"]],
+    )
+
+
 @tool(
     args_schema=MallProductListQueryRequest,
     description=(
@@ -125,6 +143,32 @@ async def get_product_detail(product_id: list[str]) -> dict:
         return HttpResponse.parse_data(response)
 
 
+@tool(
+    args_schema=DrugDetailRequest,
+    description=(
+        "根据商品ID获取药品详细信息，包括说明书、适应症、用法用量等，支持批量查询。"
+        "参数传递规则：product_id 必须是字符串数组 List[str]，例如 "
+        "{\"product_id\": [\"2001\", \"2003\"]}；"
+        "不要传逗号拼接字符串。"
+        "调用时机：用户询问药品说明书、适应症、用法用量等信息时。"
+    ),
+)
+@tool_call_status(
+    tool_name="获取药品详情",
+    start_message="正在查询药品详情",
+    error_message="获取药品详情失败",
+    timely_message="药品详情正在持续处理中",
+)
+async def get_drug_detail(product_id: list[str]) -> dict:
+    """根据药品商品ID获取详细药品信息。"""
+
+    normalized_ids = _normalize_id_list(product_id, field_name="product_id")
+    ids_str = format_ids_to_string(normalized_ids)
+    async with HttpClient() as client:
+        response = await client.get(url=f"/agent/product/drug/{ids_str}")
+        return HttpResponse.parse_data(response)
+
+
 _PRODUCT_SYSTEM_PROMPT = (
     """
         你是商品域子工具（product_tool_agent），只负责商品相关问题。
@@ -132,6 +176,7 @@ _PRODUCT_SYSTEM_PROMPT = (
         你只能处理：
         1. 商品列表查询（筛选、分页、上/下架、价格区间）。
         2. 商品详情查询（指定商品ID）。
+        3. 药品详情查询（说明书、适应症、用法用量）。
 
         强约束：
         1. 你必须优先通过工具获取真实数据，严禁编造商品信息。
@@ -162,7 +207,7 @@ def product_tool_agent(task_description: str) -> str:
     trace = invoke_with_trace(
         llm,
         messages,
-        tools=[get_product_list, get_product_detail],
+        tools=[get_product_list, get_product_detail, get_drug_detail],
     )
     text = str(trace.get("text") or "").strip()
     if not text:
