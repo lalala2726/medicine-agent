@@ -7,6 +7,7 @@ Supervisor 工作流节点导出模块。
 from app.agent.assistant.node.chat_node import chat_agent
 from app.agent.assistant.node.gateway_node import gateway_router
 from app.agent.assistant.node.supervisor_node import supervisor_agent
+from app.agent.assistant.tools.analytics_tool import analytics_agent, analytics_tool_agent
 from app.agent.assistant.tools.order_tool import order_agent, order_tool_agent
 from app.agent.assistant.tools.product_tool import product_agent, product_tool_agent
 
@@ -15,8 +16,10 @@ __all__ = [
     "supervisor_agent",
     "order_tool_agent",
     "product_tool_agent",
+    "analytics_tool_agent",
     # 兼容旧导出名
     "order_agent",
     "product_agent",
+    "analytics_agent",
     "chat_agent",
 ]

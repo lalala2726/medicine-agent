@@ -5,6 +5,7 @@ from typing import Any
 from langchain_core.messages import AIMessage, SystemMessage
 
 from app.agent.assistant.state import AgentState, ExecutionTraceState
+from app.agent.assistant.tools.analytics_tool import analytics_tool_agent
 from app.agent.assistant.tools.order_tool import order_tool_agent
 from app.agent.assistant.tools.product_tool import product_tool_agent
 from app.core.langsmith import traceable
@@ -20,8 +21,9 @@ _SUPERVISOR_PROMPT = """
     工具策略：
     1. 订单相关问题调用 order_tool_agent。
     2. 商品相关问题调用 product_tool_agent。
-    3. 可同时调用多个工具并做统一总结。
-    4. 非业务闲聊可直接回答，不必强制调用工具。
+    3. 运营分析相关问题调用 analytics_tool_agent。
+    4. 可同时调用多个工具并做统一总结。
+    5. 非业务闲聊可直接回答，不必强制调用工具。
 
     强约束：
     1. 严禁编造工具未返回的数据。
@@ -42,7 +44,7 @@ def supervisor_agent(state: AgentState) -> dict[str, Any]:
     trace = invoke_with_trace(
         llm,
         messages,
-        tools=[order_tool_agent, product_tool_agent],
+        tools=[order_tool_agent, product_tool_agent, analytics_tool_agent],
     )
     text = str(trace.get("text") or "").strip()
     trace_item = ExecutionTraceState(
