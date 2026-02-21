@@ -122,23 +122,12 @@ def _build_initial_state(
     """
 
     base_history = list(history_messages or [])
-    seed_messages = list(base_history)
-    if not seed_messages:
-        seed_messages = [HumanMessage(content=question)]
 
     return {
         "user_input": question,
         "routing": {},
-        "context": {
-            "node_call_counts": {},
-            "agent_outputs": {},
-            "original_user_input": question,
-        },
-        "messages": seed_messages,
+        "context": {},
         "history_messages": base_history,
-        "execution_traces": [],
-        "results": {},
-        "errors": [],
     }
 
 
@@ -671,9 +660,6 @@ def assistant_chat(*, question: str, conversation_uuid: str | None = None) -> St
     4. 标题生成与保存在后台并行执行，不阻塞当前流式响应。
     5. 会话准备逻辑由 `_prepare_conversation_context` 统一处理。
     """
-
-    if not question:
-        raise ServiceException(code=ResponseCode.BAD_REQUEST, message="问题不能为空")
 
     current_user_id = get_user_id()
     context = _prepare_conversation_context(

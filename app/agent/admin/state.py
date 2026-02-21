@@ -21,3 +21,6 @@ class AgentState(MessagesState, total=False):
 
     # 对话历史消息。
     history_messages: list[ChatHistoryMessage]
+
+    # 节点输出
+    result:str
