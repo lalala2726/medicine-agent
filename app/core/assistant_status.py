@@ -29,6 +29,11 @@ _TOOL_FUNCTION_CALL_MESSAGES: dict[str, dict[str, str]] = {
         "error": "订单服务调用失败",
         "timely": "订单信息正在持续处理中",
     },
+    "get_supported_chart_types": {
+        "start": "正在获取系统支持的图表类型",
+        "error": "获取图表类型失败",
+        "timely": "图表类型正在持续处理中",
+    },
     "get_chart_sample_by_name": {
         "start": "正在获取图表配置模板",
         "error": "获取图表模板失败",

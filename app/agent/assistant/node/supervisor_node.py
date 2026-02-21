@@ -7,6 +7,7 @@ from langchain_core.messages import AIMessage, SystemMessage
 from agent.assistant.model_switch import model_switch
 from app.agent.assistant.state import AgentState, ExecutionTraceState
 from app.agent.assistant.tools.analytics_tool import analytics_tool_agent
+from app.agent.assistant.tools.chart_tool import chart_tool_agent
 from app.agent.assistant.tools.order_tool import order_tool_agent
 from app.agent.assistant.tools.product_tool import product_tool_agent
 from app.core.langsmith import traceable
@@ -23,9 +24,13 @@ _SUPERVISOR_PROMPT = """
     1. 订单相关问题调用 order_tool_agent。
     2. 商品相关问题调用 product_tool_agent。
     3. 运营分析相关问题调用 analytics_tool_agent。
-    4. 可同时调用多个工具并做统一总结。
-    5. 非业务闲聊可直接回答，不必强制调用工具。
-
+    4. 图表类型与模板相关问题调用 chart_tool_agent。
+    5. 可同时调用多个工具并做统一总结。
+    6. 非业务闲聊可直接回答，不必强制调用工具。
+    
+    ## 图表生成格式
+    这边输出必须严格按照markdown代码块的方式进行输出否则前端无法进行渲染，比如你需要渲染**fishbonediagram**，这边前面必须是**```fishbonediagram**
+    然后下面是根据图表的模板按需填充数据
     强约束：
     1. 严禁编造工具未返回的数据。
     2. 优先调用工具拿真实数据，再生成最终答复。
@@ -35,7 +40,6 @@ _SUPERVISOR_PROMPT = """
 
 @traceable(name="Supervisor Agent Node", run_type="chain")
 def supervisor_agent(state: AgentState) -> dict[str, Any]:
-
     model_name = model_switch(state)
 
     llm = create_chat_model(
@@ -48,7 +52,7 @@ def supervisor_agent(state: AgentState) -> dict[str, Any]:
     trace = invoke_with_trace(
         llm,
         messages,
-        tools=[order_tool_agent, product_tool_agent, analytics_tool_agent],
+        tools=[order_tool_agent, product_tool_agent, analytics_tool_agent, chart_tool_agent],
     )
     text = str(trace.get("text") or "").strip()
     trace_item = ExecutionTraceState(

@@ -1,0 +1,270 @@
+{
+  "line": {
+    "axisXTitle": "日期",
+    "axisYTitle": "订单量",
+    "theme": "default",
+    "lineWidth": 2,
+    "height": 500,
+    "data": [
+      { "time": "02-01", "value": 120, "group": "门店A" },
+      { "time": "02-02", "value": 132, "group": "门店A" },
+      { "time": "02-01", "value": 98, "group": "门店B" },
+      { "time": "02-02", "value": 105, "group": "门店B" }
+    ]
+  },
+  "area": {
+    "axisXTitle": "日期",
+    "axisYTitle": "销售额",
+    "theme": "academy",
+    "lineWidth": 2,
+    "height": 500,
+    "data": [
+      { "time": "02-01", "value": 3200 },
+      { "time": "02-02", "value": 4100 },
+      { "time": "02-03", "value": 3800 }
+    ]
+  },
+  "column": {
+    "axisXTitle": "品类",
+    "axisYTitle": "销量",
+    "direction": "vertical",
+    "height": 500,
+    "data": [
+      { "category": "感冒药", "value": 320 },
+      { "category": "维生素", "value": 280 },
+      { "category": "止咳药", "value": 210 }
+    ]
+  },
+  "bar": {
+    "axisXTitle": "销量",
+    "axisYTitle": "区域",
+    "height": 500,
+    "data": [
+      { "category": "华东", "value": 450 },
+      { "category": "华南", "value": 390 },
+      { "category": "华北", "value": 310 }
+    ]
+  },
+  "pie": {
+    "theme": "default",
+    "height": 400,
+    "data": [
+      { "category": "已支付", "value": 180 },
+      { "category": "待支付", "value": 45 },
+      { "category": "已取消", "value": 20 }
+    ]
+  },
+  "histogram": {
+    "title": "订单金额分布",
+    "axisXTitle": "金额区间",
+    "axisYTitle": "频数",
+    "binNumber": 8,
+    "height": 400,
+    "data": [12, 15, 18, 20, 21, 25, 30, 35, 40, 42, 45, 50, 58, 66, 72]
+  },
+  "scatter": {
+    "axisXTitle": "访客数",
+    "axisYTitle": "下单数",
+    "height": 400,
+    "data": [
+      { "x": 120, "y": 18 },
+      { "x": 180, "y": 29 },
+      { "x": 220, "y": 34 },
+      { "x": 260, "y": 41 }
+    ]
+  },
+  "wordcloud": {
+    "theme": "default",
+    "height": 400,
+    "data": [
+      { "text": "发货快", "value": 88 },
+      { "text": "包装好", "value": 73 },
+      { "text": "价格实惠", "value": 64 },
+      { "text": "客服专业", "value": 52 }
+    ]
+  },
+  "treemap": {
+    "theme": "academy",
+    "height": 400,
+    "data": [
+      {
+        "name": "药品",
+        "value": 680,
+        "children": [
+          { "name": "感冒药", "value": 220 },
+          { "name": "消炎药", "value": 180 },
+          { "name": "维生素", "value": 280 }
+        ]
+      },
+      {
+        "name": "器械",
+        "value": 320,
+        "children": [
+          { "name": "血压计", "value": 130 },
+          { "name": "体温计", "value": 190 }
+        ]
+      }
+    ]
+  },
+  "dualaxes": {
+    "categories": ["周一", "周二", "周三", "周四", "周五"],
+    "series": [
+      { "type": "订单量", "axisYTitle": "单量", "data": [120, 132, 101, 134, 90] },
+      { "type": "销售额", "axisYTitle": "金额", "data": [3200, 3600, 2800, 4100, 3000] }
+    ],
+    "theme": "default",
+    "height": 400
+  },
+  "radar": {
+    "theme": "default",
+    "lineWidth": 2,
+    "height": 400,
+    "data": [
+      { "name": "履约速度", "value": 82 },
+      { "name": "售后满意度", "value": 76 },
+      { "name": "库存健康度", "value": 68 },
+      { "name": "毛利率", "value": 73 },
+      { "name": "复购率", "value": 79 }
+    ]
+  },
+  "funnel": {
+    "theme": "default",
+    "height": 300,
+    "data": [
+      { "category": "浏览", "value": 1000 },
+      { "category": "加购", "value": 620 },
+      { "category": "下单", "value": 340 },
+      { "category": "支付", "value": 260 }
+    ]
+  },
+  "mindmap": {
+    "theme": "academy",
+    "height": 600,
+    "data": {
+      "name": "本月运营复盘",
+      "children": [
+        {
+          "name": "销售",
+          "children": [
+            { "name": "销售额 +12%" },
+            { "name": "客单价 +5%" }
+          ]
+        },
+        {
+          "name": "履约",
+          "children": [
+            { "name": "平均发货时长 9h" },
+            { "name": "超时单下降 18%" }
+          ]
+        }
+      ]
+    }
+  },
+  "networkgraph": {
+    "height": 600,
+    "data": {
+      "nodes": [
+        { "name": "用户" },
+        { "name": "订单" },
+        { "name": "商品" },
+        { "name": "仓库" }
+      ],
+      "edges": [
+        { "source": "用户", "target": "订单", "name": "创建" },
+        { "source": "订单", "target": "商品", "name": "包含" },
+        { "source": "订单", "target": "仓库", "name": "发货" }
+      ]
+    }
+  },
+  "flowdiagram": {
+    "height": 600,
+    "data": {
+      "nodes": [
+        { "name": "创建订单" },
+        { "name": "库存校验" },
+        { "name": "支付成功" },
+        { "name": "出库发货" }
+      ],
+      "edges": [
+        { "source": "创建订单", "target": "库存校验" },
+        { "source": "库存校验", "target": "支付成功" },
+        { "source": "支付成功", "target": "出库发货" }
+      ]
+    }
+  },
+  "organizationchart": {
+    "height": 600,
+    "data": {
+      "name": "总经理",
+      "children": [
+        {
+          "name": "运营部",
+          "children": [
+            { "name": "运营一组" },
+            { "name": "运营二组" }
+          ]
+        },
+        {
+          "name": "技术部",
+          "children": [
+            { "name": "后端组" },
+            { "name": "前端组" }
+          ]
+        }
+      ]
+    }
+  },
+  "indentedtree": {
+    "theme": "default",
+    "height": 600,
+    "data": {
+      "name": "商品目录",
+      "children": [
+        {
+          "name": "药品",
+          "children": [
+            { "name": "感冒药" },
+            { "name": "消炎药" }
+          ]
+        },
+        {
+          "name": "保健品",
+          "children": [
+            { "name": "维生素" },
+            { "name": "鱼油" }
+          ]
+        }
+      ]
+    }
+  },
+  "fishbonediagram": {
+    "theme": "default",
+    "height": 600,
+    "data": {
+      "name": "订单延迟",
+      "children": [
+        {
+          "name": "人",
+          "children": [
+            { "name": "新员工培训不足" },
+            { "name": "排班不均" }
+          ]
+        },
+        {
+          "name": "流程",
+          "children": [
+            { "name": "审核环节过多" },
+            { "name": "异常单处理慢" }
+          ]
+        },
+        {
+          "name": "系统",
+          "children": [
+            { "name": "库存同步延迟" },
+            { "name": "告警不及时" }
+          ]
+        }
+      ]
+    }
+  }
+}
