@@ -1,9 +1,9 @@
 import asyncio
 import json
 
+import pytest
 from fastapi.responses import StreamingResponse
 from langchain_core.messages import AIMessage, HumanMessage
-import pytest
 
 from app.core.codes import ResponseCode
 from app.core.exceptions import ServiceException
@@ -311,17 +311,17 @@ def test_assistant_chat_schedules_user_persist_without_blocking_main_flow(monkey
 
         async def _stream():
             yield (
-                "data: "
-                + json.dumps(
-                    {
-                        "content": {"text": ""},
-                        "type": "answer",
-                        "is_end": True,
-                        "timestamp": 1,
-                    },
-                    ensure_ascii=False,
-                )
-                + "\n\n"
+                    "data: "
+                    + json.dumps(
+                {
+                    "content": {"text": ""},
+                    "type": "answer",
+                    "is_end": True,
+                    "timestamp": 1,
+                },
+                ensure_ascii=False,
+            )
+                    + "\n\n"
             )
 
         return StreamingResponse(_stream(), media_type="text/event-stream")
@@ -422,7 +422,8 @@ def test_answer_completed_schedules_async_persist_with_execution_trace(monkeypat
     monkeypatch.setattr(
         service_module,
         "build_message_token_usage",
-        lambda _trace: {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2, "is_complete": True, "node_breakdown": []},
+        lambda _trace: {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2, "is_complete": True,
+                        "node_breakdown": []},
     )
 
     callback = service_module._build_assistant_message_callback(
@@ -511,7 +512,8 @@ def test_answer_completed_persists_thought_chain_when_trace_contains_supervisor(
     monkeypatch.setattr(
         service_module,
         "build_message_token_usage",
-        lambda _trace: {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2, "is_complete": True, "node_breakdown": []},
+        lambda _trace: {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2, "is_complete": True,
+                        "node_breakdown": []},
     )
 
     callback = service_module._build_assistant_message_callback(
@@ -672,17 +674,17 @@ def test_assistant_chat_new_conversation_injects_created_session_event(monkeypat
 
         async def _stream():
             yield (
-                "data: "
-                + json.dumps(
-                    {
-                        "content": {"text": ""},
-                        "type": "answer",
-                        "is_end": True,
-                        "timestamp": 1,
-                    },
-                    ensure_ascii=False,
-                )
-                + "\n\n"
+                    "data: "
+                    + json.dumps(
+                {
+                    "content": {"text": ""},
+                    "type": "answer",
+                    "is_end": True,
+                    "timestamp": 1,
+                },
+                ensure_ascii=False,
+            )
+                    + "\n\n"
             )
 
         return StreamingResponse(_stream(), media_type="text/event-stream")

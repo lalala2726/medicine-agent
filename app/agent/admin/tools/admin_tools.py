@@ -271,11 +271,11 @@ async def get_product_list(
 @tool(
     args_schema=ProductInfoRequest,
     description=(
-        "根据商品ID获取详细信息，支持批量查询。"
-        "参数传递规则：product_id 必须是字符串数组 List[str]，例如 "
-        "{\"product_id\": [\"2001\", \"2003\"]}；"
-        "不要传逗号拼接字符串。"
-        "调用时机：用户明确询问某个或某些商品的详细信息时。"
+            "根据商品ID获取详细信息，支持批量查询。"
+            "参数传递规则：product_id 必须是字符串数组 List[str]，例如 "
+            "{\"product_id\": [\"2001\", \"2003\"]}；"
+            "不要传逗号拼接字符串。"
+            "调用时机：用户明确询问某个或某些商品的详细信息时。"
     ),
 )
 @tool_call_status(
@@ -306,11 +306,11 @@ async def get_product_detail(product_id: list[str]) -> dict:
 @tool(
     args_schema=DrugDetailRequest,
     description=(
-        "根据商品ID获取药品详细信息，包括说明书、适应症、用法用量等，支持批量查询。"
-        "参数传递规则：product_id 必须是字符串数组 List[str]，例如 "
-        "{\"product_id\": [\"2001\", \"2003\"]}；"
-        "不要传逗号拼接字符串。"
-        "调用时机：用户询问药品说明书、适应症、用法用量等信息时。"
+            "根据商品ID获取药品详细信息，包括说明书、适应症、用法用量等，支持批量查询。"
+            "参数传递规则：product_id 必须是字符串数组 List[str]，例如 "
+            "{\"product_id\": [\"2001\", \"2003\"]}；"
+            "不要传逗号拼接字符串。"
+            "调用时机：用户询问药品说明书、适应症、用法用量等信息时。"
     ),
 )
 @tool_call_status(
@@ -341,11 +341,11 @@ async def get_drug_detail(product_id: list[str]) -> dict:
 @tool(
     args_schema=MallOrderListRequest,
     description=(
-        "获取订单列表，支持按订单号、状态、收货人信息等条件筛选。"
-        "参数传递规则：使用结构化字段（如 order_no、receiver_name），"
-        "不要把多个筛选条件拼成单字符串。"
-        "注意：若用户需要收货地址、物流详情等明细，请调用 get_orders_detail。"
-        "调用时机：用户需要浏览或搜索订单时。"
+            "获取订单列表，支持按订单号、状态、收货人信息等条件筛选。"
+            "参数传递规则：使用结构化字段（如 order_no、receiver_name），"
+            "不要把多个筛选条件拼成单字符串。"
+            "注意：若用户需要收货地址、物流详情等明细，请调用 get_orders_detail。"
+            "调用时机：用户需要浏览或搜索订单时。"
     ),
 )
 @tool_call_status(
@@ -398,11 +398,11 @@ async def get_order_list(
 @tool(
     args_schema=OrderDetailRequest,
     description=(
-        "根据订单ID获取详细信息，包括收货地址、物流信息、商品明细等，支持批量查询。"
-        "参数传递规则：order_id 必须是字符串数组 List[str]，例如 "
-        "{\"order_id\": [\"O20260101\", \"O20260102\"]}；"
-        "不要传 'O20260101,O20260102'。"
-        "调用时机：用户询问订单明细，或订单列表信息不足时。"
+            "根据订单ID获取详细信息，包括收货地址、物流信息、商品明细等，支持批量查询。"
+            "参数传递规则：order_id 必须是字符串数组 List[str]，例如 "
+            "{\"order_id\": [\"O20260101\", \"O20260102\"]}；"
+            "不要传 'O20260101,O20260102'。"
+            "调用时机：用户询问订单明细，或订单列表信息不足时。"
     ),
 )
 @tool_call_status(

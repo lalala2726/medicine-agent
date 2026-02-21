@@ -54,7 +54,8 @@
 - CORS configuration (optional): `CORS_ALLOW_METHODS` (comma-separated methods, defaults to `*`).
 - CORS configuration (optional): `CORS_ALLOW_HEADERS` (comma-separated headers, defaults to `*`).
 - CORS configuration (optional): `CORS_ALLOW_CREDENTIALS` (default true).
-- CORS defaults are intended for local localhost debugging; tighten allowed origins/methods/headers explicitly in production.
+- CORS defaults are intended for local localhost debugging; tighten allowed origins/methods/headers explicitly in
+  production.
 - LangSmith tracing (optional): `LANGSMITH_TRACING` (or legacy `LANGCHAIN_TRACING_V2`), `LANGSMITH_API_KEY`,
   `LANGSMITH_PROJECT`, `LANGSMITH_ENDPOINT`.
 - Document new config values in this file when you introduce them.

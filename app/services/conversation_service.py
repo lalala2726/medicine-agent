@@ -12,8 +12,8 @@ from app.core.exceptions import ServiceException
 from app.core.mongodb import DEFAULT_CONVERSATIONS_COLLECTION, get_mongo_database
 
 _TABLE_NAME = (
-    (os.getenv("MONGODB_CONVERSATIONS_COLLECTION") or DEFAULT_CONVERSATIONS_COLLECTION).strip()
-    or DEFAULT_CONVERSATIONS_COLLECTION
+        (os.getenv("MONGODB_CONVERSATIONS_COLLECTION") or DEFAULT_CONVERSATIONS_COLLECTION).strip()
+        or DEFAULT_CONVERSATIONS_COLLECTION
 )
 _ADMIN_MARK = "admin"
 _CLIENT_MARK = "client"
@@ -188,6 +188,7 @@ def add_client_conversation(
         user_id=user_id,
     )
 
+
 def add_admin_conversation(
         *,
         conversation_uuid: Annotated[str, Field(min_length=1)],
@@ -276,6 +277,7 @@ def list_admin_conversations(
             }
         )
     return rows, total
+
 
 def save_conversation_title(
         *,

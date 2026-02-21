@@ -29,8 +29,8 @@ _PRODUCT_SYSTEM_PROMPT = (
 
 @tool(
     description=(
-        "处理商品相关任务：商品列表、商品详情。"
-        "输入为自然语言任务描述，内部会自动调用商品工具并返回结果。"
+            "处理商品相关任务：商品列表、商品详情。"
+            "输入为自然语言任务描述，内部会自动调用商品工具并返回结果。"
     )
 )
 @traceable(name="Supervisor Product Tool Agent", run_type="chain")

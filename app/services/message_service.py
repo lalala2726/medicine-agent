@@ -29,8 +29,8 @@ def _resolve_collection_name() -> str:
     """解析 admin_messages 集合名，支持环境变量覆盖。"""
 
     return (
-        (os.getenv("MONGODB_ADMIN_MESSAGES_COLLECTION") or DEFAULT_ADMIN_MESSAGES_COLLECTION).strip()
-        or DEFAULT_ADMIN_MESSAGES_COLLECTION
+            (os.getenv("MONGODB_ADMIN_MESSAGES_COLLECTION") or DEFAULT_ADMIN_MESSAGES_COLLECTION).strip()
+            or DEFAULT_ADMIN_MESSAGES_COLLECTION
     )
 
 

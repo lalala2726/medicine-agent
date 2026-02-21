@@ -11,7 +11,6 @@ from app.core.llm import create_chat_model
 from app.services.token_usage_service import append_trace_and_refresh_token_usage
 from app.utils.streaming_utils import (
     invoke_with_trace,
-    serialize_messages_for_trace,
 )
 
 _GATEWAY_PROMPT = """
@@ -76,7 +75,6 @@ def gateway_router(state: AgentState) -> dict[str, Any]:
     trace_item = ExecutionTraceState(
         node_name="gateway_router",
         model_name=str(trace.get("model_name") or "unknown"),
-        input_messages=serialize_messages_for_trace(messages),
         output_text=str(trace.get("text") or ""),
         llm_used=True,
         llm_usage_complete=bool(trace.get("is_usage_complete", False)),

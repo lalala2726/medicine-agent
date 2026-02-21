@@ -30,8 +30,8 @@ _ORDER_SYSTEM_PROMPT = (
 
 @tool(
     description=(
-        "处理订单相关任务：订单列表、订单详情。"
-        "输入为自然语言任务描述，内部会自动调用订单工具并返回结果。"
+            "处理订单相关任务：订单列表、订单详情。"
+            "输入为自然语言任务描述，内部会自动调用订单工具并返回结果。"
     )
 )
 @traceable(name="Supervisor Order Tool Agent", run_type="chain")

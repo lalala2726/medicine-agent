@@ -119,8 +119,8 @@ def sum_usage(usages: Sequence[Mapping[str, Any] | None]) -> dict[str, int]:
 
 
 def merge_node_and_tool_usage(
-    node_usage: Mapping[str, Any] | None,
-    tool_usage: Mapping[str, Any] | None,
+        node_usage: Mapping[str, Any] | None,
+        tool_usage: Mapping[str, Any] | None,
 ) -> dict[str, int]:
     """
     合并节点 usage 与工具 usage。
@@ -137,7 +137,7 @@ def merge_node_and_tool_usage(
 
 
 def _build_tool_breakdown(
-    tool_calls: Sequence[Mapping[str, Any]] | None,
+        tool_calls: Sequence[Mapping[str, Any]] | None,
 ) -> tuple[list[ToolLlmBreakdownState], dict[str, int], bool]:
     """
     递归构建工具级 token 明细。
@@ -212,7 +212,7 @@ def _build_tool_breakdown(
 
 
 def build_token_usage_from_execution_traces(
-    execution_traces: Sequence[Mapping[str, Any]] | None,
+        execution_traces: Sequence[Mapping[str, Any]] | None,
 ) -> TokenUsageState | None:
     """
     由 execution_traces 构建消息级 token 使用汇总。
@@ -290,8 +290,8 @@ def build_token_usage_from_execution_traces(
 
 
 def append_trace_and_refresh_token_usage(
-    execution_traces: Sequence[ExecutionTraceState] | None,
-    trace_item: ExecutionTraceState,
+        execution_traces: Sequence[ExecutionTraceState] | None,
+        trace_item: ExecutionTraceState,
 ) -> tuple[list[ExecutionTraceState], TokenUsageState | None]:
     """
     追加单条节点 trace，并同步刷新 state.token_usage。
@@ -343,8 +343,8 @@ def _normalize_state_token_usage(raw: Mapping[str, Any] | None) -> TokenUsageSta
 
 
 def resolve_persistable_token_usage(
-    state_token_usage: Mapping[str, Any] | None,
-    execution_traces: Sequence[Mapping[str, Any]] | None,
+        state_token_usage: Mapping[str, Any] | None,
+        execution_traces: Sequence[Mapping[str, Any]] | None,
 ) -> dict[str, Any] | None:
     """
     生成可持久化的 token_usage。
@@ -377,7 +377,7 @@ def resolve_persistable_token_usage(
 
 
 def build_message_token_usage(
-    execution_traces: Sequence[Mapping[str, Any]] | None,
+        execution_traces: Sequence[Mapping[str, Any]] | None,
 ) -> TokenUsageState | None:
     """
     兼容旧函数名：由 execution_trace 构建消息级 token usage。

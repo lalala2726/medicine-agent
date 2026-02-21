@@ -56,7 +56,6 @@ def pre_authorize(predicate: Callable[[], bool]):
 
     def _decorate(func):
         if inspect.iscoroutinefunction(func):
-
             @wraps(func)
             async def _async_wrapper(*args, **kwargs):
                 _check_predicate(predicate)

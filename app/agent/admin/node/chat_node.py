@@ -11,7 +11,6 @@ from app.schemas.prompt import base_prompt
 from app.services.token_usage_service import append_trace_and_refresh_token_usage
 from app.utils.streaming_utils import (
     invoke_with_trace,
-    serialize_messages_for_trace,
 )
 
 _CHAT_SYSTEM_PROMPT = (
@@ -42,7 +41,6 @@ def chat_agent(state: AgentState) -> dict[str, Any]:
     trace_item = ExecutionTraceState(
         node_name="chat_agent",
         model_name=str(trace.get("model_name") or "unknown"),
-        input_messages=serialize_messages_for_trace(messages),
         output_text=text,
         llm_used=True,
         llm_usage_complete=bool(trace.get("is_usage_complete", False)),

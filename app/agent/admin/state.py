@@ -113,7 +113,6 @@ class TokenUsageState(TypedDict):
 
 
 class AgentState(MessagesState, total=False):
-
     # 节点路由
     router: str
 

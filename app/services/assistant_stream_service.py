@@ -104,6 +104,7 @@ class AssistantStreamConfig:
         }
     )
 
+
 @dataclass
 class StreamRuntimeState:
     """
