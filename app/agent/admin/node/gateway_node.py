@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from langchain_core.messages import SystemMessage
 
 from app.agent.admin.state import AgentState
 from app.core.langsmith import traceable
-from core.llm import create_chat_model
+from app.core.llm import create_chat_model
+from app.utils.streaming_utils import extract_text
 
 _GATEWAY_PROMPT = """
     你是药品商城后台助手的前置意图网关（Intent Gateway）。
@@ -38,17 +40,32 @@ _GATEWAY_PROMPT = """
 
 
 @traceable(name="Supervisor Gateway Router Node", run_type="chain")
-def gateway_router(state: AgentState) -> AgentState:
+def gateway_router(state: AgentState) -> dict[str, Any]:
     llm = create_chat_model(
         model="qwen-flash",
         temperature=0.0,
         response_format={"type": "json_object"},
     )
-    messages = [
-        SystemMessage(content=_GATEWAY_PROMPT),
-        state.get('history_messages')
-    ]
+    history_messages = list(state.get("history_messages") or [])
+
+    messages = [SystemMessage(content=_GATEWAY_PROMPT), *history_messages]
+
     res = llm.invoke(messages)
-    state['router'] = res.content
-    print("当前的路由的目标是",state)
-    return state
+    raw_content = getattr(res, "content", None)
+
+    parsed: dict[str, Any] = {}
+    if isinstance(raw_content, dict):
+        parsed = raw_content
+    else:
+        raw_text = extract_text(res).strip()
+        try:
+            candidate = json.loads(raw_text)
+            if isinstance(candidate, dict):
+                parsed = candidate
+        except json.JSONDecodeError:
+            parsed = {}
+
+    route_target = str(parsed.get("route_target") or "").strip()
+    if route_target not in {"chat_agent", "supervisor_agent"}:
+        route_target = "chat_agent"
+    return {"router": route_target}

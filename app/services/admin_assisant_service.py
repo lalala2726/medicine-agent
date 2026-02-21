@@ -37,16 +37,11 @@ from app.services.conversation_service import (
 )
 from app.services.message_service import add_message, get_history, list_messages
 from app.services.token_usage_service import merge_assistant_token_usage
-from app.utils.streaming_utils import is_final_node
 
 ADMIN_WORKFLOW = build_graph()
 STREAM_OUTPUT_NODES = {
-    "order_agent",
-    "product_agent",
-    "excel_agent",
     "chat_agent",
-    "summary_agent",
-    "chart_agent",
+    "supervisor_agent",
 }
 _THOUGHT_CHAIN_TOOL_MESSAGE_MAP: dict[str, str] = {
     "get_user_info": "正在获取用户信息",
@@ -121,13 +116,16 @@ def _build_initial_state(
     所有节点共享该状态结构，避免执行过程中出现缺失键导致的分支判断复杂化。
     """
 
+    _ = question
     base_history = list(history_messages or [])
 
     return {
-        "user_input": question,
-        "routing": {},
-        "context": {},
+        "router": "",
+        "context": "",
         "history_messages": base_history,
+        "result": "",
+        # 兼容 MessagesState，保证 astream(messages) 能消费到上下文消息。
+        "messages": list(base_history),
     }
 
 
@@ -135,24 +133,11 @@ def _should_stream_token(stream_node: str | None, latest_state: dict[str, Any]) 
     """
     判定某个节点 token 是否应该被推送给前端。
 
-    规则：
-    1. 节点必须在可输出白名单中；
-    2. supervisor 慢车道（mode=supervisor_loop）下，仅 summary 节点可见；
-    3. chat 节点仅在 `mode=chat`（闲聊）时可输出；
-    4. 其他场景沿用最终输出判定。
+    当前最小实现仅允许 chat/supervisor 两个节点输出 token。
     """
 
-    if stream_node not in STREAM_OUTPUT_NODES:
-        return False
-    routing = latest_state.get("routing") or {}
-    mode = str(routing.get("mode") or "") if isinstance(routing, dict) else ""
-    if mode == "supervisor_loop":
-        return stream_node == "summary_agent"
-    if stream_node == "chat_agent":
-        return mode == "chat"
-    if stream_node == "summary_agent":
-        return False
-    return is_final_node(latest_state, stream_node)
+    _ = latest_state
+    return stream_node in STREAM_OUTPUT_NODES
 
 
 def _map_exception(exc: Exception) -> str:
@@ -565,7 +550,7 @@ def _prepare_new_conversation(
     return ConversationContext(
         conversation_uuid=conversation_uuid,
         conversation_id=conversation_id,
-        history_messages=[],
+        history_messages=[HumanMessage(content=question)],
         initial_emitted_events=(
             _build_conversation_created_event(
                 conversation_uuid=conversation_uuid,
@@ -683,7 +668,7 @@ def assistant_chat(*, question: str, conversation_uuid: str | None = None) -> St
             q,
             history_messages=context.history_messages,
         ),
-        extract_final_content=lambda _state: "",
+        extract_final_content=lambda state: str(state.get("result") or ""),
         should_stream_token=_should_stream_token,
         build_stream_config=_build_stream_config,
         invoke_sync=_invoke_admin_workflow,

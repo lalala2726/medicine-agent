@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, SystemMessage
 
 from app.agent.admin.state import AgentState
 from app.core.langsmith import traceable
+from app.core.llm import create_chat_model
 from app.schemas.prompt import base_prompt
+from app.utils.streaming_utils import extract_text
 
 _CHAT_SYSTEM_PROMPT = (
         """
@@ -24,14 +26,17 @@ _CHAT_SYSTEM_PROMPT = (
 
 @traceable(name="Supervisor Chat Agent Node", run_type="chain")
 def chat_agent(state: AgentState) -> dict[str, Any]:
-    user_input = str(state.get("user_input") or "").strip()
-    content = f"收到，你这条是闲聊内容：{user_input}" if user_input else "你好，这里是闲聊节点。"
+    llm = create_chat_model(
+        model="qwen-flash",
+        temperature=1.3,
+    )
+    history_messages = list(state.get("history_messages") or [])
 
-    routing = dict(state.get("routing") or {})
-    routing["mode"] = "chat"
+    messages = [SystemMessage(content=_CHAT_SYSTEM_PROMPT), *history_messages]
 
+    response = llm.invoke(messages)
+    text = extract_text(response).strip()
     return {
-        "result": content,
-        "routing": routing,
-        "messages": [AIMessage(content=content)],
+        "result": text,
+        "messages": [AIMessage(content=text)],
     }

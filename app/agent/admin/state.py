@@ -10,9 +10,6 @@ ChatHistoryMessage: TypeAlias = HumanMessage | AIMessage
 
 class AgentState(MessagesState, total=False):
 
-    # 用户输入
-    user_input: str
-
     # 节点路由
     router: str
 
