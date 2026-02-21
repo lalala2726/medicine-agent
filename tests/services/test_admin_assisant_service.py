@@ -154,7 +154,7 @@ def test_update_conversation_title_rejects_blank_title(monkeypatch):
 
 
 def test_prepare_new_conversation_returns_context_with_created_event(monkeypatch):
-    """测试目标：新会话上下文正确构建；成功标准：包含会话创建事件与空历史。"""
+    """测试目标：新会话上下文正确构建；成功标准：包含会话创建事件与首轮问题历史。"""
 
     scheduled_title_calls: list[dict] = []
 
@@ -178,7 +178,8 @@ def test_prepare_new_conversation_returns_context_with_created_event(monkeypatch
     assert isinstance(context, service_module.ConversationContext)
     assert context.conversation_uuid == "new-conv-uuid"
     assert context.conversation_id == "db-new-conv-uuid-100"
-    assert context.history_messages == []
+    assert [message.content for message in context.history_messages] == ["新建会话"]
+    assert isinstance(context.history_messages[0], HumanMessage)
     assert context.is_new_conversation is True
     assert len(context.initial_emitted_events) == 1
     session_event = context.initial_emitted_events[0]
@@ -368,7 +369,6 @@ def test_assistant_chat_schedules_user_persist_without_blocking_main_flow(monkey
     assert captured["question"] == "代理测试"
     stream_config = captured["config"]
     initial_state = stream_config.build_initial_state("x")
-    assert initial_state["execution_traces"] == []
     assert "context" in initial_state
     assert "messages" in initial_state
     assert [message.content for message in initial_state["history_messages"]] == [
@@ -401,11 +401,10 @@ def test_assistant_chat_schedules_user_persist_without_blocking_main_flow(monkey
 
 
 def test_answer_completed_schedules_async_persist_with_execution_trace(monkeypatch):
-    """测试目标：assistant 完成回调仅调度后台任务；成功标准：调度参数含 usage 与 execution_trace。"""
+    """测试目标：assistant 完成回调仅调度后台任务；成功标准：调度参数含 execution_trace。"""
 
     background_calls: list[dict] = []
     saved_messages: list[dict] = []
-    merge_calls: list[dict] = []
 
     monkeypatch.setattr(
         service_module,
@@ -417,31 +416,16 @@ def test_answer_completed_schedules_async_persist_with_execution_trace(monkeypat
     )
     monkeypatch.setattr(
         service_module,
-        "merge_assistant_token_usage",
-        lambda **kwargs: (
-            merge_calls.append(kwargs),
-            {
-                "prompt_tokens": 8,
-                "completion_tokens": 4,
-                "total_tokens": 12,
-                "breakdown": None,
-            },
-        )[-1],
-    )
-    monkeypatch.setattr(
-        service_module,
         "add_message",
         lambda **kwargs: saved_messages.append(kwargs) or "507f1f77bcf86cd799439012",
     )
 
     callback = service_module._build_assistant_message_callback(
         conversation_id="507f1f77bcf86cd799439011",
-        question="用户问题",
     )
     asyncio.run(
         callback(
             "AI回复",
-            {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
             [
                 {
                     "node_name": "chat_agent",
@@ -468,9 +452,7 @@ def test_answer_completed_schedules_async_persist_with_execution_trace(monkeypat
             "task_name": "persist_assistant_message",
             "kwargs": {
                 "conversation_id": "507f1f77bcf86cd799439011",
-                "question": "用户问题",
                 "answer_text": "AI回复",
-                "stream_token_usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
                 "execution_trace": [
                     {
                         "node_name": "chat_agent",
@@ -492,13 +474,6 @@ def test_answer_completed_schedules_async_persist_with_execution_trace(monkeypat
             },
         }
     ]
-    assert merge_calls == [
-        {
-            "stream_token_usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
-            "prompt_text": "用户问题",
-            "completion_text": "AI回复",
-        }
-    ]
     assert saved_messages[-1]["execution_trace"][0]["node_name"] == "chat_agent"
     assert saved_messages[-1]["status"] == MessageStatus.SUCCESS
     assert saved_messages[-1]["thought_chain"] is None
@@ -509,16 +484,6 @@ def test_answer_completed_marks_error_status_when_stream_failed(monkeypatch):
 
     saved_messages: list[dict] = []
 
-    monkeypatch.setattr(
-        service_module,
-        "merge_assistant_token_usage",
-        lambda **_kwargs: {
-            "prompt_tokens": 1,
-            "completion_tokens": 1,
-            "total_tokens": 2,
-            "breakdown": None,
-        },
-    )
     monkeypatch.setattr(
         service_module,
         "_schedule_background_task",
@@ -532,12 +497,10 @@ def test_answer_completed_marks_error_status_when_stream_failed(monkeypatch):
 
     callback = service_module._build_assistant_message_callback(
         conversation_id="507f1f77bcf86cd799439011",
-        question="用户问题",
     )
     asyncio.run(
         callback(
             "错误提示",
-            None,
             [],
             True,
         )
@@ -554,16 +517,6 @@ def test_answer_completed_persists_thought_chain_when_trace_contains_coordinator
 
     monkeypatch.setattr(
         service_module,
-        "merge_assistant_token_usage",
-        lambda **_kwargs: {
-            "prompt_tokens": 2,
-            "completion_tokens": 3,
-            "total_tokens": 5,
-            "breakdown": None,
-        },
-    )
-    monkeypatch.setattr(
-        service_module,
         "_schedule_background_task",
         lambda *, task_name, func, kwargs: func(**kwargs),
     )
@@ -575,12 +528,10 @@ def test_answer_completed_persists_thought_chain_when_trace_contains_coordinator
 
     callback = service_module._build_assistant_message_callback(
         conversation_id="507f1f77bcf86cd799439011",
-        question="复杂问题",
     )
     asyncio.run(
         callback(
             "复杂回复",
-            None,
             [
                 {
                     "node_name": "coordinator_agent",
@@ -874,23 +825,11 @@ def test_conversation_messages_returns_latest_page_in_chronological_order(monkey
     assert "result" not in thought_chain[0]["children"][0]
 
 
-def test_should_stream_token_hides_worker_output_in_supervisor_loop():
-    """测试目标：慢车道下仅 summary 节点可输出 token。"""
+def test_should_stream_token_only_allows_chat_and_supervisor_nodes():
+    """测试目标：仅 chat/supervisor 节点允许输出 token。"""
 
-    latest_state = {
-        "routing": {"mode": "supervisor_loop"},
-        "route_target": "supervisor_agent",
-    }
+    latest_state = {"router": "chat_agent"}
+    assert service_module._should_stream_token("chat_agent", latest_state) is True
+    assert service_module._should_stream_token("supervisor_agent", latest_state) is True
     assert service_module._should_stream_token("order_agent", latest_state) is False
     assert service_module._should_stream_token("product_agent", latest_state) is False
-    assert service_module._should_stream_token("chat_agent", latest_state) is False
-    assert service_module._should_stream_token("summary_agent", latest_state) is True
-
-
-def test_should_stream_token_allows_fast_lane_final_worker():
-    """测试目标：快车道下最终业务节点仍可输出 token。"""
-
-    latest_state = {
-        "routing": {"mode": "fast_lane", "route_target": "order_agent"},
-    }
-    assert service_module._should_stream_token("order_agent", latest_state) is True

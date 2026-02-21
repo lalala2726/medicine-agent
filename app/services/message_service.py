@@ -21,9 +21,7 @@ from app.schemas.admin_message import (
     ExecutionTraceItem,
     MessageRole,
     MessageStatus,
-    TokenUsage,
 )
-from app.services.token_usage_service import build_user_token_usage, normalize_token_usage
 
 
 def _resolve_collection_name() -> str:
@@ -98,7 +96,6 @@ def add_message(
         status: MessageStatus | str = MessageStatus.SUCCESS,
         content: Annotated[str, Field(min_length=1)],
         thought_chain: list[Any] | None = None,
-        token_usage: TokenUsage | dict[str, Any] | None = None,
         execution_trace: list[ExecutionTraceItem | dict[str, Any]] | None = None,
         message_uuid: str | None = None,
 ) -> str:
@@ -111,7 +108,6 @@ def add_message(
         status: 消息状态（success/error）。
         content: 消息内容。
         thought_chain: 可选思维链结构。
-        token_usage: 可选 token 消耗明细。
         execution_trace: 可选节点执行追踪明细。
         message_uuid: 可选消息 UUID，不传时自动生成。
 
@@ -129,15 +125,8 @@ def add_message(
         status=status,
         content=content,
         thought_chain=thought_chain,
-        token_usage=normalize_token_usage(token_usage),
         execution_trace=_normalize_execution_trace(execution_trace),
     )
-    if payload.token_usage is None and payload.role == MessageRole.USER:
-        payload = payload.model_copy(
-            update={
-                "token_usage": build_user_token_usage(content=payload.content),
-            }
-        )
 
     now = datetime.datetime.now()
     document = payload.model_dump()

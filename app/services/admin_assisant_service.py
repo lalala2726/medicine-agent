@@ -36,7 +36,6 @@ from app.services.conversation_service import (
     update_admin_conversation_title,
 )
 from app.services.message_service import add_message, get_history, list_messages
-from app.services.token_usage_service import merge_assistant_token_usage
 
 ADMIN_WORKFLOW = build_graph()
 STREAM_OUTPUT_NODES = {
@@ -300,24 +299,15 @@ def _persist_user_message(
 def _persist_assistant_message(
         *,
         conversation_id: str,
-        question: str,
         answer_text: str,
-        stream_token_usage: dict[str, Any] | None,
         execution_trace: list[dict[str, Any]] | None,
         status: MessageStatus | str,
 ) -> None:
     """
     持久化 assistant 消息。
 
-    优先使用流式汇总中的真实 usage；缺失字段再回退 tiktoken 估算。
     `thought_chain` 仅在命中 coordinator 路径时落库，直通路由不保存。
     """
-
-    resolved_usage = merge_assistant_token_usage(
-        stream_token_usage=stream_token_usage,
-        prompt_text=question,
-        completion_text=answer_text,
-    )
     resolved_status = MessageStatus(status)
     can_persist_thought_chain = _should_persist_thought_chain(execution_trace)
     add_message(
@@ -330,7 +320,6 @@ def _persist_assistant_message(
             if can_persist_thought_chain
             else None
         ),
-        token_usage=resolved_usage,
         execution_trace=execution_trace,
     )
 
@@ -483,7 +472,7 @@ def _should_persist_thought_chain(
     return False
 
 
-def _build_assistant_message_callback(*, conversation_id: str, question: str):
+def _build_assistant_message_callback(*, conversation_id: str):
     """
     构建“流结束后写入 AI 消息”的异步回调。
 
@@ -492,7 +481,6 @@ def _build_assistant_message_callback(*, conversation_id: str, question: str):
 
     async def _callback(
             answer_text: str,
-            stream_token_usage: dict[str, Any] | None,
             execution_trace: list[dict[str, Any]] | None,
             has_error: bool = False,
     ) -> None:
@@ -505,9 +493,7 @@ def _build_assistant_message_callback(*, conversation_id: str, question: str):
             func=_persist_assistant_message,
             kwargs={
                 "conversation_id": conversation_id,
-                "question": question,
                 "answer_text": normalized_answer,
-                "stream_token_usage": stream_token_usage,
                 "execution_trace": execution_trace,
                 "status": MessageStatus.ERROR if has_error else MessageStatus.SUCCESS,
             },
@@ -675,7 +661,6 @@ def assistant_chat(*, question: str, conversation_uuid: str | None = None) -> St
         map_exception=_map_exception,
         on_answer_completed=_build_assistant_message_callback(
             conversation_id=context.conversation_id,
-            question=question,
         ),
         initial_emitted_events=context.initial_emitted_events,
     )

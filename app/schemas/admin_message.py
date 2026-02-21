@@ -21,33 +21,6 @@ class MessageStatus(str, Enum):
     SUCCESS = "success"
     ERROR = "error"
 
-
-class TokenUsageBreakdownItem(BaseModel):
-    """单个节点的 Token 消耗明细。"""
-
-    model_config = ConfigDict(extra="forbid")
-
-    node_name: str = Field(..., min_length=1, description="节点名称")
-    model_name: str = Field(..., min_length=1, description="模型名称")
-    prompt_tokens: int = Field(default=0, ge=0, description="输入 Token 数")
-    completion_tokens: int = Field(default=0, ge=0, description="输出 Token 数")
-    total_tokens: int = Field(default=0, ge=0, description="节点总 Token 数")
-
-
-class TokenUsage(BaseModel):
-    """消息级 Token 消耗模型。"""
-
-    model_config = ConfigDict(extra="forbid")
-
-    prompt_tokens: int = Field(default=0, ge=0, description="输入 Token 数")
-    completion_tokens: int = Field(default=0, ge=0, description="输出 Token 数")
-    total_tokens: int = Field(default=0, ge=0, description="总 Token 数")
-    breakdown: list[TokenUsageBreakdownItem] | None = Field(
-        default=None,
-        description="节点级 Token 明细",
-    )
-
-
 class ToolCallTraceItem(BaseModel):
     """单次工具调用追踪明细。"""
 
@@ -83,7 +56,6 @@ class AdminMessageCreate(BaseModel):
     status: MessageStatus = Field(default=MessageStatus.SUCCESS, description="消息状态")
     content: str = Field(..., min_length=1, description="消息内容")
     thought_chain: list[Any] | None = Field(default=None, description="思维链结构")
-    token_usage: TokenUsage | None = Field(default=None, description="Token 消耗明细")
     execution_trace: list[ExecutionTraceItem] | None = Field(default=None, description="节点执行追踪")
 
 
@@ -99,7 +71,6 @@ class AdminMessageDocument(BaseModel):
     status: MessageStatus = Field(default=MessageStatus.SUCCESS, description="消息状态")
     content: str = Field(..., description="消息内容")
     thought_chain: list[Any] | None = Field(default=None, description="思维链结构")
-    token_usage: TokenUsage | None = Field(default=None, description="Token 消耗明细")
     execution_trace: list[ExecutionTraceItem] | None = Field(default=None, description="节点执行追踪")
     created_at: datetime = Field(..., description="创建时间")
     updated_at: datetime = Field(..., description="更新时间")
