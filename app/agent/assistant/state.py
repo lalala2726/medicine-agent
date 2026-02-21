@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, TypeAlias, TypedDict
+from typing import Any, Literal, TypeAlias, TypedDict
 
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.graph import MessagesState
@@ -112,9 +112,19 @@ class TokenUsageState(TypedDict):
     node_breakdown: list[NodeTokenBreakdownState]
 
 
+class GatewayRoutingState(TypedDict):
+    """Gateway 路由结果结构。"""
+
+    # 目标节点。
+    route_target: str
+    # 任务难度。
+    task_difficulty: str
+
+
 class AgentState(MessagesState, total=False):
-    # 节点路由
-    router: str
+
+    # Gateway 结构化路由结果。
+    routing: GatewayRoutingState
 
     # 节点间共享结构化上下文。
     context: str

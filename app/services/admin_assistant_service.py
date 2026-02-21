@@ -109,7 +109,10 @@ def _build_initial_state(
     base_history = list(history_messages or [])
 
     return {
-        "router": "",
+        "routing": {
+            "route_target": "",
+            "task_difficulty": "normal",
+        },
         "context": "",
         "history_messages": base_history,
         "execution_traces": [],

@@ -5,7 +5,7 @@ from typing import Any
 
 from langchain_core.messages import SystemMessage
 
-from app.agent.assistant.state import AgentState, ExecutionTraceState
+from app.agent.assistant.state import AgentState, ExecutionTraceState, GatewayRoutingState
 from app.core.langsmith import traceable
 from app.core.llm import create_chat_model
 from app.services.token_usage_service import append_trace_and_refresh_token_usage
@@ -72,6 +72,15 @@ def gateway_router(state: AgentState) -> dict[str, Any]:
     if route_target not in {"chat_agent", "supervisor_agent"}:
         route_target = "chat_agent"
 
+    task_difficulty = str(parsed.get("task_difficulty") or "").strip().lower()
+    if task_difficulty not in {"simple", "normal", "complex"}:
+        task_difficulty = "normal"
+
+    routing: GatewayRoutingState = {
+        "route_target": route_target,
+        "task_difficulty": task_difficulty,
+    }
+
     trace_item = ExecutionTraceState(
         node_name="gateway_router",
         model_name=str(trace.get("model_name") or "unknown"),
@@ -86,7 +95,7 @@ def gateway_router(state: AgentState) -> dict[str, Any]:
         trace_item,
     )
     return {
-        "router": route_target,
+        "routing": routing,
         "execution_traces": execution_traces,
         "token_usage": token_usage,
     }

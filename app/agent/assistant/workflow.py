@@ -14,9 +14,14 @@ from app.agent.assistant.state import AgentState
 
 
 def _route_from_gateway(state: AgentState) -> str:
-    router = str(state.get("router") or "").strip()
-    if router == "chat_agent":
-        return "chat_agent"
+    routing = state.get("routing")
+    if isinstance(routing, dict):
+        route_target = str(routing.get("route_target") or "").strip()
+        if route_target == "chat_agent":
+            return "chat_agent"
+        if route_target == "supervisor_agent":
+            return "supervisor_agent"
+
     return "supervisor_agent"
 
 

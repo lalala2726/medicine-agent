@@ -4,6 +4,7 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, SystemMessage
 
+from agent.assistant.model_switch import model_switch
 from app.agent.assistant.state import AgentState, ExecutionTraceState
 from app.agent.assistant.tools.analytics_tool import analytics_tool_agent
 from app.agent.assistant.tools.order_tool import order_tool_agent
@@ -34,8 +35,11 @@ _SUPERVISOR_PROMPT = """
 
 @traceable(name="Supervisor Agent Node", run_type="chain")
 def supervisor_agent(state: AgentState) -> dict[str, Any]:
+
+    model_name = model_switch(state)
+
     llm = create_chat_model(
-        model="qwen-flash",
+        model=model_name,
         temperature=1.3,
     )
     history_messages = list(state.get("history_messages") or [])
@@ -49,7 +53,7 @@ def supervisor_agent(state: AgentState) -> dict[str, Any]:
     text = str(trace.get("text") or "").strip()
     trace_item = ExecutionTraceState(
         node_name="supervisor_agent",
-        model_name=str(trace.get("model_name") or "unknown"),
+        model_name=model_name,
         output_text=text,
         llm_used=True,
         llm_usage_complete=bool(trace.get("is_usage_complete", False)),
