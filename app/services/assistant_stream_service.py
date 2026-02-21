@@ -82,8 +82,9 @@ class AssistantStreamConfig:
     invoke_sync: Callable[[dict[str, Any]], dict[str, Any]]
     # 异常映射器：把内部异常转成统一错误文案。
     map_exception: Callable[[Exception], str]
-    # 可选收尾回调：在流结束时回调完整 answer 文本与节点执行追踪。
-    # 回调兼容 2 参（历史）和 3 参（新增 has_error）两种签名。
+    # 可选收尾回调：在流结束时回调完整 answer 文本、执行追踪与 token 汇总。
+    # 回调兼容 2/3/4 参：2参(answer,trace)、3参(answer,trace,has_error)、
+    # 4参(answer,trace,token_usage,has_error)。
     on_answer_completed: OnAnswerCompletedCallback | None = None
     # 流开始前注入的事件列表（例如会话创建成功事件），会按给定顺序输出。
     initial_emitted_events: tuple[InitialEmittedEvent, ...] = field(
@@ -118,6 +119,7 @@ class StreamRuntimeState:
     has_streamed_output: bool = False
     has_emitted_error: bool = False
     aggregated_answer_parts: list[str] = field(default_factory=list)
+    aggregated_answer_text: str = ""
 
 
 @dataclass
@@ -197,6 +199,20 @@ def _resolve_meta(raw_meta: Any) -> dict[str, Any] | None:
     if isinstance(raw_meta, dict):
         return raw_meta
     return None
+
+
+def _to_non_negative_int(value: Any) -> int | None:
+    """将值解析为非负整数。"""
+
+    if value is None:
+        return None
+    try:
+        resolved = int(value)
+    except (TypeError, ValueError):
+        return None
+    if resolved < 0:
+        return None
+    return resolved
 
 
 def build_emitted_response(
@@ -321,6 +337,9 @@ def _normalize_execution_trace_item(raw_item: Any) -> dict[str, Any] | None:
         "model_name": model_name,
         "input_messages": input_messages,
         "output_text": str(raw_item.get("output_text") or ""),
+        "llm_used": bool(raw_item.get("llm_used", True)),
+        "llm_usage_complete": bool(raw_item.get("llm_usage_complete", True)),
+        "llm_token_usage": raw_item.get("llm_token_usage"),
         "tool_calls": tool_calls,
     }
 
@@ -346,6 +365,79 @@ def _build_execution_trace_summary(latest_state: dict[str, Any]) -> list[dict[st
         if normalized_item is not None:
             normalized_items.append(normalized_item)
     return normalized_items or None
+
+
+def _build_token_usage_summary(latest_state: dict[str, Any]) -> dict[str, Any] | None:
+    """
+    从最新状态提取 token_usage 汇总。
+
+    Args:
+        latest_state: graph 最新状态。
+
+    Returns:
+        dict[str, Any] | None: 标准化 token_usage；缺失或非法时返回 None。
+    """
+
+    raw_usage = latest_state.get("token_usage")
+    if not isinstance(raw_usage, dict):
+        return None
+
+    prompt_tokens = _to_non_negative_int(raw_usage.get("prompt_tokens"))
+    completion_tokens = _to_non_negative_int(raw_usage.get("completion_tokens"))
+    total_tokens = _to_non_negative_int(raw_usage.get("total_tokens"))
+    if prompt_tokens is None and completion_tokens is None and total_tokens is None:
+        return None
+
+    resolved_prompt = prompt_tokens or 0
+    resolved_completion = completion_tokens or 0
+    resolved_total = total_tokens
+    if resolved_total is None:
+        resolved_total = resolved_prompt + resolved_completion
+
+    raw_breakdown = raw_usage.get("node_breakdown")
+    node_breakdown = raw_breakdown if isinstance(raw_breakdown, list) else []
+
+    return {
+        "prompt_tokens": resolved_prompt,
+        "completion_tokens": resolved_completion,
+        "total_tokens": resolved_total,
+        "is_complete": bool(raw_usage.get("is_complete", True)),
+        "node_breakdown": node_breakdown,
+    }
+
+
+def _append_answer_text(runtime_state: StreamRuntimeState, text: str) -> str:
+    """
+    向聚合答案缓冲区追加文本，并对“全量快照重复”做增量裁剪。
+
+    说明：
+    - 某些模型/链路会在 messages 事件中重复返回“截至当前的全量文本”，
+      若直接拼接会出现同一段内容重复多次；
+    - 当新文本以前缀方式包含了已聚合文本时，仅追加新增的 delta。
+
+    Args:
+        runtime_state: 流式运行时状态。
+        text: 待追加的文本片段。
+
+    Returns:
+        str: 实际新增并可对外输出的文本；若无新增则返回空字符串。
+    """
+
+    raw_text = str(text or "")
+    if not raw_text:
+        return ""
+
+    delta_text = raw_text
+    existing_text = runtime_state.aggregated_answer_text
+    if existing_text and raw_text.startswith(existing_text):
+        delta_text = raw_text[len(existing_text):]
+
+    if not delta_text:
+        return ""
+
+    runtime_state.aggregated_answer_parts.append(delta_text)
+    runtime_state.aggregated_answer_text += delta_text
+    return delta_text
 
 def handle_graph_message_chunk(
         *,
@@ -383,9 +475,12 @@ def handle_graph_message_chunk(
     if not token_text:
         return result
 
+    delta_text = _append_answer_text(runtime_state, token_text)
+    if not delta_text:
+        return result
+
     runtime_state.has_streamed_output = True
-    runtime_state.aggregated_answer_parts.append(token_text)
-    result.rendered_events.append(build_answer_sse(token_text, False))
+    result.rendered_events.append(build_answer_sse(delta_text, False))
     return result
 
 
@@ -455,8 +550,16 @@ def _process_stream_event(
                 and isinstance(emitted_response.content.text, str)
                 and emitted_response.content.text
         ):
-            runtime_state.has_streamed_output = True
-            runtime_state.aggregated_answer_parts.append(emitted_response.content.text)
+            delta_text = _append_answer_text(runtime_state, emitted_response.content.text)
+            if delta_text:
+                runtime_state.has_streamed_output = True
+                emitted_response = emitted_response.model_copy(
+                    update={
+                        "content": emitted_response.content.model_copy(update={"text": delta_text}),
+                    }
+                )
+            else:
+                return result
 
         result.rendered_events.append(serialize_sse(emitted_response))
         return result
@@ -468,8 +571,9 @@ def _process_stream_event(
         runtime_state.has_emitted_error = True
         result = EventProcessResult()
         message = map_exception(payload)
-        runtime_state.aggregated_answer_parts.append(message)
-        result.rendered_events.append(build_answer_sse(message, False))
+        delta_text = _append_answer_text(runtime_state, message)
+        if delta_text:
+            result.rendered_events.append(build_answer_sse(delta_text, False))
         return result
 
     if event_type == EVENT_DONE:
@@ -583,6 +687,7 @@ async def _invoke_answer_completed_callback(
         callback: OnAnswerCompletedCallback | None,
         answer_text: str,
         execution_trace: list[dict[str, Any]] | None,
+        token_usage: dict[str, Any] | None,
         has_error: bool,
 ) -> None:
     """
@@ -594,6 +699,7 @@ async def _invoke_answer_completed_callback(
         callback: 结束回调函数。
         answer_text: 聚合后的完整回答文本。
         execution_trace: 汇总后的节点执行追踪。
+        token_usage: 汇总后的消息级 token 使用信息。
         has_error: 本次流式执行是否出现错误。
     """
 
@@ -614,9 +720,12 @@ async def _invoke_answer_completed_callback(
         parameter.kind == inspect.Parameter.VAR_POSITIONAL
         for parameter in parameters
     )
+    supports_four_args = accepts_variadic or len(positional_parameters) >= 4
     supports_three_args = accepts_variadic or len(positional_parameters) >= 3
 
-    if supports_three_args:
+    if supports_four_args:
+        callback_result = callback(answer_text, execution_trace, token_usage, has_error)
+    elif supports_three_args:
         callback_result = callback(answer_text, execution_trace, has_error)
     else:
         callback_result = callback(answer_text, execution_trace)
@@ -698,15 +807,18 @@ async def _event_stream(
         if not runtime_state.has_emitted_error and not runtime_state.has_streamed_output:
             fallback_text = config.extract_final_content(runtime_state.latest_state)
             if isinstance(fallback_text, str) and fallback_text:
-                runtime_state.aggregated_answer_parts.append(fallback_text)
-                yield build_answer_sse(fallback_text, False)
+                delta_text = _append_answer_text(runtime_state, fallback_text)
+                if delta_text:
+                    yield build_answer_sse(delta_text, False)
     finally:
         with suppress(Exception):
             execution_trace = _build_execution_trace_summary(runtime_state.latest_state)
+            token_usage = _build_token_usage_summary(runtime_state.latest_state)
             await _invoke_answer_completed_callback(
                 config.on_answer_completed,
-                "".join(runtime_state.aggregated_answer_parts),
+                runtime_state.aggregated_answer_text,
                 execution_trace,
+                token_usage,
                 runtime_state.has_emitted_error,
             )
         end_event = await _finalize_stream(emitter_token, producer_task)

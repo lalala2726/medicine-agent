@@ -5,10 +5,14 @@ from typing import Any
 
 from langchain_core.messages import SystemMessage
 
-from app.agent.admin.state import AgentState
+from app.agent.admin.state import AgentState, ExecutionTraceState
 from app.core.langsmith import traceable
 from app.core.llm import create_chat_model
-from app.utils.streaming_utils import extract_text
+from app.services.token_usage_service import append_trace_and_refresh_token_usage
+from app.utils.streaming_utils import (
+    invoke_with_trace,
+    serialize_messages_for_trace,
+)
 
 _GATEWAY_PROMPT = """
     你是药品商城后台助手的前置意图网关（Intent Gateway）。
@@ -50,14 +54,14 @@ def gateway_router(state: AgentState) -> dict[str, Any]:
 
     messages = [SystemMessage(content=_GATEWAY_PROMPT), *history_messages]
 
-    res = llm.invoke(messages)
-    raw_content = getattr(res, "content", None)
+    trace = invoke_with_trace(llm, messages)
+    raw_content = trace.get("raw_content")
 
     parsed: dict[str, Any] = {}
     if isinstance(raw_content, dict):
         parsed = raw_content
     else:
-        raw_text = extract_text(res).strip()
+        raw_text = str(trace.get("text") or "").strip()
         try:
             candidate = json.loads(raw_text)
             if isinstance(candidate, dict):
@@ -68,4 +72,23 @@ def gateway_router(state: AgentState) -> dict[str, Any]:
     route_target = str(parsed.get("route_target") or "").strip()
     if route_target not in {"chat_agent", "supervisor_agent"}:
         route_target = "chat_agent"
-    return {"router": route_target}
+
+    trace_item = ExecutionTraceState(
+        node_name="gateway_router",
+        model_name=str(trace.get("model_name") or "unknown"),
+        input_messages=serialize_messages_for_trace(messages),
+        output_text=str(trace.get("text") or ""),
+        llm_used=True,
+        llm_usage_complete=bool(trace.get("is_usage_complete", False)),
+        llm_token_usage=trace.get("usage"),
+        tool_calls=[],
+    )
+    execution_traces, token_usage = append_trace_and_refresh_token_usage(
+        state.get("execution_traces"),
+        trace_item,
+    )
+    return {
+        "router": route_target,
+        "execution_traces": execution_traces,
+        "token_usage": token_usage,
+    }

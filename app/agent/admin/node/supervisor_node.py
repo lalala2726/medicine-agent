@@ -6,11 +6,12 @@ from langchain_core.messages import AIMessage, SystemMessage
 
 from app.agent.admin.node.order_tool import order_tool_agent
 from app.agent.admin.node.product_tool import product_tool_agent
-from app.agent.admin.state import AgentState
+from app.agent.admin.state import AgentState, ExecutionTraceState
 from app.core.langsmith import traceable
 from app.core.llm import create_chat_model
 from app.schemas.prompt import base_prompt
-from app.utils.streaming_utils import invoke
+from app.services.token_usage_service import append_trace_and_refresh_token_usage
+from app.utils.streaming_utils import invoke_with_trace, serialize_messages_for_trace
 
 _SUPERVISOR_PROMPT = """
     你是药品商城后台管理助手的 supervisor 节点。
@@ -36,22 +37,31 @@ def supervisor_agent(state: AgentState) -> dict[str, Any]:
         temperature=1.0,
     )
     history_messages = list(state.get("history_messages") or [])
-    if not history_messages:
-        text = "我在，请告诉我你想查询订单还是商品信息。"
-        return {
-            "result": text,
-            "messages": [AIMessage(content=text)],
-        }
 
     messages = [SystemMessage(content=_SUPERVISOR_PROMPT), *history_messages]
-
-    content = invoke(
+    trace = invoke_with_trace(
         llm,
         messages,
         tools=[order_tool_agent, product_tool_agent],
     )
-    text = str(content or "").strip()
+    text = str(trace.get("text") or "").strip()
+    trace_item = ExecutionTraceState(
+        node_name="supervisor_agent",
+        model_name=str(trace.get("model_name") or "unknown"),
+        input_messages=serialize_messages_for_trace(messages),
+        output_text=text,
+        llm_used=True,
+        llm_usage_complete=bool(trace.get("is_usage_complete", False)),
+        llm_token_usage=trace.get("usage"),
+        tool_calls=list(trace.get("tool_calls") or []),
+    )
+    execution_traces, token_usage = append_trace_and_refresh_token_usage(
+        state.get("execution_traces"),
+        trace_item,
+    )
     return {
         "result": text,
         "messages": [AIMessage(content=text)],
+        "execution_traces": execution_traces,
+        "token_usage": token_usage,
     }

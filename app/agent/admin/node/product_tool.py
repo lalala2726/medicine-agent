@@ -7,7 +7,7 @@ from app.agent.admin.tools import get_product_detail, get_product_list
 from app.core.langsmith import traceable
 from app.core.llm import create_chat_model
 from app.schemas.prompt import base_prompt
-from app.utils.streaming_utils import invoke
+from app.utils.streaming_utils import invoke_with_trace
 
 _PRODUCT_SYSTEM_PROMPT = (
         """
@@ -43,12 +43,12 @@ def product_tool_agent(task_description: str) -> str:
         SystemMessage(content=_PRODUCT_SYSTEM_PROMPT),
         HumanMessage(content=str(task_description or "").strip()),
     ]
-    content = invoke(
+    trace = invoke_with_trace(
         llm,
         messages,
         tools=[get_product_list, get_product_detail],
     )
-    text = str(content or "").strip()
+    text = str(trace.get("text") or "").strip()
     if not text:
         return "未获取到商品数据，请补充筛选条件后重试。"
     return text

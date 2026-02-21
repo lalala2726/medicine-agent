@@ -271,7 +271,6 @@ def test_add_message_persists_execution_trace_for_assistant(monkeypatch):
                     {
                         "tool_name": "get_order_list",
                         "tool_input": {"page_num": 1},
-                        "tool_output": {"list": []},
                         "is_error": False,
                         "error_message": None,
                     }
@@ -281,23 +280,12 @@ def test_add_message_persists_execution_trace_for_assistant(monkeypatch):
     )
 
     assert collection.last_inserted is not None
-    assert collection.last_inserted["execution_trace"] == [
-        {
-            "node_name": "order_agent",
-            "model_name": "qwen3-max",
-            "input_messages": [{"role": "system", "content": "请处理订单"}],
-            "output_text": "订单已处理",
-            "tool_calls": [
-                {
-                    "tool_name": "get_order_list",
-                    "tool_input": {"page_num": 1},
-                    "tool_output": {"list": []},
-                    "is_error": False,
-                    "error_message": None,
-                }
-            ],
-        }
-    ]
+    execution_trace = collection.last_inserted["execution_trace"]
+    assert execution_trace[0]["node_name"] == "order_agent"
+    assert execution_trace[0]["model_name"] == "qwen3-max"
+    assert execution_trace[0]["tool_calls"][0]["tool_name"] == "get_order_list"
+    assert execution_trace[0]["tool_calls"][0]["tool_input"] == {"page_num": 1}
+    assert "tool_output" not in execution_trace[0]["tool_calls"][0]
 
 
 def test_add_message_persists_error_status(monkeypatch):
@@ -334,6 +322,44 @@ def test_add_message_user_does_not_persist_execution_trace_by_default(monkeypatc
     assert collection.last_inserted is not None
     assert "token_usage" not in collection.last_inserted
     assert collection.last_inserted.get("execution_trace") is None
+
+
+def test_add_message_persists_token_usage_only_for_assistant(monkeypatch):
+    """测试目标：仅 assistant 消息保存 token_usage。"""
+
+    collection = _DummyCollection()
+    monkeypatch.setattr(service_module, "get_mongo_database", lambda: {"admin_messages": collection})
+    monkeypatch.setattr(service_module, "_resolve_collection_name", lambda: "admin_messages")
+
+    service_module.add_message(
+        conversation_id="507f1f77bcf86cd799439011",
+        role=MessageRole.ASSISTANT,
+        content="助手回复",
+        token_usage={
+            "prompt_tokens": 5,
+            "completion_tokens": 3,
+            "total_tokens": 8,
+            "is_complete": True,
+            "node_breakdown": [],
+        },
+    )
+    assert collection.last_inserted is not None
+    assert collection.last_inserted["token_usage"]["total_tokens"] == 8
+
+    service_module.add_message(
+        conversation_id="507f1f77bcf86cd799439011",
+        role=MessageRole.USER,
+        content="用户提问",
+        token_usage={
+            "prompt_tokens": 9,
+            "completion_tokens": 9,
+            "total_tokens": 18,
+            "is_complete": True,
+            "node_breakdown": [],
+        },
+    )
+    assert collection.last_inserted is not None
+    assert "token_usage" not in collection.last_inserted
 
 
 def test_get_history_maps_role_to_langchain_messages(monkeypatch):

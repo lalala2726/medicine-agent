@@ -4,11 +4,15 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, SystemMessage
 
-from app.agent.admin.state import AgentState
+from app.agent.admin.state import AgentState, ExecutionTraceState
 from app.core.langsmith import traceable
 from app.core.llm import create_chat_model
 from app.schemas.prompt import base_prompt
-from app.utils.streaming_utils import extract_text
+from app.services.token_usage_service import append_trace_and_refresh_token_usage
+from app.utils.streaming_utils import (
+    invoke_with_trace,
+    serialize_messages_for_trace,
+)
 
 _CHAT_SYSTEM_PROMPT = (
         """
@@ -33,10 +37,25 @@ def chat_agent(state: AgentState) -> dict[str, Any]:
     history_messages = list(state.get("history_messages") or [])
 
     messages = [SystemMessage(content=_CHAT_SYSTEM_PROMPT), *history_messages]
-
-    response = llm.invoke(messages)
-    text = extract_text(response).strip()
+    trace = invoke_with_trace(llm, messages)
+    text = str(trace.get("text") or "").strip()
+    trace_item = ExecutionTraceState(
+        node_name="chat_agent",
+        model_name=str(trace.get("model_name") or "unknown"),
+        input_messages=serialize_messages_for_trace(messages),
+        output_text=text,
+        llm_used=True,
+        llm_usage_complete=bool(trace.get("is_usage_complete", False)),
+        llm_token_usage=trace.get("usage"),
+        tool_calls=[],
+    )
+    execution_traces, token_usage = append_trace_and_refresh_token_usage(
+        state.get("execution_traces"),
+        trace_item,
+    )
     return {
         "result": text,
         "messages": [AIMessage(content=text)],
+        "execution_traces": execution_traces,
+        "token_usage": token_usage,
     }

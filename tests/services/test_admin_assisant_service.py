@@ -419,6 +419,11 @@ def test_answer_completed_schedules_async_persist_with_execution_trace(monkeypat
         "add_message",
         lambda **kwargs: saved_messages.append(kwargs) or "507f1f77bcf86cd799439012",
     )
+    monkeypatch.setattr(
+        service_module,
+        "build_message_token_usage",
+        lambda _trace: {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2, "is_complete": True, "node_breakdown": []},
+    )
 
     callback = service_module._build_assistant_message_callback(
         conversation_id="507f1f77bcf86cd799439011",
@@ -436,7 +441,6 @@ def test_answer_completed_schedules_async_persist_with_execution_trace(monkeypat
                         {
                             "tool_name": "query_orders",
                             "tool_input": {"limit": 10},
-                            "tool_output": {"rows": 10},
                             "is_error": False,
                             "error_message": None,
                         }
@@ -447,36 +451,15 @@ def test_answer_completed_schedules_async_persist_with_execution_trace(monkeypat
         )
     )
 
-    assert background_calls == [
-        {
-            "task_name": "persist_assistant_message",
-            "kwargs": {
-                "conversation_id": "507f1f77bcf86cd799439011",
-                "answer_text": "AI回复",
-                "execution_trace": [
-                    {
-                        "node_name": "chat_agent",
-                        "model_name": "qwen-max",
-                        "input_messages": [{"role": "human", "content": "用户问题"}],
-                        "output_text": "AI回复",
-                        "tool_calls": [
-                            {
-                                "tool_name": "query_orders",
-                                "tool_input": {"limit": 10},
-                                "tool_output": {"rows": 10},
-                                "is_error": False,
-                                "error_message": None,
-                            }
-                        ],
-                    }
-                ],
-                "status": MessageStatus.SUCCESS,
-            },
-        }
-    ]
+    assert len(background_calls) == 1
+    assert background_calls[0]["task_name"] == "persist_assistant_message"
+    assert background_calls[0]["kwargs"]["conversation_id"] == "507f1f77bcf86cd799439011"
+    assert background_calls[0]["kwargs"]["answer_text"] == "AI回复"
+    assert background_calls[0]["kwargs"]["status"] == MessageStatus.SUCCESS
     assert saved_messages[-1]["execution_trace"][0]["node_name"] == "chat_agent"
     assert saved_messages[-1]["status"] == MessageStatus.SUCCESS
     assert saved_messages[-1]["thought_chain"] is None
+    assert saved_messages[-1]["token_usage"]["total_tokens"] == 2
 
 
 def test_answer_completed_marks_error_status_when_stream_failed(monkeypatch):
@@ -510,8 +493,8 @@ def test_answer_completed_marks_error_status_when_stream_failed(monkeypatch):
     assert saved_messages[-1]["thought_chain"] is None
 
 
-def test_answer_completed_persists_thought_chain_when_trace_contains_coordinator(monkeypatch):
-    """测试目标：命中 coordinator 路径才保存 thought_chain；成功标准：保存完整执行链。"""
+def test_answer_completed_persists_thought_chain_when_trace_contains_supervisor(monkeypatch):
+    """测试目标：命中 supervisor 路径才保存 thought_chain；成功标准：保存完整执行链。"""
 
     saved_messages: list[dict] = []
 
@@ -525,6 +508,11 @@ def test_answer_completed_persists_thought_chain_when_trace_contains_coordinator
         "add_message",
         lambda **kwargs: saved_messages.append(kwargs) or "507f1f77bcf86cd799439012",
     )
+    monkeypatch.setattr(
+        service_module,
+        "build_message_token_usage",
+        lambda _trace: {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2, "is_complete": True, "node_breakdown": []},
+    )
 
     callback = service_module._build_assistant_message_callback(
         conversation_id="507f1f77bcf86cd799439011",
@@ -534,7 +522,7 @@ def test_answer_completed_persists_thought_chain_when_trace_contains_coordinator
             "复杂回复",
             [
                 {
-                    "node_name": "coordinator_agent",
+                    "node_name": "supervisor_agent",
                     "model_name": "qwen-max",
                     "input_messages": [],
                     "output_text": "计划已生成",
@@ -562,14 +550,14 @@ def test_answer_completed_persists_thought_chain_when_trace_contains_coordinator
     thought_chain = saved_messages[-1]["thought_chain"]
     assert thought_chain is not None
     assert [item["node"] for item in thought_chain] == [
-        "coordinator_agent",
+        "supervisor_agent",
         "planner",
         "order_agent",
     ]
 
 
-def test_should_persist_thought_chain_only_when_contains_coordinator_agent():
-    """测试目标：thought_chain 保存判定只认 coordinator_agent。"""
+def test_should_persist_thought_chain_only_when_contains_supervisor_agent():
+    """测试目标：thought_chain 保存判定只认 supervisor_agent。"""
 
     assert service_module._should_persist_thought_chain(None) is False
     assert service_module._should_persist_thought_chain([]) is False
@@ -577,7 +565,7 @@ def test_should_persist_thought_chain_only_when_contains_coordinator_agent():
         [{"node_name": "chat_agent"}]
     ) is False
     assert service_module._should_persist_thought_chain(
-        [{"node_name": "coordinator_agent"}]
+        [{"node_name": "supervisor_agent"}]
     ) is True
 
 
@@ -595,7 +583,6 @@ def test_build_thought_chain_maps_execution_trace_to_frontend_shape():
                     {
                         "tool_name": "query_orders",
                         "tool_input": {"limit": 10},
-                        "tool_output": {"rows": [1, 2]},
                         "is_error": False,
                         "error_message": None,
                     }
@@ -627,7 +614,6 @@ def test_build_thought_chain_uses_chinese_tool_message_for_known_tools():
                     {
                         "tool_name": "get_orders_detail",
                         "tool_input": {"order_id": ["198"]},
-                        "tool_output": {"rows": [1]},
                         "is_error": False,
                         "error_message": None,
                     }

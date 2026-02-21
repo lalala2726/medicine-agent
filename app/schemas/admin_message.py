@@ -21,16 +21,69 @@ class MessageStatus(str, Enum):
     SUCCESS = "success"
     ERROR = "error"
 
+
+class TokenCounter(BaseModel):
+    """统一的 token 计数结构。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    prompt_tokens: int = Field(default=0, ge=0, description="输入 Token 数")
+    completion_tokens: int = Field(default=0, ge=0, description="输出 Token 数")
+    total_tokens: int = Field(default=0, ge=0, description="总 Token 数")
+
+
+class ToolLlmBreakdown(BaseModel):
+    """工具级 LLM token 明细（支持递归 children）。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    tool_name: str = Field(..., min_length=1, description="工具名称")
+    tool_input: Any = Field(default=None, description="工具输入参数")
+    prompt_tokens: int = Field(default=0, ge=0, description="输入 Token 数")
+    completion_tokens: int = Field(default=0, ge=0, description="输出 Token 数")
+    total_tokens: int = Field(default=0, ge=0, description="工具总 Token 数")
+    children: list["ToolLlmBreakdown"] = Field(default_factory=list, description="子工具明细")
+
+
+class NodeTokenBreakdown(BaseModel):
+    """节点级 token 明细。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    node_name: str = Field(..., min_length=1, description="节点名称")
+    model_name: str = Field(..., min_length=1, description="模型名称")
+    prompt_tokens: int = Field(default=0, ge=0, description="节点输入 Token 数")
+    completion_tokens: int = Field(default=0, ge=0, description="节点输出 Token 数")
+    total_tokens: int = Field(default=0, ge=0, description="节点总 Token 数")
+    tool_tokens_total: int = Field(default=0, ge=0, description="节点下工具 LLM 总 Token 数")
+    tool_llm_breakdown: list[ToolLlmBreakdown] = Field(default_factory=list, description="工具级明细")
+
+
+class TokenUsage(BaseModel):
+    """消息级 token 使用情况。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    prompt_tokens: int = Field(default=0, ge=0, description="消息输入 Token 总数")
+    completion_tokens: int = Field(default=0, ge=0, description="消息输出 Token 总数")
+    total_tokens: int = Field(default=0, ge=0, description="消息总 Token 数")
+    is_complete: bool = Field(default=True, description="本轮所有 LLM 调用是否都有 usage")
+    node_breakdown: list[NodeTokenBreakdown] = Field(default_factory=list, description="节点级明细")
+
+
 class ToolCallTraceItem(BaseModel):
     """单次工具调用追踪明细。"""
 
     model_config = ConfigDict(extra="forbid")
 
     tool_name: str = Field(..., min_length=1, description="工具名称")
-    tool_input: Any = Field(..., description="工具输入参数")
-    tool_output: Any = Field(..., description="工具输出结果")
+    tool_input: Any = Field(default=None, description="工具输入参数")
     is_error: bool = Field(default=False, description="是否为错误调用")
     error_message: str | None = Field(default=None, description="错误信息")
+    llm_used: bool = Field(default=False, description="该工具内部是否触发 LLM 调用")
+    llm_usage_complete: bool = Field(default=True, description="该工具内部 LLM usage 是否完整")
+    llm_token_usage: TokenCounter | None = Field(default=None, description="工具内部 LLM token")
+    children: list["ToolCallTraceItem"] = Field(default_factory=list, description="子工具调用")
 
 
 class ExecutionTraceItem(BaseModel):
@@ -42,6 +95,9 @@ class ExecutionTraceItem(BaseModel):
     model_name: str = Field(..., min_length=1, description="模型名称")
     input_messages: list[Any] = Field(default_factory=list, description="节点输入消息")
     output_text: str = Field(default="", description="节点输出文本")
+    llm_used: bool = Field(default=True, description="节点是否触发 LLM 调用")
+    llm_usage_complete: bool = Field(default=True, description="节点 LLM usage 是否完整")
+    llm_token_usage: TokenCounter | None = Field(default=None, description="节点自身 LLM token")
     tool_calls: list[ToolCallTraceItem] = Field(default_factory=list, description="节点工具调用明细")
 
 
@@ -56,6 +112,7 @@ class AdminMessageCreate(BaseModel):
     status: MessageStatus = Field(default=MessageStatus.SUCCESS, description="消息状态")
     content: str = Field(..., min_length=1, description="消息内容")
     thought_chain: list[Any] | None = Field(default=None, description="思维链结构")
+    token_usage: TokenUsage | None = Field(default=None, description="消息 token 使用明细")
     execution_trace: list[ExecutionTraceItem] | None = Field(default=None, description="节点执行追踪")
 
 
@@ -71,6 +128,7 @@ class AdminMessageDocument(BaseModel):
     status: MessageStatus = Field(default=MessageStatus.SUCCESS, description="消息状态")
     content: str = Field(..., description="消息内容")
     thought_chain: list[Any] | None = Field(default=None, description="思维链结构")
+    token_usage: TokenUsage | None = Field(default=None, description="消息 token 使用明细")
     execution_trace: list[ExecutionTraceItem] | None = Field(default=None, description="节点执行追踪")
     created_at: datetime = Field(..., description="创建时间")
     updated_at: datetime = Field(..., description="更新时间")
@@ -94,3 +152,7 @@ class AdminMessageDocument(BaseModel):
         if isinstance(value, ObjectId):
             return str(value)
         return str(value)
+
+
+ToolCallTraceItem.model_rebuild()
+ToolLlmBreakdown.model_rebuild()

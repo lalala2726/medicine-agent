@@ -31,7 +31,7 @@ import asyncio
 import contextvars
 import json
 import os
-from typing import Any, Optional, Sequence
+from typing import Any, Mapping, Optional, Sequence
 
 from langchain_core.messages import ToolMessage
 from loguru import logger
@@ -44,6 +44,11 @@ from app.core.assistant_status import (
 
 # 工具调用最大轮次，防止无限循环
 MAX_TOOL_ROUNDS = 20
+
+_TOOL_TRACE_STACK: contextvars.ContextVar[list[dict[str, Any]] | None] = contextvars.ContextVar(
+    "admin_tool_trace_stack",
+    default=None,
+)
 
 
 def _empty_policy_diagnostics() -> dict[str, Any]:
@@ -60,6 +65,9 @@ def _empty_policy_diagnostics() -> dict[str, Any]:
         "tool_call_details": [],
         "stream_chunks": [],
         "reasoning_chunks": [],
+        "llm_usage": None,
+        "llm_usage_complete": True,
+        "model_name": "unknown",
     }
 
 
@@ -72,6 +80,125 @@ def _is_tool_log_enabled() -> bool:
     """
     value = os.getenv("AGENT_TOOL_LOG_ENABLED", "false").strip().lower()
     return value in {"1", "true", "yes", "on"}
+
+
+def _to_non_negative_int(value: Any) -> int | None:
+    """将值转换为非负整数。"""
+
+    if value is None:
+        return None
+    try:
+        resolved = int(value)
+    except (TypeError, ValueError):
+        return None
+    if resolved < 0:
+        return None
+    return resolved
+
+
+def normalize_usage_payload(raw: Mapping[str, Any] | None) -> dict[str, int] | None:
+    """
+    标准化 provider usage 结构。
+
+    兼容字段：
+    - prompt_tokens / completion_tokens / total_tokens
+    - input_tokens / output_tokens / total_tokens
+    """
+
+    if raw is None:
+        return None
+
+    prompt_tokens = _to_non_negative_int(raw.get("prompt_tokens"))
+    if prompt_tokens is None:
+        prompt_tokens = _to_non_negative_int(raw.get("input_tokens"))
+
+    completion_tokens = _to_non_negative_int(raw.get("completion_tokens"))
+    if completion_tokens is None:
+        completion_tokens = _to_non_negative_int(raw.get("output_tokens"))
+
+    total_tokens = _to_non_negative_int(raw.get("total_tokens"))
+    if prompt_tokens is None and completion_tokens is None and total_tokens is None:
+        return None
+
+    resolved_prompt = prompt_tokens or 0
+    resolved_completion = completion_tokens or 0
+    resolved_total = total_tokens
+    if resolved_total is None:
+        resolved_total = resolved_prompt + resolved_completion
+
+    return {
+        "prompt_tokens": resolved_prompt,
+        "completion_tokens": resolved_completion,
+        "total_tokens": resolved_total,
+    }
+
+
+def extract_usage_from_response(response: Any) -> dict[str, int] | None:
+    """从 LLM 响应中提取 usage。"""
+
+    usage_metadata = getattr(response, "usage_metadata", None)
+    if isinstance(usage_metadata, Mapping):
+        normalized = normalize_usage_payload(usage_metadata)
+        if normalized is not None:
+            return normalized
+
+    response_metadata = getattr(response, "response_metadata", None)
+    if isinstance(response_metadata, Mapping):
+        for key in ("token_usage", "usage", "usage_metadata"):
+            candidate = response_metadata.get(key)
+            if isinstance(candidate, Mapping):
+                normalized = normalize_usage_payload(candidate)
+                if normalized is not None:
+                    return normalized
+    return None
+
+
+def _resolve_model_name_from_response(response: Any, fallback: str = "unknown") -> str:
+    """从响应元数据解析模型名。"""
+
+    response_metadata = getattr(response, "response_metadata", None)
+    if isinstance(response_metadata, Mapping):
+        for key in ("model_name", "model", "model_id"):
+            candidate = response_metadata.get(key)
+            if isinstance(candidate, str) and candidate.strip():
+                return candidate.strip()
+    return fallback
+
+
+def serialize_messages_for_trace(messages: Sequence[Any]) -> list[dict[str, Any]]:
+    """将 LangChain 消息对象序列化为执行追踪结构。"""
+
+    serialized: list[dict[str, Any]] = []
+    for message in messages:
+        message_type = ""
+        if hasattr(message, "type"):
+            message_type = str(getattr(message, "type") or "")
+        if not message_type:
+            message_type = message.__class__.__name__
+        serialized.append(
+            {
+                "type": message_type,
+                "content": extract_text(message),
+            }
+        )
+    return serialized
+
+
+def _mark_current_tool_llm_trace(
+        *,
+        usage: dict[str, int] | None,
+        is_usage_complete: bool,
+) -> None:
+    """把当前工具内部 LLM 调用结果写入工具追踪栈顶。"""
+
+    current_stack = _TOOL_TRACE_STACK.get()
+    if not current_stack:
+        return
+    current_tool = current_stack[-1]
+    current_tool["llm_used"] = True
+    current_tool["llm_usage_complete"] = bool(is_usage_complete)
+    if usage is not None:
+        current_tool["llm_token_usage"] = dict(usage)
 
 
 def has_plan(state: AgentState | dict[str, Any]) -> bool:
@@ -246,11 +373,77 @@ def invoke(
     Returns:
         str: LLM 生成的完整文本
     """
+    result = invoke_with_trace(
+        llm,
+        messages,
+        tools=tools,
+        max_tool_rounds=max_tool_rounds,
+    )
+    return str(result.get("text") or "")
+
+
+def invoke_with_trace(
+        llm: Any,
+        messages: list[Any],
+        *,
+        tools: Optional[Sequence[Any]] = None,
+        max_tool_rounds: int = MAX_TOOL_ROUNDS,
+) -> dict[str, Any]:
+    """
+    统一执行 LLM，并返回文本 + usage + 工具调用轨迹。
+
+    Returns:
+        dict[str, Any]:
+            - text: 模型文本输出
+            - model_name: 模型名称
+            - usage: usage 字典或 None
+            - is_usage_complete: usage 是否完整
+            - tool_calls: 工具调用明细（支持递归 children）
+            - raw_content: 原始响应 content（便于上层做 JSON 解析）
+    """
+
     if tools:
-        return _invoke_with_tools(llm, messages, tools, max_tool_rounds)
+        content, diagnostics = _invoke_with_tools_with_diagnostics(
+            llm,
+            messages,
+            tools,
+            max_tool_rounds,
+        )
+        usage_payload = diagnostics.get("llm_usage")
+        usage = usage_payload if isinstance(usage_payload, dict) else None
+        is_usage_complete = bool(diagnostics.get("llm_usage_complete", usage is not None))
+        _mark_current_tool_llm_trace(
+            usage=usage,
+            is_usage_complete=is_usage_complete,
+        )
+        return {
+            "text": content,
+            "model_name": str(diagnostics.get("model_name") or "unknown"),
+            "usage": usage,
+            "is_usage_complete": is_usage_complete,
+            "tool_calls": list(diagnostics.get("tool_call_details") or []),
+            "raw_content": content,
+        }
 
     response = llm.invoke(messages)
-    return extract_text(response)
+    text = extract_text(response)
+    usage = extract_usage_from_response(response)
+    is_usage_complete = usage is not None
+    _mark_current_tool_llm_trace(
+        usage=usage,
+        is_usage_complete=is_usage_complete,
+    )
+    return {
+        "text": text,
+        "model_name": _resolve_model_name_from_response(
+            response,
+            fallback=str(getattr(llm, "model_name", "unknown") or "unknown"),
+        ),
+        "usage": usage,
+        "is_usage_complete": is_usage_complete,
+        "tool_calls": [],
+        "raw_content": getattr(response, "content", None),
+    }
 
 
 def invoke_with_optional_stream(
@@ -394,6 +587,10 @@ def _invoke_with_tools_with_diagnostics(
 
     diagnostics = _empty_policy_diagnostics()
     tool_errors_consecutive = 0
+    usage_prompt = 0
+    usage_completion = 0
+    usage_total = 0
+    usage_complete = True
 
     def _threshold_reached() -> bool:
         if tool_error_counting == "total":
@@ -403,12 +600,30 @@ def _invoke_with_tools_with_diagnostics(
     for round_idx in range(max_rounds):
         # 同步调用 — 保持 LangGraph 上下文，支持 token 流式拦截
         response = llm_with_tools.invoke(messages)
+        model_name = _resolve_model_name_from_response(
+            response,
+            fallback=str(getattr(llm, "model_name", "unknown") or "unknown"),
+        )
+        diagnostics["model_name"] = model_name
+        response_usage = extract_usage_from_response(response)
+        if response_usage is None:
+            usage_complete = False
+        else:
+            usage_prompt += response_usage["prompt_tokens"]
+            usage_completion += response_usage["completion_tokens"]
+            usage_total += response_usage["total_tokens"]
         messages.append(response)
 
         tool_calls = getattr(response, "tool_calls", None)
         if not tool_calls:
             if log_enabled:
                 logger.info("第 {} 轮无工具调用，返回最终结果", round_idx + 1)
+            diagnostics["llm_usage"] = {
+                "prompt_tokens": usage_prompt,
+                "completion_tokens": usage_completion,
+                "total_tokens": usage_total,
+            }
+            diagnostics["llm_usage_complete"] = usage_complete
             return extract_text(response), diagnostics
 
         if log_enabled:
@@ -440,11 +655,35 @@ def _invoke_with_tools_with_diagnostics(
                     f"max_tool_errors={max_tool_errors}）。"
                 )
                 diagnostics["threshold_reason"] = reason
+                diagnostics["llm_usage"] = {
+                    "prompt_tokens": usage_prompt,
+                    "completion_tokens": usage_completion,
+                    "total_tokens": usage_total,
+                }
+                diagnostics["llm_usage_complete"] = usage_complete
                 return f"{error_marker_prefix} {reason}", diagnostics
 
     if log_enabled:
         logger.warning("达到最大工具调用轮次 ({})，生成最终响应", max_rounds)
     final = llm_with_tools.invoke(messages)
+    model_name = _resolve_model_name_from_response(
+        final,
+        fallback=str(getattr(llm, "model_name", "unknown") or "unknown"),
+    )
+    diagnostics["model_name"] = model_name
+    final_usage = extract_usage_from_response(final)
+    if final_usage is None:
+        usage_complete = False
+    else:
+        usage_prompt += final_usage["prompt_tokens"]
+        usage_completion += final_usage["completion_tokens"]
+        usage_total += final_usage["total_tokens"]
+    diagnostics["llm_usage"] = {
+        "prompt_tokens": usage_prompt,
+        "completion_tokens": usage_completion,
+        "total_tokens": usage_total,
+    }
+    diagnostics["llm_usage_complete"] = usage_complete
     return extract_text(final), diagnostics
 
 
@@ -513,43 +752,52 @@ def _exec_tool_with_meta(
     args = tool_call.get("args", {})
     tool_fn = tool_map.get(name)
     tool_node = f"tool:{name}"
-
-    if log_enabled is None:
-        log_enabled = _is_tool_log_enabled()
-
-    if tool_fn is None:
-        start_message, _, _ = resolve_tool_call_messages(name)
-        unknown_message = f"未知工具: {name}"
-        emit_function_call(
-            node=tool_node,
-            state="start",
-            message=start_message,
-        )
-        emit_function_call(
-            node=tool_node,
-            state="end",
-            result="error",
-            message=unknown_message,
-        )
-        if log_enabled:
-            logger.warning("未知工具: {}", name)
-        return (
-            json.dumps({"error": unknown_message}, ensure_ascii=False),
-            True,
-            unknown_message,
-            {
-                "tool_name": name,
-                "tool_input": args,
-                "tool_output": {"error": unknown_message},
-                "is_error": True,
-                "error_message": unknown_message,
-            },
-        )
-
-    if log_enabled:
-        logger.info("工具调用: name={} args={}", name, args)
-
+    parent_stack = _TOOL_TRACE_STACK.get() or []
+    tool_detail: dict[str, Any] = {
+        "tool_name": name,
+        "tool_input": args,
+        "is_error": False,
+        "error_message": None,
+        "llm_used": False,
+        "llm_usage_complete": True,
+        "llm_token_usage": None,
+        "children": [],
+    }
+    if parent_stack:
+        parent_stack[-1].setdefault("children", []).append(tool_detail)
+    stack_token = _TOOL_TRACE_STACK.set([*parent_stack, tool_detail])
     try:
+        if log_enabled is None:
+            log_enabled = _is_tool_log_enabled()
+
+        if tool_fn is None:
+            start_message, _, _ = resolve_tool_call_messages(name)
+            unknown_message = f"未知工具: {name}"
+            emit_function_call(
+                node=tool_node,
+                state="start",
+                message=start_message,
+            )
+            emit_function_call(
+                node=tool_node,
+                state="end",
+                result="error",
+                message=unknown_message,
+            )
+            if log_enabled:
+                logger.warning("未知工具: {}", name)
+            tool_detail["is_error"] = True
+            tool_detail["error_message"] = unknown_message
+            return (
+                json.dumps({"error": unknown_message}, ensure_ascii=False),
+                True,
+                unknown_message,
+                tool_detail,
+            )
+
+        if log_enabled:
+            logger.info("工具调用: name={} args={}", name, args)
+
         result = _run_async(tool_fn.ainvoke(args))
         if log_enabled:
             logger.info(
@@ -564,31 +812,25 @@ def _exec_tool_with_meta(
         )
         is_error = isinstance(result, dict) and "error" in result
         error_message = str(result.get("error") or "").strip() if isinstance(result, dict) else ""
+        tool_detail["is_error"] = is_error
+        tool_detail["error_message"] = error_message or None
         return (
             result_text,
             is_error,
             error_message,
-            {
-                "tool_name": name,
-                "tool_input": args,
-                "tool_output": result,
-                "is_error": is_error,
-                "error_message": error_message,
-            },
+            tool_detail,
         )
     except Exception as exc:
         if log_enabled:
             logger.error("工具执行失败: name={} error={}", name, exc)
         message = f"工具执行失败: {name}, {exc}"
+        tool_detail["is_error"] = True
+        tool_detail["error_message"] = message
         return (
             json.dumps({"error": message}, ensure_ascii=False),
             True,
             message,
-            {
-                "tool_name": name,
-                "tool_input": args,
-                "tool_output": {"error": message},
-                "is_error": True,
-                "error_message": message,
-            },
+            tool_detail,
         )
+    finally:
+        _TOOL_TRACE_STACK.reset(stack_token)

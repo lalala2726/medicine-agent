@@ -7,7 +7,7 @@ from app.agent.admin.tools import get_order_list, get_orders_detail
 from app.core.langsmith import traceable
 from app.core.llm import create_chat_model
 from app.schemas.prompt import base_prompt
-from app.utils.streaming_utils import invoke
+from app.utils.streaming_utils import invoke_with_trace
 
 # 订单节点系统提示词：约束该节点只处理订单域任务，并按执行模式使用历史或主管指令。
 _ORDER_SYSTEM_PROMPT = (
@@ -44,12 +44,12 @@ def order_tool_agent(task_description: str) -> str:
         SystemMessage(content=_ORDER_SYSTEM_PROMPT),
         HumanMessage(content=str(task_description or "").strip()),
     ]
-    content = invoke(
+    trace = invoke_with_trace(
         llm,
         messages,
         tools=[get_order_list, get_orders_detail],
     )
-    text = str(content or "").strip()
+    text = str(trace.get("text") or "").strip()
     if not text:
         return "未获取到订单数据，请补充订单号或筛选条件后重试。"
     return text

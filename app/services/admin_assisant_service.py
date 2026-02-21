@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import threading
 import uuid
 from dataclasses import dataclass
@@ -11,9 +10,8 @@ from fastapi.responses import StreamingResponse
 from langchain_core.messages import HumanMessage, SystemMessage
 from loguru import logger
 
-from app.agent.admin.state import ChatHistoryMessage
+from app.agent.admin.state import ChatHistoryMessage, ExecutionTraceState, TokenUsageState
 from app.agent.admin.workflow import build_graph
-from app.core.assistant_status import resolve_tool_call_messages
 from app.core.codes import ResponseCode
 from app.core.exceptions import ServiceException
 from app.core.langsmith import build_langsmith_runnable_config
@@ -36,20 +34,12 @@ from app.services.conversation_service import (
     update_admin_conversation_title,
 )
 from app.services.message_service import add_message, get_history, list_messages
+from app.services.token_usage_service import resolve_persistable_token_usage
 
 ADMIN_WORKFLOW = build_graph()
 STREAM_OUTPUT_NODES = {
     "chat_agent",
     "supervisor_agent",
-}
-_THOUGHT_CHAIN_TOOL_MESSAGE_MAP: dict[str, str] = {
-    "get_user_info": "正在获取用户信息",
-    "get_product_list": "正在查询商品列表",
-    "get_product_detail": "正在查询商品详情",
-    "get_drug_detail": "正在查询药品详情",
-    "get_order_list": "正在查询订单列表",
-    "get_orders_detail": "正在调用订单详情",
-    "get_chart_sample_by_name": "正在获取图表配置模板",
 }
 
 
@@ -122,6 +112,8 @@ def _build_initial_state(
         "router": "",
         "context": "",
         "history_messages": base_history,
+        "execution_traces": [],
+        "token_usage": None,
         "result": "",
         # 兼容 MessagesState，保证 astream(messages) 能消费到上下文消息。
         "messages": list(base_history),
@@ -300,41 +292,28 @@ def _persist_assistant_message(
         *,
         conversation_id: str,
         answer_text: str,
-        execution_trace: list[dict[str, Any]] | None,
+        execution_trace: list[ExecutionTraceState] | None,
+        token_usage: TokenUsageState | dict[str, Any] | None,
         status: MessageStatus | str,
 ) -> None:
     """
     持久化 assistant 消息。
 
-    `thought_chain` 仅在命中 coordinator 路径时落库，直通路由不保存。
+    仅保存 `execution_trace + token_usage`，不保存 thought_chain。
     """
     resolved_status = MessageStatus(status)
-    can_persist_thought_chain = _should_persist_thought_chain(execution_trace)
+    persistable_token_usage = resolve_persistable_token_usage(
+        token_usage,
+        execution_trace,
+    )
     add_message(
         conversation_id=conversation_id,
         role="assistant",
         status=resolved_status,
         content=answer_text,
-        thought_chain=(
-            _build_thought_chain(execution_trace)
-            if can_persist_thought_chain
-            else None
-        ),
+        token_usage=persistable_token_usage,
         execution_trace=execution_trace,
     )
-
-
-def _serialize_to_json_text(value: Any) -> str | None:
-    """将任意值序列化为字符串（优先 JSON）。"""
-
-    if value is None:
-        return None
-    if isinstance(value, str):
-        return value
-    try:
-        return json.dumps(value, ensure_ascii=False)
-    except TypeError:
-        return str(value)
 
 
 def _sanitize_thought_chain_for_response(
@@ -366,112 +345,6 @@ def _sanitize_thought_chain_for_response(
     return normalized_nodes or None
 
 
-def _build_thought_chain(
-        execution_trace: list[dict[str, Any]] | None,
-) -> list[dict[str, Any]] | None:
-    """
-    将 execution_trace 转换为前端历史消息需要的 thought_chain 结构。
-
-    注意：调用方应先通过 `_should_persist_thought_chain` 判定是否允许落库。
-    """
-
-    if not execution_trace:
-        return None
-
-    thought_nodes: list[dict[str, Any]] = []
-    for node_index, trace_item in enumerate(execution_trace, start=1):
-        if not isinstance(trace_item, dict):
-            continue
-
-        node_name = str(trace_item.get("node_name") or "").strip() or f"node-{node_index}"
-        # TODO: 按前端图标策略把 node_name 映射为 router/planner 等语义标识。
-        thought_node_key = node_name
-        raw_tool_calls = trace_item.get("tool_calls")
-        tool_calls = raw_tool_calls if isinstance(raw_tool_calls, list) else []
-
-        children: list[dict[str, Any]] = []
-        node_has_error = False
-        for step_index, tool_call in enumerate(tool_calls, start=1):
-            if not isinstance(tool_call, dict):
-                continue
-
-            tool_name = str(tool_call.get("tool_name") or "").strip()
-            error_message = str(tool_call.get("error_message") or "").strip()
-            is_error = bool(tool_call.get("is_error")) or bool(error_message)
-            step_status = MessageStatus.ERROR.value if is_error else MessageStatus.SUCCESS.value
-            if is_error:
-                node_has_error = True
-
-            step_arguments = _serialize_to_json_text(tool_call.get("tool_input"))
-            step_payload: dict[str, Any] = {
-                "id": f"step-{node_index}-{step_index}",
-                "message": _resolve_tool_call_step_message(tool_name),
-                "status": step_status,
-            }
-            if tool_name:
-                step_payload["name"] = tool_name
-            if step_arguments:
-                step_payload["arguments"] = step_arguments
-            children.append(step_payload)
-
-        thought_nodes.append(
-            {
-                "id": f"node-{node_index}",
-                "node": thought_node_key,
-                "message": node_name,
-                "status": MessageStatus.ERROR.value if node_has_error else MessageStatus.SUCCESS.value,
-                "children": children,
-            }
-        )
-
-    return thought_nodes or None
-
-
-def _resolve_tool_call_step_message(tool_name: str) -> str:
-    """
-    生成 thought_chain 子步骤的展示文案。
-
-    要求：
-    - 已知工具返回中文可读文案；
-    - 未知工具使用通用中文兜底，不拼接英文工具名。
-    """
-
-    if not tool_name:
-        return "工具调用"
-
-    mapped_message = _THOUGHT_CHAIN_TOOL_MESSAGE_MAP.get(tool_name)
-    if mapped_message:
-        return mapped_message
-
-    start_message, _, _ = resolve_tool_call_messages(tool_name)
-    if start_message == f"正在调用工具 {tool_name}":
-        return "正在调用工具"
-    return start_message
-
-
-def _should_persist_thought_chain(
-        execution_trace: list[dict[str, Any]] | None,
-) -> bool:
-    """
-    判定当前消息是否允许保存 thought_chain。
-
-    规则：
-    - 仅当 execution_trace 中命中 `coordinator_agent` 节点时允许保存；
-    - 直通路由（未经过 coordinator）一律不保存 thought_chain。
-    """
-
-    if not execution_trace:
-        return False
-
-    for trace_item in execution_trace:
-        if not isinstance(trace_item, dict):
-            continue
-        node_name = str(trace_item.get("node_name") or "").strip()
-        if node_name == "coordinator_agent":
-            return True
-    return False
-
-
 def _build_assistant_message_callback(*, conversation_id: str):
     """
     构建“流结束后写入 AI 消息”的异步回调。
@@ -481,9 +354,17 @@ def _build_assistant_message_callback(*, conversation_id: str):
 
     async def _callback(
             answer_text: str,
-            execution_trace: list[dict[str, Any]] | None,
+            execution_trace: list[ExecutionTraceState] | None,
+            token_usage: TokenUsageState | dict[str, Any] | None,
             has_error: bool = False,
     ) -> None:
+        resolved_token_usage = token_usage
+        resolved_has_error = has_error
+        # 兼容旧回调签名：(answer_text, execution_trace, has_error)
+        if isinstance(token_usage, bool):
+            resolved_token_usage = None
+            resolved_has_error = token_usage
+
         normalized_answer = str(answer_text or "").strip()
         if not normalized_answer:
             return
@@ -495,7 +376,8 @@ def _build_assistant_message_callback(*, conversation_id: str):
                 "conversation_id": conversation_id,
                 "answer_text": normalized_answer,
                 "execution_trace": execution_trace,
-                "status": MessageStatus.ERROR if has_error else MessageStatus.SUCCESS,
+                "token_usage": resolved_token_usage,
+                "status": MessageStatus.ERROR if resolved_has_error else MessageStatus.SUCCESS,
             },
         )
 
