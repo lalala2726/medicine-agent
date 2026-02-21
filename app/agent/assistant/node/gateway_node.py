@@ -34,6 +34,8 @@ _GATEWAY_PROMPT = """
     2. normal: 需要少量推理或条件筛选。
     3. complex: 多阶段、负责、步骤超过3步。
     
+    注意：一旦涉及 **supervisor_agent** 路由这边模型难度最低是 **normal**。
+    
     示例：
     - 用户: "在吗"
       输出: {"route_target":"chat_agent","task_difficulty":"simple"}
