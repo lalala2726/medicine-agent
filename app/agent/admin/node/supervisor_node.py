@@ -4,8 +4,8 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, SystemMessage
 
-from app.agent.admin.node.order_node import order_agent
-from app.agent.admin.node.product_node import product_agent
+from app.agent.admin.node.order_tool import order_tool_agent
+from app.agent.admin.node.product_tool import product_tool_agent
 from app.agent.admin.state import AgentState
 from app.core.langsmith import traceable
 from app.core.llm import create_chat_model
@@ -17,8 +17,8 @@ _SUPERVISOR_PROMPT = """
     你的职责是根据用户意图决策是否调用子工具并输出最终结果。
 
     工具策略：
-    1. 订单相关问题调用 order_agent。
-    2. 商品相关问题调用 product_agent。
+    1. 订单相关问题调用 order_tool_agent。
+    2. 商品相关问题调用 product_tool_agent。
     3. 可同时调用多个工具并做统一总结。
     4. 非业务闲聊可直接回答，不必强制调用工具。
 
@@ -48,7 +48,7 @@ def supervisor_agent(state: AgentState) -> dict[str, Any]:
     content = invoke(
         llm,
         messages,
-        tools=[order_agent, product_agent],
+        tools=[order_tool_agent, product_tool_agent],
     )
     text = str(content or "").strip()
     return {

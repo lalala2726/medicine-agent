@@ -4,7 +4,6 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import tool
 
 from app.agent.admin.tools import get_product_detail, get_product_list
-from app.core.assistant_status import status_node
 from app.core.langsmith import traceable
 from app.core.llm import create_chat_model
 from app.schemas.prompt import base_prompt
@@ -12,7 +11,7 @@ from app.utils.streaming_utils import invoke
 
 _PRODUCT_SYSTEM_PROMPT = (
         """
-        你是商品域子助手（product_agent），只负责商品相关问题。
+        你是商品域子工具（product_tool_agent），只负责商品相关问题。
 
         你只能处理：
         1. 商品列表查询（筛选、分页、上/下架、价格区间）。
@@ -34,13 +33,8 @@ _PRODUCT_SYSTEM_PROMPT = (
         "输入为自然语言任务描述，内部会自动调用商品工具并返回结果。"
     )
 )
-@traceable(name="Supervisor Product Agent Node", run_type="chain")
-@status_node(
-    node="product",
-    start_message="正在处理商品问题",
-    display_when="always",
-)
-def product_agent(task_description: str) -> str:
+@traceable(name="Supervisor Product Tool Agent", run_type="chain")
+def product_tool_agent(task_description: str) -> str:
     llm = create_chat_model(
         model="qwen-flash",
         temperature=0.2,
@@ -58,3 +52,7 @@ def product_agent(task_description: str) -> str:
     if not text:
         return "未获取到商品数据，请补充筛选条件后重试。"
     return text
+
+
+# 兼容旧引用：保留旧名称别名，避免其他模块导入中断。
+product_agent = product_tool_agent

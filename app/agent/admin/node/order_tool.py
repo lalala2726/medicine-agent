@@ -4,7 +4,6 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import tool
 
 from app.agent.admin.tools import get_order_list, get_orders_detail
-from app.core.assistant_status import status_node
 from app.core.langsmith import traceable
 from app.core.llm import create_chat_model
 from app.schemas.prompt import base_prompt
@@ -13,7 +12,7 @@ from app.utils.streaming_utils import invoke
 # 订单节点系统提示词：约束该节点只处理订单域任务，并按执行模式使用历史或主管指令。
 _ORDER_SYSTEM_PROMPT = (
         """
-        你是订单域子助手（order_agent），只负责订单相关问题。
+        你是订单域子工具（order_tool_agent），只负责订单相关问题。
 
         你只能处理：
         1. 订单列表查询（筛选、分页、状态、收货人条件）。
@@ -35,13 +34,8 @@ _ORDER_SYSTEM_PROMPT = (
         "输入为自然语言任务描述，内部会自动调用订单工具并返回结果。"
     )
 )
-@traceable(name="Supervisor Order Agent Node", run_type="chain")
-@status_node(
-    node="order",
-    start_message="正在处理订单问题",
-    display_when="always",
-)
-def order_agent(task_description: str) -> str:
+@traceable(name="Supervisor Order Tool Agent", run_type="chain")
+def order_tool_agent(task_description: str) -> str:
     llm = create_chat_model(
         model="qwen-flash",
         temperature=0.2,
@@ -59,3 +53,7 @@ def order_agent(task_description: str) -> str:
     if not text:
         return "未获取到订单数据，请补充订单号或筛选条件后重试。"
     return text
+
+
+# 兼容旧引用：保留旧名称别名，避免其他模块导入中断。
+order_agent = order_tool_agent
