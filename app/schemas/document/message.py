@@ -12,7 +12,7 @@ class MessageRole(str, Enum):
     """会话消息角色。"""
 
     USER = "user"
-    ASSISTANT = "assistant"
+    AI = "ai"
 
 
 class MessageStatus(str, Enum):

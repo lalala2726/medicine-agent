@@ -127,12 +127,12 @@ def add_message(
 
     Args:
         conversation_id: 所属会话 Mongo ObjectId（字符串形式）。
-        role: 消息角色（user/assistant）。
+        role: 消息角色（user/ai）。
         status: 消息状态（success/error）。
         content: 消息内容。
         token_usage: 可选 token 使用总量，仅支持
             prompt_tokens/completion_tokens/total_tokens 三个字段。
-            且仅 assistant 消息会保存，user 消息会被忽略。
+            且仅 ai 消息会保存，user 消息会被忽略。
         message_uuid: 可选消息 UUID，不传时自动生成。
 
     Returns:
@@ -151,7 +151,7 @@ def add_message(
         content=content,
         token_usage=(
             _normalize_token_usage(token_usage)
-            if normalized_role == MessageRole.ASSISTANT
+            if normalized_role == MessageRole.AI
             else None
         ),
     )

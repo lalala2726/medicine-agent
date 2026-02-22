@@ -302,7 +302,7 @@ def _persist_assistant_message(
         status: MessageStatus | str,
 ) -> None:
     """
-    持久化 assistant 消息。
+    持久化 ai 消息。
 
     流程：
     1. 主消息表保存基础消息 + token 总量；
@@ -317,7 +317,7 @@ def _persist_assistant_message(
     message_uuid = str(uuid.uuid4())
     add_message(
         conversation_id=conversation_id,
-        role="assistant",
+        role="ai",
         status=resolved_status,
         content=answer_text,
         token_usage=persistable_token_usage,

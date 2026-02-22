@@ -744,7 +744,7 @@ def test_load_history_reads_latest_window_and_returns_chronological(monkeypatch)
         captured["ascending"] = ascending
         return [
             type("Doc", (), {"role": MessageRole.USER, "content": "Q2"})(),
-            type("Doc", (), {"role": MessageRole.ASSISTANT, "content": "A1"})(),
+            type("Doc", (), {"role": MessageRole.AI, "content": "A1"})(),
             type("Doc", (), {"role": MessageRole.USER, "content": "Q1"})(),
         ]
 
@@ -778,7 +778,7 @@ def test_conversation_messages_returns_latest_page_in_chronological_order(monkey
     mock_docs = [
         {
             "uuid": "msg-ai-2",
-            "role": MessageRole.ASSISTANT,
+            "role": MessageRole.AI,
             "status": MessageStatus.SUCCESS,
             "content": "AI第二条",
         },

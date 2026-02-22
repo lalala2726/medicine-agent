@@ -1,7 +1,10 @@
 import pytest
+from langchain_core.language_models.fake_chat_models import FakeListChatModel
+from langchain_core.messages import AIMessage, HumanMessage
 from pydantic import SecretStr
 
 from app.core import llm
+from app.schemas.memory import Memory
 
 
 class DummyChatOpenAI:
@@ -81,3 +84,79 @@ def test_create_chat_mode_alias(monkeypatch):
 
     assert isinstance(model, DummyChatOpenAI)
     assert model.kwargs["model"] == "alias-model"
+
+
+def test_create_agent_instance_passes_tools_and_does_not_forward_business_store(monkeypatch):
+    captured: dict = {}
+    sentinel = object()
+
+    def _fake_create_agent(**kwargs):
+        captured.update(kwargs)
+        return sentinel
+
+    monkeypatch.setattr(llm, "langchain_create_agent", _fake_create_agent)
+    memory = Memory(messages=[HumanMessage(content="memory-user")])
+
+    result = llm.create_agent_instance(
+        llm="fake-model",
+        tools=[{"name": "dummy-tool"}],
+        store=memory,
+        name="test-agent",
+    )
+
+    assert result is sentinel
+    assert captured["model"] == "fake-model"
+    assert captured["tools"] == [{"name": "dummy-tool"}]
+    assert captured["name"] == "test-agent"
+    assert "store" not in captured
+    assert len(captured["middleware"]) == 1
+
+
+def test_create_agent_instance_injects_memory_prefix_before_invoke():
+    memory = Memory(
+        messages=[
+            HumanMessage(content="memory-user"),
+            AIMessage(content="memory-ai"),
+        ]
+    )
+    model = FakeListChatModel(responses=["ok"])
+    agent = llm.create_agent_instance(
+        llm=model,
+        store=memory,
+        tools=[],
+    )
+
+    result = agent.invoke({"messages": [{"role": "user", "content": "question"}]})
+    contents = [message.content for message in result["messages"]]
+    types = [message.type for message in result["messages"]]
+
+    assert contents == ["memory-user", "memory-ai", "question", "ok"]
+    assert types == ["human", "ai", "human", "ai"]
+
+
+def test_create_agent_instance_skips_duplicate_memory_prefix():
+    memory = Memory(
+        messages=[
+            HumanMessage(content="memory-user"),
+            AIMessage(content="memory-ai"),
+        ]
+    )
+    model = FakeListChatModel(responses=["ok"])
+    agent = llm.create_agent_instance(
+        llm=model,
+        store=memory,
+        tools=[],
+    )
+
+    result = agent.invoke(
+        {
+            "messages": [
+                HumanMessage(content="memory-user"),
+                AIMessage(content="memory-ai"),
+                HumanMessage(content="question"),
+            ]
+        }
+    )
+    contents = [message.content for message in result["messages"]]
+
+    assert contents == ["memory-user", "memory-ai", "question", "ok"]

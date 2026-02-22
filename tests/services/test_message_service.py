@@ -113,7 +113,7 @@ def test_add_message_persists_token_usage_totals_for_assistant(monkeypatch):
 
     service_module.add_message(
         conversation_id="507f1f77bcf86cd799439011",
-        role=MessageRole.ASSISTANT,
+        role=MessageRole.AI,
         content="助手回复",
         token_usage={
             "prompt_tokens": 5,
@@ -143,7 +143,7 @@ def test_add_message_ignores_token_usage_with_legacy_fields(monkeypatch):
 
     service_module.add_message(
         conversation_id="507f1f77bcf86cd799439011",
-        role=MessageRole.ASSISTANT,
+        role=MessageRole.AI,
         content="助手回复",
         token_usage={
             "prompt_tokens": 5,
@@ -197,7 +197,7 @@ def test_add_message_rejects_invalid_conversation_id(monkeypatch):
     with pytest.raises(ServiceException) as exc_info:
         service_module.add_message(
             conversation_id="invalid-object-id",
-            role=MessageRole.ASSISTANT,
+            role=MessageRole.AI,
             content="hello",
         )
 
@@ -212,7 +212,7 @@ def test_get_message_by_uuid_returns_typed_model(monkeypatch):
         "_id": ObjectId("507f1f77bcf86cd799439012"),
         "uuid": "msg-1",
         "conversation_id": ObjectId("507f1f77bcf86cd799439011"),
-        "role": "assistant",
+        "role": "ai",
         "content": "hello",
         "token_usage": {
             "prompt_tokens": 2,
@@ -235,7 +235,7 @@ def test_get_message_by_uuid_returns_typed_model(monkeypatch):
     assert result is not None
     assert result.id == "507f1f77bcf86cd799439012"
     assert result.conversation_id == "507f1f77bcf86cd799439011"
-    assert result.role == MessageRole.ASSISTANT
+    assert result.role == MessageRole.AI
     assert result.token_usage is not None
     assert result.token_usage.model_dump() == {
         "prompt_tokens": 2,
@@ -253,7 +253,7 @@ def test_list_messages_returns_typed_models(monkeypatch):
             "_id": ObjectId("507f1f77bcf86cd799439022"),
             "uuid": "msg-2",
             "conversation_id": ObjectId("507f1f77bcf86cd799439011"),
-            "role": "assistant",
+            "role": "ai",
             "content": "b",
             "created_at": datetime.datetime(2026, 1, 1, 10, 0, 2),
             "updated_at": datetime.datetime(2026, 1, 1, 10, 0, 2),
@@ -300,7 +300,7 @@ def test_list_messages_supports_skip_with_descending_order(monkeypatch):
             "_id": ObjectId("507f1f77bcf86cd799439020"),
             "uuid": "msg-1",
             "conversation_id": ObjectId("507f1f77bcf86cd799439011"),
-            "role": "assistant",
+            "role": "ai",
             "content": "a",
             "created_at": datetime.datetime(2026, 1, 1, 10, 0, 1),
             "updated_at": datetime.datetime(2026, 1, 1, 10, 0, 1),
@@ -309,7 +309,7 @@ def test_list_messages_supports_skip_with_descending_order(monkeypatch):
             "_id": ObjectId("507f1f77bcf86cd799439021"),
             "uuid": "msg-2",
             "conversation_id": ObjectId("507f1f77bcf86cd799439011"),
-            "role": "assistant",
+            "role": "ai",
             "content": "b",
             "created_at": datetime.datetime(2026, 1, 1, 10, 0, 2),
             "updated_at": datetime.datetime(2026, 1, 1, 10, 0, 2),
@@ -318,7 +318,7 @@ def test_list_messages_supports_skip_with_descending_order(monkeypatch):
             "_id": ObjectId("507f1f77bcf86cd799439022"),
             "uuid": "msg-3",
             "conversation_id": ObjectId("507f1f77bcf86cd799439011"),
-            "role": "assistant",
+            "role": "ai",
             "content": "c",
             "created_at": datetime.datetime(2026, 1, 1, 10, 0, 3),
             "updated_at": datetime.datetime(2026, 1, 1, 10, 0, 3),
