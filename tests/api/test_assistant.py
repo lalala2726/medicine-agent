@@ -11,6 +11,7 @@ from app.core.role_codes import RoleCode
 from app.main import app
 from app.schemas.admin_assistant_history import ConversationMessageResponse, ThoughtNodeResponse
 from app.schemas.auth import AuthUser
+from app.schemas.document.conversation import ConversationListItem
 
 
 def _extract_payloads(response_text: str) -> list[dict]:
@@ -211,7 +212,7 @@ def test_conversation_list_route_delegates_to_service(monkeypatch):
     def _fake_chat_list(*, page_request):
         captured["page_num"] = page_request.page_num
         captured["page_size"] = page_request.page_size
-        return ([{"conversation_uuid": "conv-1", "title": "会话1"}], 3)
+        return ([ConversationListItem(conversation_uuid="conv-1", title="会话1")], 3)
 
     monkeypatch.setattr(
         assistant_module,

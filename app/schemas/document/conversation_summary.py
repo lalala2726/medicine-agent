@@ -7,6 +7,35 @@ from bson import ObjectId
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
+class ConversationSummaryUpdateSet(BaseModel):
+    """summary upsert 的 `$set` 负载。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    summary_content: str = Field(..., min_length=1, description="总结内容")
+    summarized_messages: list[str] = Field(default_factory=list, description="总结关联的消息 UUID 列表")
+    status: str = Field(..., min_length=1, description="总结状态")
+    updated_at: datetime = Field(..., description="更新时间")
+
+
+class ConversationSummarySetOnInsert(BaseModel):
+    """summary upsert 的 `$setOnInsert` 负载。"""
+
+    model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
+
+    conversation_id: ObjectId = Field(..., description="所属会话 ObjectId")
+    created_at: datetime = Field(..., description="创建时间")
+
+
+class ConversationSummaryUpsertPayload(BaseModel):
+    """conversation_summaries 的 upsert 更新文档结构。"""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    set_fields: ConversationSummaryUpdateSet = Field(..., alias="$set")
+    set_on_insert_fields: ConversationSummarySetOnInsert = Field(..., alias="$setOnInsert")
+
+
 class ConversationSummary(BaseModel):
     """MongoDB conversation_summaries 文档模型。"""
 

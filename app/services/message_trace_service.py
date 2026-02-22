@@ -106,6 +106,7 @@ def add_message_trace(
     )
 
     now = datetime.datetime.now()
+    # Mongo 写入文档统一由 Pydantic 模型序列化产出。
     document = payload.model_dump()
     if document.get("execution_trace") is None:
         document.pop("execution_trace", None)

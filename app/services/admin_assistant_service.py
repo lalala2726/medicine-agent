@@ -19,6 +19,7 @@ from app.core.llm import create_chat_model
 from app.core.request_context import get_user_id
 from app.schemas.admin_assistant_history import ConversationMessageResponse
 from app.schemas.document.admin_message import MessageRole, MessageStatus
+from app.schemas.document.conversation import ConversationListItem
 from app.schemas.base_request import PageRequest
 from app.schemas.sse_response import AssistantResponse, Content, MessageType
 from app.services.assistant_stream_service import (
@@ -239,7 +240,7 @@ def _load_admin_conversation(
     if conversation is None:
         raise ServiceException(code=ResponseCode.NOT_FOUND, message="会话不存在")
 
-    conversation_id = conversation.get("_id")
+    conversation_id = conversation.id
     if conversation_id is None:
         raise ServiceException(code=ResponseCode.DATABASE_ERROR, message="会话数据异常")
     return str(conversation_id)
@@ -564,7 +565,7 @@ def load_history(
 def conversation_list(
         *,
         page_request: PageRequest,
-) -> tuple[list[dict[str, str]], int]:
+) -> tuple[list[ConversationListItem], int]:
     """
     分页查询当前用户的管理助手会话列表。
 
@@ -574,8 +575,8 @@ def conversation_list(
         page_request: 分页请求参数。
 
     Returns:
-        tuple[list[dict[str, str]], int]:
-            - rows: 当前页会话列表，每项仅包含 `conversation_uuid` 与 `title`。
+        tuple[list[ConversationListItem], int]:
+            - rows: 当前页会话列表项模型。
             - total: 会话总数。
     """
 

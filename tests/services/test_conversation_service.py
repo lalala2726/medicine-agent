@@ -1,5 +1,9 @@
+import datetime
+
+from bson import ObjectId
 from bson.int64 import Int64
 
+from app.schemas.document.conversation import ConversationDocument, ConversationListItem
 from app.services import conversation_service as service_module
 
 
@@ -96,15 +100,28 @@ def test_add_admin_conversation_uses_int64_user_id(monkeypatch):
 
     assert result == "507f1f77bcf86cd799439011"
     assert collection.last_inserted is not None
+    assert collection.last_inserted["uuid"] == "conv-1"
     assert collection.last_inserted["conversation_type"] == "admin"
     assert collection.last_inserted["user_id"] == Int64(1)
     assert isinstance(collection.last_inserted["user_id"], Int64)
+    assert collection.last_inserted["title"] == "新聊天"
+    assert isinstance(collection.last_inserted["create_time"], datetime.datetime)
+    assert isinstance(collection.last_inserted["update_time"], datetime.datetime)
     assert collection.last_inserted["is_deleted"] == 0
 
 
 def test_get_admin_conversation_uses_int64_user_id_in_query(monkeypatch):
     collection = _DummyCollection()
-    collection.find_one_result = {"uuid": "conv-1"}
+    collection.find_one_result = {
+        "_id": ObjectId("507f1f77bcf86cd799439021"),
+        "uuid": "conv-1",
+        "conversation_type": "admin",
+        "user_id": Int64(1),
+        "title": "会话一",
+        "create_time": datetime.datetime(2026, 1, 1, 10, 0, 0),
+        "update_time": datetime.datetime(2026, 1, 1, 10, 0, 0),
+        "is_deleted": 0,
+    }
     monkeypatch.setattr(service_module, "get_mongo_database", lambda: {"conversations": collection})
 
     result = service_module.get_admin_conversation(
@@ -112,7 +129,12 @@ def test_get_admin_conversation_uses_int64_user_id_in_query(monkeypatch):
         user_id=1,
     )
 
-    assert result == {"uuid": "conv-1"}
+    assert isinstance(result, ConversationDocument)
+    assert result is not None
+    assert result.id == "507f1f77bcf86cd799439021"
+    assert result.uuid == "conv-1"
+    assert result.conversation_type == "admin"
+    assert result.user_id == 1
     assert collection.last_query == {
         "uuid": "conv-1",
         "conversation_type": "admin",
@@ -231,7 +253,8 @@ def test_list_admin_conversations_returns_uuid_and_title(monkeypatch):
     assert collection.last_cursor.skip_value == 0
     assert collection.last_cursor.limit_value == 2
     assert total == 3
-    assert rows == [
+    assert all(isinstance(item, ConversationListItem) for item in rows)
+    assert [item.model_dump() for item in rows] == [
         {"conversation_uuid": "conv-1", "title": "会话一"},
         {"conversation_uuid": "conv-2", "title": "新聊天"},
     ]

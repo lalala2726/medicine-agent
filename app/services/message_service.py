@@ -158,6 +158,7 @@ def add_message(
     )
 
     now = datetime.datetime.now()
+    # Mongo 写入文档统一由 Pydantic 模型序列化产出。
     document = payload.model_dump()
     if document.get("token_usage") is None:
         document.pop("token_usage", None)

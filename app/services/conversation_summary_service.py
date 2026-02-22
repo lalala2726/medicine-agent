@@ -12,7 +12,12 @@ from pymongo.errors import PyMongoError
 from app.core.codes import ResponseCode
 from app.core.exceptions import ServiceException
 from app.core.mongodb import DEFAULT_CONVERSATION_SUMMARIES_COLLECTION, get_mongo_database
-from app.schemas.document.conversation_summary import ConversationSummary
+from app.schemas.document.conversation_summary import (
+    ConversationSummary,
+    ConversationSummarySetOnInsert,
+    ConversationSummaryUpsertPayload,
+    ConversationSummaryUpdateSet,
+)
 
 
 def _resolve_collection_name() -> str:
@@ -51,18 +56,19 @@ def save_conversation_summary(
     db = get_mongo_database()
     collection = db[_resolve_collection_name()]
     query = {"conversation_id": _to_object_id(conversation_id)}
-    update_doc = {
-        "$set": {
-            "summary_content": summary_content,
-            "summarized_messages": normalized_messages,
-            "status": status,
-            "updated_at": now,
-        },
-        "$setOnInsert": {
-            "conversation_id": query["conversation_id"],
-            "created_at": now,
-        },
-    }
+    update_payload = ConversationSummaryUpsertPayload(
+        set_fields=ConversationSummaryUpdateSet(
+            summary_content=summary_content,
+            summarized_messages=normalized_messages,
+            status=status,
+            updated_at=now,
+        ),
+        set_on_insert_fields=ConversationSummarySetOnInsert(
+            conversation_id=query["conversation_id"],
+            created_at=now,
+        ),
+    )
+    update_doc = update_payload.model_dump(by_alias=True, mode="python")
 
     try:
         document = collection.find_one_and_update(

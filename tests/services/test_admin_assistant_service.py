@@ -1,13 +1,16 @@
 import asyncio
+import datetime
 import json
 
 import pytest
+from bson import ObjectId
 from fastapi.responses import StreamingResponse
 from langchain_core.messages import AIMessage, HumanMessage
 
 from app.core.codes import ResponseCode
 from app.core.exceptions import ServiceException
 from app.schemas.document.admin_message import MessageRole, MessageStatus
+from app.schemas.document.conversation import ConversationDocument, ConversationListItem, ConversationType
 from app.schemas.base_request import PageRequest
 from app.schemas.sse_response import MessageType
 from app.services import admin_assistant_service as service_module
@@ -63,7 +66,7 @@ def test_chat_list_returns_current_user_conversations(monkeypatch):
                     "page_size": page_size,
                 }
             ),
-            ([{"conversation_uuid": "conv-1", "title": "标题1"}], 1),
+            ([ConversationListItem(conversation_uuid="conv-1", title="标题1")], 1),
         )[-1],
     )
 
@@ -79,7 +82,9 @@ def test_chat_list_returns_current_user_conversations(monkeypatch):
         "page_num": 2,
         "page_size": 20,
     }
-    assert rows == [{"conversation_uuid": "conv-1", "title": "标题1"}]
+    assert len(rows) == 1
+    assert rows[0].conversation_uuid == "conv-1"
+    assert rows[0].title == "标题1"
     assert total == 1
 
 
@@ -151,6 +156,53 @@ def test_update_conversation_title_rejects_blank_title(monkeypatch):
             title="   ",
         )
     assert exc_info.value.code == ResponseCode.BAD_REQUEST.code
+
+
+def test_load_admin_conversation_returns_document_id(monkeypatch):
+    monkeypatch.setattr(
+        service_module,
+        "get_admin_conversation",
+        lambda *, conversation_uuid, user_id: ConversationDocument(
+            _id=ObjectId("507f1f77bcf86cd799439041"),
+            uuid=conversation_uuid,
+            conversation_type=ConversationType.ADMIN,
+            user_id=user_id,
+            title="会话标题",
+            create_time=datetime.datetime(2026, 1, 1, 10, 0, 0),
+            update_time=datetime.datetime(2026, 1, 1, 10, 0, 0),
+            is_deleted=0,
+        ),
+    )
+
+    conversation_id = service_module._load_admin_conversation(
+        conversation_uuid="conv-1",
+        user_id=101,
+    )
+
+    assert conversation_id == "507f1f77bcf86cd799439041"
+
+
+def test_load_admin_conversation_raises_database_error_when_id_missing(monkeypatch):
+    monkeypatch.setattr(
+        service_module,
+        "get_admin_conversation",
+        lambda *, conversation_uuid, user_id: ConversationDocument(
+            uuid=conversation_uuid,
+            conversation_type=ConversationType.ADMIN,
+            user_id=user_id,
+            title="会话标题",
+            create_time=datetime.datetime(2026, 1, 1, 10, 0, 0),
+            update_time=datetime.datetime(2026, 1, 1, 10, 0, 0),
+            is_deleted=0,
+        ),
+    )
+
+    with pytest.raises(ServiceException) as exc_info:
+        service_module._load_admin_conversation(
+            conversation_uuid="conv-1",
+            user_id=101,
+        )
+    assert exc_info.value.code == ResponseCode.DATABASE_ERROR.code
 
 
 def test_prepare_new_conversation_returns_context_with_created_event(monkeypatch):
@@ -331,11 +383,16 @@ def test_assistant_chat_schedules_user_persist_without_blocking_main_flow(monkey
     monkeypatch.setattr(
         service_module,
         "get_admin_conversation",
-        lambda *, conversation_uuid, user_id: {
-            "_id": "507f1f77bcf86cd799439011",
-            "uuid": conversation_uuid,
-            "user_id": user_id,
-        },
+        lambda *, conversation_uuid, user_id: ConversationDocument(
+            _id=ObjectId("507f1f77bcf86cd799439011"),
+            uuid=conversation_uuid,
+            conversation_type=ConversationType.ADMIN,
+            user_id=user_id,
+            title="会话标题",
+            create_time=datetime.datetime(2026, 1, 1, 10, 0, 0),
+            update_time=datetime.datetime(2026, 1, 1, 10, 0, 0),
+            is_deleted=0,
+        ),
     )
     monkeypatch.setattr(
         service_module,

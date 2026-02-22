@@ -9,6 +9,7 @@ from app.schemas.admin_assistant_history import (
     ConversationMessagesRequest,
 )
 from app.schemas.base_request import PageRequest
+from app.schemas.document.conversation import ConversationListItem
 from app.schemas.response import ApiResponse, PageResponse
 from app.services.admin_assistant_service import (
     assistant_chat,
@@ -160,7 +161,7 @@ async def assistant(request: AssistantRequest) -> StreamingResponse:
 )
 async def conversation_list(
         request: ConversationListRequest = Depends(),
-) -> ApiResponse[PageResponse[dict[str, str]]]:
+) -> ApiResponse[PageResponse[ConversationListItem]]:
     """
     分页查询管理助手会话列表（仅返回会话 UUID 与标题）。
     """

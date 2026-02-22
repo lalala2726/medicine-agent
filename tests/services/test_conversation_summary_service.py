@@ -5,7 +5,12 @@ from bson import ObjectId
 
 from app.core.codes import ResponseCode
 from app.core.exceptions import ServiceException
-from app.schemas.document.conversation_summary import ConversationSummary
+from app.schemas.document.conversation_summary import (
+    ConversationSummary,
+    ConversationSummarySetOnInsert,
+    ConversationSummaryUpsertPayload,
+    ConversationSummaryUpdateSet,
+)
 from app.services import conversation_summary_service as service_module
 
 
@@ -59,11 +64,26 @@ def test_save_conversation_summary_upserts_and_returns_id(monkeypatch):
         "conversation_id": ObjectId("507f1f77bcf86cd799439011"),
     }
     assert collection.last_find_one_and_update_doc is not None
-    assert collection.last_find_one_and_update_doc["$set"]["summary_content"] == "这是总结"
-    assert collection.last_find_one_and_update_doc["$set"]["summarized_messages"] == ["msg-1", "msg-2"]
-    assert collection.last_find_one_and_update_doc["$set"]["status"] == "success"
-    assert isinstance(collection.last_find_one_and_update_doc["$set"]["updated_at"], datetime.datetime)
-    assert isinstance(collection.last_find_one_and_update_doc["$setOnInsert"]["created_at"], datetime.datetime)
+    update_doc = collection.last_find_one_and_update_doc
+    assert update_doc["$set"]["summary_content"] == "这是总结"
+    assert update_doc["$set"]["summarized_messages"] == ["msg-1", "msg-2"]
+    assert update_doc["$set"]["status"] == "success"
+    assert isinstance(update_doc["$set"]["updated_at"], datetime.datetime)
+    assert isinstance(update_doc["$setOnInsert"]["created_at"], datetime.datetime)
+
+    expected_update_doc = ConversationSummaryUpsertPayload(
+        set_fields=ConversationSummaryUpdateSet(
+            summary_content="这是总结",
+            summarized_messages=["msg-1", "msg-2"],
+            status="success",
+            updated_at=update_doc["$set"]["updated_at"],
+        ),
+        set_on_insert_fields=ConversationSummarySetOnInsert(
+            conversation_id=ObjectId("507f1f77bcf86cd799439011"),
+            created_at=update_doc["$setOnInsert"]["created_at"],
+        ),
+    ).model_dump(by_alias=True, mode="python")
+    assert update_doc == expected_update_doc
 
 
 def test_save_conversation_summary_rejects_invalid_conversation_id(monkeypatch):

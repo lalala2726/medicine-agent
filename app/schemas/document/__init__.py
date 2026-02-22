@@ -5,8 +5,19 @@ from .admin_message import (
     MessageStatus,
     TokenUsage,
 )
-from .conversation import ConversationCreate, ConversationDocument, ConversationType
-from .conversation_summary import ConversationSummary
+from .conversation import (
+    ConversationCreate,
+    ConversationDocument,
+    ConversationListItem,
+    ConversationType,
+    ConversationUpdateSet,
+)
+from .conversation_summary import (
+    ConversationSummary,
+    ConversationSummarySetOnInsert,
+    ConversationSummaryUpsertPayload,
+    ConversationSummaryUpdateSet,
+)
 from .message_trace import (
     ExecutionTraceItem,
     MessageTraceCreate,
@@ -23,8 +34,13 @@ __all__ = [
     "AdminMessageDocument",
     "ConversationCreate",
     "ConversationDocument",
+    "ConversationListItem",
     "ConversationSummary",
+    "ConversationSummarySetOnInsert",
+    "ConversationSummaryUpsertPayload",
+    "ConversationSummaryUpdateSet",
     "ConversationType",
+    "ConversationUpdateSet",
     "ExecutionTraceItem",
     "MessageRole",
     "MessageStatus",
