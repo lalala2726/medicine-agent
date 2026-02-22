@@ -9,14 +9,14 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class MessageRole(str, Enum):
-    """管理助手消息角色。"""
+    """会话消息角色。"""
 
     USER = "user"
     ASSISTANT = "assistant"
 
 
 class MessageStatus(str, Enum):
-    """管理助手消息状态。"""
+    """会话消息状态。"""
 
     SUCCESS = "success"
     ERROR = "error"
@@ -32,8 +32,8 @@ class TokenUsage(BaseModel):
     total_tokens: int = Field(default=0, ge=0, description="消息总 Token 数")
 
 
-class AdminMessageCreate(BaseModel):
-    """新增管理助手消息入参模型（服务层内部使用）。"""
+class MessageCreate(BaseModel):
+    """新增会话消息入参模型（服务层内部使用）。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -45,8 +45,8 @@ class AdminMessageCreate(BaseModel):
     token_usage: TokenUsage | None = Field(default=None, description="消息 token 使用总量")
 
 
-class AdminMessageDocument(BaseModel):
-    """MongoDB admin_messages 文档模型。"""
+class MessageDocument(BaseModel):
+    """MongoDB messages 文档模型。"""
 
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
 

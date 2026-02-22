@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from fastapi.responses import StreamingResponse
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from loguru import logger
 
 from app.agent.assistant.state import ChatHistoryMessage, ExecutionTraceState, TokenUsageState
@@ -18,7 +18,7 @@ from app.core.langsmith import build_langsmith_runnable_config
 from app.core.llm import create_chat_model
 from app.core.request_context import get_user_id
 from app.schemas.admin_assistant_history import ConversationMessageResponse
-from app.schemas.document.admin_message import MessageRole, MessageStatus
+from app.schemas.document.message import MessageRole, MessageStatus
 from app.schemas.document.conversation import ConversationListItem
 from app.schemas.base_request import PageRequest
 from app.schemas.sse_response import AssistantResponse, Content, MessageType
@@ -34,7 +34,7 @@ from app.services.conversation_service import (
     save_conversation_title,
     update_admin_conversation_title,
 )
-from app.services.message_service import add_message, get_history, list_messages
+from app.services.message_service import add_message, list_messages
 from app.services.message_trace_service import add_message_trace
 from app.services.token_usage_service import resolve_persistable_token_usage
 
@@ -554,11 +554,17 @@ def load_history(
     2. 再反转为正序，保证喂给模型时上下文顺序正确。
     """
 
-    history_messages = get_history(
+    message_documents = list_messages(
         conversation_id=conversation_id,
         limit=limit,
         ascending=False,
     )
+    history_messages: list[ChatHistoryMessage] = [
+        HumanMessage(content=document.content)
+        if document.role == MessageRole.USER
+        else AIMessage(content=document.content)
+        for document in message_documents
+    ]
     return list(reversed(history_messages))
 
 

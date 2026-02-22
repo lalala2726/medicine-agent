@@ -9,7 +9,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 
 from app.core.codes import ResponseCode
 from app.core.exceptions import ServiceException
-from app.schemas.document.admin_message import MessageRole, MessageStatus
+from app.schemas.document.message import MessageRole, MessageStatus
 from app.schemas.document.conversation import ConversationDocument, ConversationListItem, ConversationType
 from app.schemas.base_request import PageRequest
 from app.schemas.sse_response import MessageType
@@ -738,13 +738,17 @@ def test_load_history_reads_latest_window_and_returns_chronological(monkeypatch)
 
     captured: dict = {}
 
-    def _fake_get_history(*, conversation_id: str, limit: int, ascending: bool):
+    def _fake_list_messages(*, conversation_id: str, limit: int, ascending: bool):
         captured["conversation_id"] = conversation_id
         captured["limit"] = limit
         captured["ascending"] = ascending
-        return [HumanMessage(content="Q2"), AIMessage(content="A1"), HumanMessage(content="Q1")]
+        return [
+            type("Doc", (), {"role": MessageRole.USER, "content": "Q2"})(),
+            type("Doc", (), {"role": MessageRole.ASSISTANT, "content": "A1"})(),
+            type("Doc", (), {"role": MessageRole.USER, "content": "Q1"})(),
+        ]
 
-    monkeypatch.setattr(service_module, "get_history", _fake_get_history)
+    monkeypatch.setattr(service_module, "list_messages", _fake_list_messages)
 
     history_messages = service_module.load_history(
         conversation_id="507f1f77bcf86cd799439011",
@@ -756,6 +760,9 @@ def test_load_history_reads_latest_window_and_returns_chronological(monkeypatch)
         "limit": 50,
         "ascending": False,
     }
+    assert isinstance(history_messages[0], HumanMessage)
+    assert isinstance(history_messages[1], AIMessage)
+    assert isinstance(history_messages[2], HumanMessage)
     assert [message.content for message in history_messages] == ["Q1", "A1", "Q2"]
 
 

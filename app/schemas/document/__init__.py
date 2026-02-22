@@ -1,6 +1,6 @@
-from .admin_message import (
-    AdminMessageCreate,
-    AdminMessageDocument,
+from .message import (
+    MessageCreate,
+    MessageDocument,
     MessageRole,
     MessageStatus,
     TokenUsage,
@@ -30,8 +30,6 @@ from .message_trace import (
 )
 
 __all__ = [
-    "AdminMessageCreate",
-    "AdminMessageDocument",
     "ConversationCreate",
     "ConversationDocument",
     "ConversationListItem",
@@ -42,6 +40,8 @@ __all__ = [
     "ConversationType",
     "ConversationUpdateSet",
     "ExecutionTraceItem",
+    "MessageCreate",
+    "MessageDocument",
     "MessageRole",
     "MessageStatus",
     "MessageTraceCreate",

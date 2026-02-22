@@ -6,7 +6,6 @@ import uuid
 from typing import Annotated, Any, Mapping
 
 from bson import ObjectId
-from langchain_core.messages import AIMessage, HumanMessage
 from loguru import logger
 from pydantic import Field
 from pymongo import ASCENDING, DESCENDING
@@ -14,22 +13,22 @@ from pymongo.errors import PyMongoError
 
 from app.core.codes import ResponseCode
 from app.core.exceptions import ServiceException
-from app.core.mongodb import DEFAULT_ADMIN_MESSAGES_COLLECTION, get_mongo_database
-from app.schemas.document.admin_message import (
-    AdminMessageCreate,
-    AdminMessageDocument,
+from app.core.mongodb import DEFAULT_MESSAGES_COLLECTION, get_mongo_database
+from app.schemas.document.message import (
     MessageRole,
+    MessageCreate,
+    MessageDocument,
     MessageStatus,
     TokenUsage,
 )
 
 
 def _resolve_collection_name() -> str:
-    """解析 admin_messages 集合名，支持环境变量覆盖。"""
+    """解析 messages 集合名，支持环境变量覆盖。"""
 
     return (
-            (os.getenv("MONGODB_ADMIN_MESSAGES_COLLECTION") or DEFAULT_ADMIN_MESSAGES_COLLECTION).strip()
-            or DEFAULT_ADMIN_MESSAGES_COLLECTION
+            (os.getenv("MONGODB_MESSAGES_COLLECTION") or DEFAULT_MESSAGES_COLLECTION).strip()
+            or DEFAULT_MESSAGES_COLLECTION
     )
 
 
@@ -49,14 +48,14 @@ def _to_object_id(raw_conversation_id: str) -> ObjectId:
         ) from exc
 
 
-def _to_message_document(document: dict[str, Any]) -> AdminMessageDocument:
+def _to_message_document(document: dict[str, Any]) -> MessageDocument:
     """
     将 Mongo 原始文档转换为消息模型。
 
     统一由 schema 做字段归一化（如 ObjectId -> str），避免业务层重复转换逻辑。
     """
 
-    return AdminMessageDocument.model_validate(document)
+    return MessageDocument.model_validate(document)
 
 
 def _to_non_negative_int(value: Any) -> int | None:
@@ -124,7 +123,7 @@ def add_message(
         message_uuid: str | None = None,
 ) -> str:
     """
-    新增一条管理助手消息。
+    新增一条会话消息。
 
     Args:
         conversation_id: 所属会话 Mongo ObjectId（字符串形式）。
@@ -144,7 +143,7 @@ def add_message(
     """
 
     normalized_role = MessageRole(role)
-    payload = AdminMessageCreate(
+    payload = MessageCreate(
         uuid=message_uuid or str(uuid.uuid4()),
         conversation_id=conversation_id,
         role=normalized_role,
@@ -175,18 +174,15 @@ def add_message(
         raise ServiceException(code=ResponseCode.DATABASE_ERROR, message="数据库错误") from exc
 
 
-def get_message_by_uuid(
-        *,
-        message_uuid: Annotated[str, Field(min_length=1)],
-) -> AdminMessageDocument | None:
+def get_message_by_uuid(message_uuid: Annotated[str, Field(min_length=1)]) -> MessageDocument | None:
     """
-    按消息 UUID 查询单条管理助手消息。
+    按消息 UUID 查询单条会话消息。
 
     Args:
         message_uuid: 消息业务唯一ID。
 
     Returns:
-        AdminMessageDocument | None: 命中返回消息模型，否则返回 None。
+        MessageDocument | None: 命中返回消息模型，否则返回 None。
     """
 
     db = get_mongo_database()
@@ -206,7 +202,7 @@ def list_messages(
         limit: Annotated[int, Field(ge=1)] = 50,
         skip: Annotated[int, Field(ge=0)] = 0,
         ascending: bool = True,
-) -> list[AdminMessageDocument]:
+) -> list[MessageDocument]:
     """
     查询某个会话下的消息列表。
 
@@ -217,7 +213,8 @@ def list_messages(
         ascending: 是否按创建时间升序，默认 True（旧到新）。
 
     Returns:
-        list[AdminMessageDocument]: 消息模型列表。
+        list[MessageDocument]: 消息文档模型列表。
+            仅负责数据库模型输出，不做上层会话消息格式转换。
     """
 
     sort_direction = ASCENDING if ascending else DESCENDING
@@ -230,45 +227,3 @@ def list_messages(
         return [_to_message_document(item) for item in cursor]
     except PyMongoError as exc:
         raise ServiceException(code=ResponseCode.DATABASE_ERROR, message="数据库错误") from exc
-
-
-def _to_langchain_message(
-        message: AdminMessageDocument,
-) -> HumanMessage | AIMessage:
-    """
-    将消息文档映射为 LangChain 消息对象。
-
-    映射规则：
-    - role=user -> HumanMessage
-    - role=assistant -> AIMessage
-    """
-
-    if message.role == MessageRole.USER:
-        return HumanMessage(content=message.content)
-    return AIMessage(content=message.content)
-
-
-def get_history(
-        *,
-        conversation_id: Annotated[str, Field(min_length=1)],
-        limit: Annotated[int, Field(ge=1)] = 50,
-        ascending: bool = True,
-) -> list[HumanMessage | AIMessage]:
-    """
-    查询并构建对话历史（LangChain 消息格式）。
-
-    Args:
-        conversation_id: 所属会话 Mongo ObjectId（字符串形式）。
-        limit: 返回条数上限，默认 50。
-        ascending: 是否按创建时间升序，默认 True（旧到新）。
-
-    Returns:
-        list[HumanMessage | AIMessage]: 可直接喂给模型的历史消息列表。
-    """
-
-    message_list = list_messages(
-        conversation_id=conversation_id,
-        limit=limit,
-        ascending=ascending,
-    )
-    return [_to_langchain_message(item) for item in message_list]

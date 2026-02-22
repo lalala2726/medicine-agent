@@ -2,11 +2,10 @@ import datetime
 
 import pytest
 from bson import ObjectId
-from langchain_core.messages import AIMessage, HumanMessage
 
 from app.core.codes import ResponseCode
 from app.core.exceptions import ServiceException
-from app.schemas.document.admin_message import AdminMessageDocument, MessageRole, MessageStatus
+from app.schemas.document.message import MessageDocument, MessageRole, MessageStatus
 from app.services import message_service as service_module
 
 
@@ -78,9 +77,9 @@ def test_add_message_inserts_expected_document(monkeypatch):
     monkeypatch.setattr(
         service_module,
         "get_mongo_database",
-        lambda: {"admin_messages": collection},
+        lambda: {"messages": collection},
     )
-    monkeypatch.setattr(service_module, "_resolve_collection_name", lambda: "admin_messages")
+    monkeypatch.setattr(service_module, "_resolve_collection_name", lambda: "messages")
 
     result = service_module.add_message(
         conversation_id="507f1f77bcf86cd799439011",
@@ -108,9 +107,9 @@ def test_add_message_persists_token_usage_totals_for_assistant(monkeypatch):
     monkeypatch.setattr(
         service_module,
         "get_mongo_database",
-        lambda: {"admin_messages": collection},
+        lambda: {"messages": collection},
     )
-    monkeypatch.setattr(service_module, "_resolve_collection_name", lambda: "admin_messages")
+    monkeypatch.setattr(service_module, "_resolve_collection_name", lambda: "messages")
 
     service_module.add_message(
         conversation_id="507f1f77bcf86cd799439011",
@@ -138,9 +137,9 @@ def test_add_message_ignores_token_usage_with_legacy_fields(monkeypatch):
     monkeypatch.setattr(
         service_module,
         "get_mongo_database",
-        lambda: {"admin_messages": collection},
+        lambda: {"messages": collection},
     )
-    monkeypatch.setattr(service_module, "_resolve_collection_name", lambda: "admin_messages")
+    monkeypatch.setattr(service_module, "_resolve_collection_name", lambda: "messages")
 
     service_module.add_message(
         conversation_id="507f1f77bcf86cd799439011",
@@ -165,9 +164,9 @@ def test_add_message_user_ignores_token_usage(monkeypatch):
     monkeypatch.setattr(
         service_module,
         "get_mongo_database",
-        lambda: {"admin_messages": collection},
+        lambda: {"messages": collection},
     )
-    monkeypatch.setattr(service_module, "_resolve_collection_name", lambda: "admin_messages")
+    monkeypatch.setattr(service_module, "_resolve_collection_name", lambda: "messages")
 
     service_module.add_message(
         conversation_id="507f1f77bcf86cd799439011",
@@ -191,9 +190,9 @@ def test_add_message_rejects_invalid_conversation_id(monkeypatch):
     monkeypatch.setattr(
         service_module,
         "get_mongo_database",
-        lambda: {"admin_messages": collection},
+        lambda: {"messages": collection},
     )
-    monkeypatch.setattr(service_module, "_resolve_collection_name", lambda: "admin_messages")
+    monkeypatch.setattr(service_module, "_resolve_collection_name", lambda: "messages")
 
     with pytest.raises(ServiceException) as exc_info:
         service_module.add_message(
@@ -206,7 +205,7 @@ def test_add_message_rejects_invalid_conversation_id(monkeypatch):
 
 
 def test_get_message_by_uuid_returns_typed_model(monkeypatch):
-    """验证 get_message_by_uuid：查询结果会被转换为 AdminMessageDocument。"""
+    """验证 get_message_by_uuid：查询结果会被转换为 MessageDocument。"""
 
     collection = _DummyCollection()
     collection.find_one_result = {
@@ -226,13 +225,13 @@ def test_get_message_by_uuid_returns_typed_model(monkeypatch):
     monkeypatch.setattr(
         service_module,
         "get_mongo_database",
-        lambda: {"admin_messages": collection},
+        lambda: {"messages": collection},
     )
-    monkeypatch.setattr(service_module, "_resolve_collection_name", lambda: "admin_messages")
+    monkeypatch.setattr(service_module, "_resolve_collection_name", lambda: "messages")
 
     result = service_module.get_message_by_uuid(message_uuid="msg-1")
 
-    assert isinstance(result, AdminMessageDocument)
+    assert isinstance(result, MessageDocument)
     assert result is not None
     assert result.id == "507f1f77bcf86cd799439012"
     assert result.conversation_id == "507f1f77bcf86cd799439011"
@@ -272,9 +271,9 @@ def test_list_messages_returns_typed_models(monkeypatch):
     monkeypatch.setattr(
         service_module,
         "get_mongo_database",
-        lambda: {"admin_messages": collection},
+        lambda: {"messages": collection},
     )
-    monkeypatch.setattr(service_module, "_resolve_collection_name", lambda: "admin_messages")
+    monkeypatch.setattr(service_module, "_resolve_collection_name", lambda: "messages")
 
     result = service_module.list_messages(
         conversation_id="507f1f77bcf86cd799439011",
@@ -287,7 +286,7 @@ def test_list_messages_returns_typed_models(monkeypatch):
         "conversation_id": ObjectId("507f1f77bcf86cd799439011"),
     }
     assert len(result) == 2
-    assert all(isinstance(item, AdminMessageDocument) for item in result)
+    assert all(isinstance(item, MessageDocument) for item in result)
     assert result[0].content == "a"
     assert result[1].content == "b"
 
@@ -328,9 +327,9 @@ def test_list_messages_supports_skip_with_descending_order(monkeypatch):
     monkeypatch.setattr(
         service_module,
         "get_mongo_database",
-        lambda: {"admin_messages": collection},
+        lambda: {"messages": collection},
     )
-    monkeypatch.setattr(service_module, "_resolve_collection_name", lambda: "admin_messages")
+    monkeypatch.setattr(service_module, "_resolve_collection_name", lambda: "messages")
 
     result = service_module.list_messages(
         conversation_id="507f1f77bcf86cd799439011",
@@ -341,47 +340,3 @@ def test_list_messages_supports_skip_with_descending_order(monkeypatch):
 
     assert len(result) == 1
     assert result[0].uuid == "msg-2"
-
-
-def test_get_history_maps_role_to_langchain_messages(monkeypatch):
-    """验证 get_history：能按 role 正确映射为 HumanMessage/AIMessage。"""
-
-    collection = _DummyCollection()
-    collection.find_rows = [
-        {
-            "_id": ObjectId("507f1f77bcf86cd799439021"),
-            "uuid": "msg-1",
-            "conversation_id": ObjectId("507f1f77bcf86cd799439011"),
-            "role": "user",
-            "content": "用户提问",
-            "created_at": datetime.datetime(2026, 1, 1, 10, 0, 1),
-            "updated_at": datetime.datetime(2026, 1, 1, 10, 0, 1),
-        },
-        {
-            "_id": ObjectId("507f1f77bcf86cd799439022"),
-            "uuid": "msg-2",
-            "conversation_id": ObjectId("507f1f77bcf86cd799439011"),
-            "role": "assistant",
-            "content": "助手回答",
-            "created_at": datetime.datetime(2026, 1, 1, 10, 0, 2),
-            "updated_at": datetime.datetime(2026, 1, 1, 10, 0, 2),
-        },
-    ]
-    monkeypatch.setattr(
-        service_module,
-        "get_mongo_database",
-        lambda: {"admin_messages": collection},
-    )
-    monkeypatch.setattr(service_module, "_resolve_collection_name", lambda: "admin_messages")
-
-    result = service_module.get_history(
-        conversation_id="507f1f77bcf86cd799439011",
-        limit=10,
-        ascending=True,
-    )
-
-    assert len(result) == 2
-    assert isinstance(result[0], HumanMessage)
-    assert isinstance(result[1], AIMessage)
-    assert result[0].content == "用户提问"
-    assert result[1].content == "助手回答"
