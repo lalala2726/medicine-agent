@@ -24,7 +24,6 @@ class ConversationCreate(BaseModel):
     conversation_type: ConversationType = Field(..., description="会话类型")
     user_id: int = Field(..., ge=1, description="用户ID（int64）")
     title: str = Field(default="新聊天", description="会话标题")
-    message_count: int = Field(default=0, ge=0, description="消息总数")
     is_deleted: int = Field(default=0, ge=0, le=1, description="逻辑删除标记：0未删除，1已删除")
     metadata: dict[str, Any] | None = Field(default=None, description="扩展信息")
 
@@ -41,7 +40,6 @@ class ConversationDocument(BaseModel):
     title: str | None = Field(default=None, description="会话标题")
     create_time: datetime = Field(..., description="创建时间")
     update_time: datetime = Field(..., description="更新时间")
-    message_count: int = Field(default=0, ge=0, description="消息总数")
     is_deleted: int = Field(default=0, ge=0, le=1, description="逻辑删除标记：0未删除，1已删除")
     metadata: dict[str, Any] | None = Field(default=None, description="扩展信息")
 

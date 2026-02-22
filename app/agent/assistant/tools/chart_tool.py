@@ -87,19 +87,22 @@ def _load_chart_samples() -> dict[str, dict[str, Any]]:
             f"Chart samples file must be a JSON object mapping chart type to sample: {CHART_SAMPLES_PATH}"
         )
 
-    payload_keys = set(payload.keys())
+    # 忽略以 _ 开头的元数据字段（如 _meta）
+    meta_keys = {k for k in payload.keys() if k.startswith("_")}
+    payload_keys = set(payload.keys()) - meta_keys
     expected_keys = set(SUPPORTED_CHART_TYPES)
     missing = [chart for chart in SUPPORTED_CHART_TYPES if chart not in payload_keys]
-    extra = sorted(payload_keys - expected_keys)
-    if missing or extra:
-        raise ValueError(f"Chart samples keys mismatch: missing={missing}, extra={extra}")
+    if missing:
+        raise ValueError(f"Chart samples keys mismatch: missing={missing}")
 
     normalized: dict[str, dict[str, Any]] = {}
     for chart in SUPPORTED_CHART_TYPES:
         sample = payload.get(chart)
         if not isinstance(sample, dict):
             raise ValueError(f"Chart sample '{chart}' must be a JSON object")
-        normalized[chart] = sample
+        # 过滤掉以 _ 开头的元数据字段（如 _description, _fields, _output_format）
+        filtered_sample = {k: v for k, v in sample.items() if not k.startswith("_")}
+        normalized[chart] = filtered_sample
 
     return normalized
 
@@ -123,8 +126,8 @@ def get_supported_chart_types() -> dict:
 @tool(
     args_schema=ChartSampleByNameRequest,
     description=(
-        "按图表名称获取单个图表模板示例。"
-        "必须精确传入受支持图表名，仅返回一个示例，避免上下文膨胀。"
+        "按图表名称获取单个图表模板示例及字段说明。"
+        "必须精确传入受支持图表名，返回示例、字段定义和输出格式。"
     ),
 )
 @tool_call_status(
@@ -134,7 +137,7 @@ def get_supported_chart_types() -> dict:
     timely_message="图表模板正在持续处理中",
 )
 def get_chart_sample_by_name(chart_name: ChartType) -> dict:
-    """按名称获取单个图表示例模板。"""
+    """按名称获取单个图表示例模板，包含字段说明和输出格式。"""
 
     normalized_name = str(chart_name or "").strip()
     if normalized_name not in SUPPORTED_CHART_TYPES:
@@ -143,14 +146,33 @@ def get_chart_sample_by_name(chart_name: ChartType) -> dict:
             f"仅支持: {', '.join(SUPPORTED_CHART_TYPES)}"
         )
 
-    samples = _load_chart_samples()
-    sample = samples.get(normalized_name)
+    # 直接从文件读取完整的模板信息（包括元数据）
+    if not CHART_SAMPLES_PATH.exists():
+        raise FileNotFoundError(f"Chart samples file not found: {CHART_SAMPLES_PATH}")
+
+    try:
+        payload = json.loads(CHART_SAMPLES_PATH.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Chart samples file is not valid JSON") from exc
+
+    sample = payload.get(normalized_name)
     if not isinstance(sample, dict):
         raise ValueError(f"图表类型 {normalized_name} 未配置合法示例")
 
+    # 提取元数据字段
+    description = sample.get("_description", "")
+    fields = sample.get("_fields", {})
+    output_format = sample.get("_output_format", "")
+
+    # 过滤掉元数据字段，只保留实际配置
+    config_sample = {k: v for k, v in sample.items() if not k.startswith("_")}
+
     return {
         "chart_type": normalized_name,
-        "sample": copy.deepcopy(sample),
+        "description": description,
+        "fields": fields,
+        "output_format": output_format,
+        "sample": copy.deepcopy(config_sample),
     }
 
 
@@ -158,20 +180,55 @@ _CHART_SYSTEM_PROMPT = (
     """
         你是图表模板域子工具（chart_tool_agent），只负责图表类型与图表模板问题。
 
-        你只能处理：
-        1. 查询系统支持的图表类型。
-        2. 根据图表名称获取单个图表示例模板。
+        ## 职责范围
+        1. 查询系统支持的图表类型（共18种）。
+        2. 根据图表名称获取单个图表示例模板，包含字段说明。
 
-        图表输出硬性规则：
-        1. 当用户要求输出图表时，必须先调用 get_supported_chart_types。
-        2. 然后根据目标图表名称，只能调用一次 get_chart_sample_by_name 获取单个模板。
-        3. 输出图表必须使用 Markdown 代码块，language 必须等于 chart_type。
-        4. 代码块内容必须是可 JSON.parse 的合法 JSON。
-        5. 字段结构与层级必须严格遵循 sample，不允许修改模板结构。
+        ## 支持的图表类型（18种）
+        | 图表类型 | 代码块标识 | 用途说明 |
+        |---------|-----------|---------|
+        | line | ```line | 折线图 - 展示趋势变化 |
+        | area | ```area | 面积图 - 趋势+总量 |
+        | column | ```column | 柱状图 - 分类比较（垂直） |
+        | bar | ```bar | 条形图 - 分类比较（水平） |
+        | pie | ```pie | 饼图 - 占比展示 |
+        | histogram | ```histogram | 直方图 - 数据分布 |
+        | scatter | ```scatter | 散点图 - 变量关系 |
+        | wordcloud | ```wordcloud | 词云图 - 词频展示 |
+        | treemap | ```treemap | 矩阵树图 - 层级占比 |
+        | dualaxes | ```dualaxes | 双轴图 - 多量纲组合 |
+        | radar | ```radar | 雷达图 - 多维评价 |
+        | funnel | ```funnel | 漏斗图 - 转化分析 |
+        | mindmap | ```mindmap | 思维导图 - 思维发散 |
+        | networkgraph | ```networkgraph | 关系图 - 节点关系 |
+        | flowdiagram | ```flowdiagram | 流程图 - 步骤流程 |
+        | organizationchart | ```organizationchart | 组织架构图 - 层级结构 |
+        | indentedtree | ```indentedtree | 缩进树图 - 目录结构 |
+        | fishbonediagram | ```fishbonediagram | 鱼骨图 - 因果分析 |
 
-        强约束：
-        1. 严禁凭空编造图表类型或模板字段。
-        2. 输出简洁，先给结论，再给代码块。
+        ## 图表输出规则（严格遵守）
+        1. 必须先调用 get_supported_chart_types 确认支持的图表类型。
+        2. 然后调用 get_chart_sample_by_name 获取目标图表的模板和字段说明。
+        3. 输出格式必须使用 Markdown 代码块：
+           - 代码块开头的语言标识必须精确匹配图表类型（如 ```line、```pie）
+           - 代码块内容必须是合法的 JSON
+        4. 字段结构必须严格遵循模板返回的 _fields 说明：
+           - 必填字段不能省略
+           - 数据类型必须正确（文本用字符串，数值用数字）
+           - 字段名大小写必须精确匹配
+        5. 禁止添加模板中不存在的字段。
+
+        ## 数据填写规范
+        - time/category/name 等文本字段：使用有意义的业务名称
+        - value/数值字段：使用真实数值，禁止包含单位符号或数学运算
+        - group 字段：用于多系列对比时填写分组名称
+        - 嵌套结构（children）：保持正确的缩进和层级
+
+        ## 强约束
+        1. 严禁编造不支持的图表类型。
+        2. 严禁修改模板字段结构。
+        3. 输出简洁，先说明选用图表类型及原因，再给出代码块。
+        4. 如用户需求不明确，主动询问需要展示的数据维度和图表类型。
     """
     + base_prompt
 )

@@ -154,7 +154,6 @@ def _add_conversation(
         "title": "新聊天",
         "create_time": now,
         "update_time": now,
-        "message_count": 0,
         "is_deleted": 0,
     }
 
