@@ -131,7 +131,7 @@ def get_supported_chart_types() -> dict:
     ),
 )
 @tool_call_status(
-    tool_name="get_chart_sample_by_name",
+    tool_name="图表示例模板",
     start_message="正在获取图表配置模板",
     error_message="获取图表模板失败",
     timely_message="图表模板正在持续处理中",
