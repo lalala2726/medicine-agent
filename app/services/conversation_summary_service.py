@@ -12,7 +12,7 @@ from pymongo.errors import PyMongoError
 from app.core.codes import ResponseCode
 from app.core.exceptions import ServiceException
 from app.core.mongodb import DEFAULT_CONVERSATION_SUMMARIES_COLLECTION, get_mongo_database
-from app.schemas.conversation_summary import ConversationSummary
+from app.schemas.document.conversation_summary import ConversationSummary
 
 
 def _resolve_collection_name() -> str:

@@ -5,7 +5,7 @@ from bson import ObjectId
 
 from app.core.codes import ResponseCode
 from app.core.exceptions import ServiceException
-from app.schemas.conversation_summary import ConversationSummary
+from app.schemas.document.conversation_summary import ConversationSummary
 from app.services import conversation_summary_service as service_module
 
 

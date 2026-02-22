@@ -11,7 +11,7 @@ from pymongo.errors import PyMongoError
 from app.core.codes import ResponseCode
 from app.core.exceptions import ServiceException
 from app.core.mongodb import DEFAULT_MESSAGE_TRACES_COLLECTION, get_mongo_database
-from app.schemas.message_trace import (
+from app.schemas.document.message_trace import (
     ExecutionTraceItem,
     MessageTraceCreate,
     MessageTraceDocument,
@@ -65,7 +65,7 @@ def _normalize_execution_trace(
 def _normalize_token_usage_detail(
         token_usage_detail: MessageTraceTokenDetail | dict[str, Any] | None,
 ) -> MessageTraceTokenDetail | None:
-    """归一化 token_usage_detail，仅保留 is_complete 和 node_breakdown。"""
+    """归一化 token_usage_detail，严格按 MessageTraceTokenDetail 校验。"""
 
     if token_usage_detail is None:
         return None
@@ -74,18 +74,8 @@ def _normalize_token_usage_detail(
     if not isinstance(token_usage_detail, dict):
         return None
 
-    if "node_breakdown" not in token_usage_detail and "is_complete" not in token_usage_detail:
-        return None
-
-    node_breakdown = token_usage_detail.get("node_breakdown")
-    if not isinstance(node_breakdown, list):
-        node_breakdown = []
-
     try:
-        return MessageTraceTokenDetail(
-            is_complete=bool(token_usage_detail.get("is_complete", True)),
-            node_breakdown=node_breakdown,
-        )
+        return MessageTraceTokenDetail.model_validate(token_usage_detail)
     except Exception:
         return None
 

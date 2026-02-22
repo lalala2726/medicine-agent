@@ -15,7 +15,7 @@ from pymongo.errors import PyMongoError
 from app.core.codes import ResponseCode
 from app.core.exceptions import ServiceException
 from app.core.mongodb import DEFAULT_ADMIN_MESSAGES_COLLECTION, get_mongo_database
-from app.schemas.admin_message import (
+from app.schemas.document.admin_message import (
     AdminMessageCreate,
     AdminMessageDocument,
     MessageRole,
@@ -76,7 +76,7 @@ def _to_non_negative_int(value: Any) -> int | None:
 def _normalize_token_usage(
         token_usage: TokenUsage | dict[str, Any] | None,
 ) -> TokenUsage | None:
-    """归一化 token_usage，仅保留 prompt/completion/total 总量字段。"""
+    """归一化 token_usage，仅接受 prompt/completion/total 总量字段。"""
 
     if token_usage is None:
         return None
@@ -85,14 +85,14 @@ def _normalize_token_usage(
     if not isinstance(token_usage, Mapping):
         return None
 
+    allowed_keys = {"prompt_tokens", "completion_tokens", "total_tokens"}
+    for key in token_usage.keys():
+        if key not in allowed_keys:
+            logger.warning("Ignore invalid token_usage while persisting message.")
+            return None
+
     prompt_tokens = _to_non_negative_int(token_usage.get("prompt_tokens"))
-    if prompt_tokens is None:
-        prompt_tokens = _to_non_negative_int(token_usage.get("input_tokens"))
-
     completion_tokens = _to_non_negative_int(token_usage.get("completion_tokens"))
-    if completion_tokens is None:
-        completion_tokens = _to_non_negative_int(token_usage.get("output_tokens"))
-
     total_tokens = _to_non_negative_int(token_usage.get("total_tokens"))
     if prompt_tokens is None and completion_tokens is None and total_tokens is None:
         return None
@@ -131,8 +131,8 @@ def add_message(
         role: 消息角色（user/assistant）。
         status: 消息状态（success/error）。
         content: 消息内容。
-        token_usage: 可选 token 使用总量。支持传入完整 token_usage（含明细），
-            持久化时仅保留 prompt/completion/total 三个字段。
+        token_usage: 可选 token 使用总量，仅支持
+            prompt_tokens/completion_tokens/total_tokens 三个字段。
             且仅 assistant 消息会保存，user 消息会被忽略。
         message_uuid: 可选消息 UUID，不传时自动生成。
 

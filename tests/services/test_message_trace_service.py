@@ -5,7 +5,7 @@ from bson import ObjectId
 
 from app.core.codes import ResponseCode
 from app.core.exceptions import ServiceException
-from app.schemas.message_trace import MessageTraceDocument
+from app.schemas.document.message_trace import MessageTraceDocument
 from app.services import message_trace_service as service_module
 
 
@@ -78,8 +78,8 @@ def test_add_message_trace_inserts_expected_document(monkeypatch):
     assert isinstance(collection.last_inserted["updated_at"], datetime.datetime)
 
 
-def test_add_message_trace_accepts_full_token_usage_payload(monkeypatch):
-    """验证 token_usage 传完整结构时仅提取明细字段。"""
+def test_add_message_trace_rejects_legacy_token_usage_payload(monkeypatch):
+    """验证 token_usage_detail 传旧结构时不会落库。"""
 
     collection = _DummyCollection()
     monkeypatch.setattr(
@@ -89,23 +89,18 @@ def test_add_message_trace_accepts_full_token_usage_payload(monkeypatch):
     )
     monkeypatch.setattr(service_module, "_resolve_collection_name", lambda: "message_traces")
 
-    service_module.add_message_trace(
+    result = service_module.add_message_trace(
         message_uuid="msg-1",
         conversation_id="507f1f77bcf86cd799439011",
         token_usage_detail={
             "prompt_tokens": 10,
             "completion_tokens": 5,
             "total_tokens": 15,
-            "is_complete": False,
-            "node_breakdown": [],
         },
     )
 
-    assert collection.last_inserted is not None
-    assert collection.last_inserted["token_usage_detail"] == {
-        "is_complete": False,
-        "node_breakdown": [],
-    }
+    assert result is None
+    assert collection.last_inserted is None
 
 
 def test_add_message_trace_skips_when_trace_and_detail_are_empty(monkeypatch):

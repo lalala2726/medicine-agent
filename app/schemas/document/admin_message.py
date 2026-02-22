@@ -25,8 +25,7 @@ class MessageStatus(str, Enum):
 class TokenUsage(BaseModel):
     """消息级 token 使用总量。"""
 
-    # 兼容历史结构中的 is_complete/node_breakdown 等多余字段。
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="forbid")
 
     prompt_tokens: int = Field(default=0, ge=0, description="消息输入 Token 总数")
     completion_tokens: int = Field(default=0, ge=0, description="消息输出 Token 总数")

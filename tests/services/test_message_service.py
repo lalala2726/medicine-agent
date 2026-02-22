@@ -6,7 +6,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 
 from app.core.codes import ResponseCode
 from app.core.exceptions import ServiceException
-from app.schemas.admin_message import AdminMessageDocument, MessageRole, MessageStatus
+from app.schemas.document.admin_message import AdminMessageDocument, MessageRole, MessageStatus
 from app.services import message_service as service_module
 
 
@@ -101,8 +101,38 @@ def test_add_message_inserts_expected_document(monkeypatch):
     assert isinstance(collection.last_inserted["updated_at"], datetime.datetime)
 
 
-def test_add_message_persists_token_usage_totals_only_for_assistant(monkeypatch):
-    """验证 assistant 消息仅落 token 总量，忽略明细字段。"""
+def test_add_message_persists_token_usage_totals_for_assistant(monkeypatch):
+    """验证 assistant 消息落库 token_usage（仅支持新字段）。"""
+
+    collection = _DummyCollection()
+    monkeypatch.setattr(
+        service_module,
+        "get_mongo_database",
+        lambda: {"admin_messages": collection},
+    )
+    monkeypatch.setattr(service_module, "_resolve_collection_name", lambda: "admin_messages")
+
+    service_module.add_message(
+        conversation_id="507f1f77bcf86cd799439011",
+        role=MessageRole.ASSISTANT,
+        content="助手回复",
+        token_usage={
+            "prompt_tokens": 5,
+            "completion_tokens": 3,
+            "total_tokens": 8,
+        },
+    )
+
+    assert collection.last_inserted is not None
+    assert collection.last_inserted["token_usage"] == {
+        "prompt_tokens": 5,
+        "completion_tokens": 3,
+        "total_tokens": 8,
+    }
+
+
+def test_add_message_ignores_token_usage_with_legacy_fields(monkeypatch):
+    """验证 token_usage 包含旧字段时会被忽略。"""
 
     collection = _DummyCollection()
     monkeypatch.setattr(
@@ -121,16 +151,11 @@ def test_add_message_persists_token_usage_totals_only_for_assistant(monkeypatch)
             "completion_tokens": 3,
             "total_tokens": 8,
             "is_complete": True,
-            "node_breakdown": [{"node_name": "chat_agent"}],
         },
     )
 
     assert collection.last_inserted is not None
-    assert collection.last_inserted["token_usage"] == {
-        "prompt_tokens": 5,
-        "completion_tokens": 3,
-        "total_tokens": 8,
-    }
+    assert "token_usage" not in collection.last_inserted
 
 
 def test_add_message_user_ignores_token_usage(monkeypatch):
@@ -194,9 +219,6 @@ def test_get_message_by_uuid_returns_typed_model(monkeypatch):
             "prompt_tokens": 2,
             "completion_tokens": 1,
             "total_tokens": 3,
-            # 历史字段：应被模型忽略
-            "is_complete": False,
-            "node_breakdown": [{"node_name": "legacy"}],
         },
         "created_at": datetime.datetime(2026, 1, 1, 10, 0, 0),
         "updated_at": datetime.datetime(2026, 1, 1, 10, 0, 0),

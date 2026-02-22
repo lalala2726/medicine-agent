@@ -18,7 +18,9 @@
       "Bash(git fetch:*)",
       "Bash(gh pr list:*)",
       "mcp__web-reader__webReader",
-      "WebSearch"
+      "WebSearch",
+      "Bash(conda run:*)",
+      "Bash(grep:*)"
     ]
   }
 }

@@ -18,7 +18,7 @@ from app.core.langsmith import build_langsmith_runnable_config
 from app.core.llm import create_chat_model
 from app.core.request_context import get_user_id
 from app.schemas.admin_assistant_history import ConversationMessageResponse
-from app.schemas.admin_message import MessageRole, MessageStatus
+from app.schemas.document.admin_message import MessageRole, MessageStatus
 from app.schemas.base_request import PageRequest
 from app.schemas.sse_response import AssistantResponse, Content, MessageType
 from app.services.assistant_stream_service import (
