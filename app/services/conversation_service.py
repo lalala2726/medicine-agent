@@ -17,6 +17,7 @@ _TABLE_NAME = (
 )
 _ADMIN_MARK = "admin"
 _CLIENT_MARK = "client"
+_NOT_DELETED_FILTER = {"$ne": 1}
 
 
 def _to_mongo_long(value: int) -> Int64:
@@ -57,6 +58,7 @@ def _get_conversation(
         "uuid": conversation_uuid,
         "conversation_type": conversation_type,
         "user_id": _to_mongo_long(user_id),
+        "is_deleted": _NOT_DELETED_FILTER,
     }
 
     try:
@@ -153,6 +155,7 @@ def _add_conversation(
         "create_time": now,
         "update_time": now,
         "message_count": 0,
+        "is_deleted": 0,
     }
 
     try:
@@ -245,6 +248,7 @@ def list_admin_conversations(
     query = {
         "conversation_type": _ADMIN_MARK,
         "user_id": _to_mongo_long(user_id),
+        "is_deleted": _NOT_DELETED_FILTER,
     }
     projection = {
         "_id": 0,
@@ -299,7 +303,10 @@ def save_conversation_title(
     collection = db[_TABLE_NAME]
 
     now = datetime.datetime.now()
-    query = {"uuid": conversation_uuid}
+    query = {
+        "uuid": conversation_uuid,
+        "is_deleted": _NOT_DELETED_FILTER,
+    }
     update_doc = {"$set": {"title": title, "update_time": now}}
 
     try:
@@ -337,6 +344,7 @@ def update_admin_conversation_title(
         "uuid": conversation_uuid,
         "conversation_type": _ADMIN_MARK,
         "user_id": _to_mongo_long(user_id),
+        "is_deleted": _NOT_DELETED_FILTER,
     }
     update_doc = {"$set": {"title": title, "update_time": now}}
 
@@ -353,14 +361,14 @@ def delete_admin_conversation(
         user_id: Annotated[int, Field(ge=1)],
 ) -> bool:
     """
-    删除当前用户的管理端会话。
+    逻辑删除当前用户的管理端会话。
 
     Args:
         conversation_uuid: 会话 UUID。
         user_id: 当前用户 ID。
 
     Returns:
-        bool: True 表示删除成功；False 表示会话不存在或无权限。
+        bool: True 表示删除成功；False 表示会话不存在、无权限或已删除。
 
     Raises:
         ServiceException: 数据库异常时抛出。
@@ -369,14 +377,17 @@ def delete_admin_conversation(
     db = get_mongo_database()
     collection = db[_TABLE_NAME]
 
+    now = datetime.datetime.now()
     query = {
         "uuid": conversation_uuid,
         "conversation_type": _ADMIN_MARK,
         "user_id": _to_mongo_long(user_id),
+        "is_deleted": _NOT_DELETED_FILTER,
     }
+    update_doc = {"$set": {"is_deleted": 1, "update_time": now}}
 
     try:
-        result = collection.delete_one(query)
-        return int(getattr(result, "deleted_count", 0)) > 0
+        result = collection.update_one(query, update_doc)
+        return int(getattr(result, "matched_count", 0)) > 0
     except PyMongoError as exc:
         raise ServiceException(code=ResponseCode.DATABASE_ERROR, message="数据库错误") from exc
