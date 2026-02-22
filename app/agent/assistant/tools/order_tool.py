@@ -6,12 +6,12 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
+from app.utils.prompt_utils import load_prompt
 from app.agent.assistant.tools.base_tools import _normalize_id_list, format_ids_to_string
 from app.core.assistant_status import tool_call_status
 from app.core.langsmith import traceable
 from app.core.llm import create_chat_model
 from app.schemas.http_response import HttpResponse
-from app.schemas.prompt import base_prompt
 from app.utils.http_client import HttpClient
 from app.utils.streaming_utils import invoke_with_trace
 
@@ -136,22 +136,8 @@ async def get_orders_detail(order_id: list[str]) -> dict:
         return HttpResponse.parse_data(response)
 
 
-_ORDER_SYSTEM_PROMPT = (
-    """
-        你是订单域子工具（order_tool_agent），只负责订单相关问题。
-
-        你只能处理：
-        1. 订单列表查询（筛选、分页、状态、收货人条件）。
-        2. 订单详情查询（指定订单ID，可批量）。
-
-        强约束：
-        1. 必须优先通过工具获取真实数据，严禁编造订单状态、金额、地址、物流信息。
-        2. 当用户明确要“订单详情/收货地址/物流/商品明细”时，优先使用 get_orders_detail
-        3. 参数必须结构化并符合工具 schema，不要拼接自由文本参数。
-        4. 输出简洁，先给结论，再给关键字段。
-        """
-    + base_prompt
-)
+_BASE_PROMPT = load_prompt("assistant_base_prompt")
+_ORDER_SYSTEM_PROMPT = load_prompt("assistant_order_system_prompt") + _BASE_PROMPT
 
 
 @tool(

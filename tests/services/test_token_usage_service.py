@@ -57,12 +57,12 @@ def test_build_message_token_usage_accumulates_node_and_tool_llm():
     )
 
     assert result is not None
-    assert result.prompt_tokens == 15
-    assert result.completion_tokens == 6
-    assert result.total_tokens == 21
-    assert result.is_complete is True
-    assert result.node_breakdown[1].tool_tokens_total == 10
-    assert result.node_breakdown[1].tool_llm_breakdown[0].children[0].tool_name == "get_order_list"
+    assert result["prompt_tokens"] == 15
+    assert result["completion_tokens"] == 6
+    assert result["total_tokens"] == 21
+    assert result["is_complete"] is True
+    assert result["node_breakdown"][1]["tool_tokens_total"] == 10
+    assert result["node_breakdown"][1]["tool_llm_breakdown"][0]["children"][0]["tool_name"] == "get_order_list"
 
 
 def test_build_message_token_usage_marks_incomplete_when_usage_missing():
@@ -80,5 +80,5 @@ def test_build_message_token_usage_marks_incomplete_when_usage_missing():
     )
 
     assert result is not None
-    assert result.total_tokens == 0
-    assert result.is_complete is False
+    assert result["total_tokens"] == 0
+    assert result["is_complete"] is False

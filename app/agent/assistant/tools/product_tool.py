@@ -6,12 +6,12 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
+from app.utils.prompt_utils import load_prompt
 from app.agent.assistant.tools.base_tools import _normalize_id_list, format_ids_to_string
 from app.core.assistant_status import tool_call_status
 from app.core.langsmith import traceable
 from app.core.llm import create_chat_model
 from app.schemas.http_response import HttpResponse
-from app.schemas.prompt import base_prompt
 from app.utils.http_client import HttpClient
 from app.utils.streaming_utils import invoke_with_trace
 
@@ -169,23 +169,8 @@ async def get_drug_detail(product_id: list[str]) -> dict:
         return HttpResponse.parse_data(response)
 
 
-_PRODUCT_SYSTEM_PROMPT = (
-    """
-        你是商品域子工具（product_tool_agent），只负责商品相关问题。
-
-        你只能处理：
-        1. 商品列表查询（筛选、分页、上/下架、价格区间）。
-        2. 商品详情查询（指定商品ID）。
-        3. 药品详情查询（说明书、适应症、用法用量）。
-
-        强约束：
-        1. 你必须优先通过工具获取真实数据，严禁编造商品信息。
-        2. 工具参数必须结构化，严格遵守工具 schema。
-        3. 用户信息不足时，先给最小补充建议或说明缺少的关键参数。
-        4. 输出必须简洁，优先给结论，再给必要字段。
-        """
-    + base_prompt
-)
+_BASE_PROMPT = load_prompt("assistant_base_prompt")
+_PRODUCT_SYSTEM_PROMPT = load_prompt("assistant_product_system_prompt") + _BASE_PROMPT
 
 
 @tool(

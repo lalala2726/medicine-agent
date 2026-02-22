@@ -6,11 +6,11 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
+from app.utils.prompt_utils import load_prompt
 from app.core.assistant_status import tool_call_status
 from app.core.langsmith import traceable
 from app.core.llm import create_chat_model
 from app.schemas.http_response import HttpResponse
-from app.schemas.prompt import base_prompt
 from app.utils.http_client import HttpClient
 from app.utils.streaming_utils import invoke_with_trace
 
@@ -170,25 +170,8 @@ async def get_analytics_product_return_rates(limit: int = 10) -> dict:
         return HttpResponse.parse_data(response)
 
 
-_ANALYTICS_SYSTEM_PROMPT = (
-    """
-        你是运营分析域子工具（analytics_tool_agent），只负责运营分析问题。
-
-        你只能处理：
-        1. 运营总览（overview）。
-        2. 订单趋势（按 DAY/WEEK/MONTH）。
-        3. 订单状态分布。
-        4. 支付方式分布。
-        5. 热销商品排行榜。
-        6. 商品退货率统计。
-
-        强约束：
-        1. 必须优先通过工具获取真实数据，严禁编造指标。
-        2. 参数必须结构化并符合工具 schema。
-        3. 输出简洁，先给结论，再给关键指标。
-    """
-    + base_prompt
-)
+_BASE_PROMPT = load_prompt("assistant_base_prompt")
+_ANALYTICS_SYSTEM_PROMPT = load_prompt("assistant_analytics_system_prompt") + _BASE_PROMPT
 
 
 @tool(

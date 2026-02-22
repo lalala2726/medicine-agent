@@ -405,6 +405,7 @@ def test_answer_completed_schedules_async_persist_with_execution_trace(monkeypat
 
     background_calls: list[dict] = []
     saved_messages: list[dict] = []
+    resolve_calls: list[dict] = []
 
     monkeypatch.setattr(
         service_module,
@@ -421,9 +422,17 @@ def test_answer_completed_schedules_async_persist_with_execution_trace(monkeypat
     )
     monkeypatch.setattr(
         service_module,
-        "build_message_token_usage",
-        lambda _trace: {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2, "is_complete": True,
-                        "node_breakdown": []},
+        "resolve_persistable_token_usage",
+        lambda token_usage, execution_trace: (
+            resolve_calls.append({"token_usage": token_usage, "execution_trace": execution_trace}),
+            {
+                "prompt_tokens": 1,
+                "completion_tokens": 1,
+                "total_tokens": 2,
+                "is_complete": True,
+                "node_breakdown": [],
+            },
+        )[-1],
     )
 
     callback = service_module._build_assistant_message_callback(
@@ -459,8 +468,9 @@ def test_answer_completed_schedules_async_persist_with_execution_trace(monkeypat
     assert background_calls[0]["kwargs"]["status"] == MessageStatus.SUCCESS
     assert saved_messages[-1]["execution_trace"][0]["node_name"] == "chat_agent"
     assert saved_messages[-1]["status"] == MessageStatus.SUCCESS
-    assert saved_messages[-1]["thought_chain"] is None
+    assert "thought_chain" not in saved_messages[-1]
     assert saved_messages[-1]["token_usage"]["total_tokens"] == 2
+    assert resolve_calls and resolve_calls[-1]["token_usage"] is None
 
 
 def test_answer_completed_marks_error_status_when_stream_failed(monkeypatch):
@@ -478,6 +488,11 @@ def test_answer_completed_marks_error_status_when_stream_failed(monkeypatch):
         "add_message",
         lambda **kwargs: saved_messages.append(kwargs) or "507f1f77bcf86cd799439012",
     )
+    monkeypatch.setattr(
+        service_module,
+        "resolve_persistable_token_usage",
+        lambda _token_usage, _execution_trace: None,
+    )
 
     callback = service_module._build_assistant_message_callback(
         conversation_id="507f1f77bcf86cd799439011",
@@ -491,13 +506,14 @@ def test_answer_completed_marks_error_status_when_stream_failed(monkeypatch):
     )
 
     assert saved_messages[-1]["status"] == MessageStatus.ERROR
-    assert saved_messages[-1]["thought_chain"] is None
+    assert "thought_chain" not in saved_messages[-1]
 
 
-def test_answer_completed_persists_thought_chain_when_trace_contains_supervisor(monkeypatch):
-    """测试目标：命中 supervisor 路径才保存 thought_chain；成功标准：保存完整执行链。"""
+def test_answer_completed_does_not_persist_thought_chain_when_trace_contains_supervisor(monkeypatch):
+    """测试目标：新实现不落库 thought_chain；成功标准：即使命中 supervisor 也不传 thought_chain 字段。"""
 
     saved_messages: list[dict] = []
+    resolve_calls: list[dict] = []
 
     monkeypatch.setattr(
         service_module,
@@ -511,9 +527,17 @@ def test_answer_completed_persists_thought_chain_when_trace_contains_supervisor(
     )
     monkeypatch.setattr(
         service_module,
-        "build_message_token_usage",
-        lambda _trace: {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2, "is_complete": True,
-                        "node_breakdown": []},
+        "resolve_persistable_token_usage",
+        lambda token_usage, execution_trace: (
+            resolve_calls.append({"token_usage": token_usage, "execution_trace": execution_trace}),
+            {
+                "prompt_tokens": 1,
+                "completion_tokens": 1,
+                "total_tokens": 2,
+                "is_complete": True,
+                "node_breakdown": [],
+            },
+        )[-1],
     )
 
     callback = service_module._build_assistant_message_callback(
@@ -549,85 +573,9 @@ def test_answer_completed_persists_thought_chain_when_trace_contains_supervisor(
         )
     )
 
-    thought_chain = saved_messages[-1]["thought_chain"]
-    assert thought_chain is not None
-    assert [item["node"] for item in thought_chain] == [
-        "supervisor_agent",
-        "planner",
-        "order_agent",
-    ]
-
-
-def test_should_persist_thought_chain_only_when_contains_supervisor_agent():
-    """测试目标：thought_chain 保存判定只认 supervisor_agent。"""
-
-    assert service_module._should_persist_thought_chain(None) is False
-    assert service_module._should_persist_thought_chain([]) is False
-    assert service_module._should_persist_thought_chain(
-        [{"node_name": "chat_agent"}]
-    ) is False
-    assert service_module._should_persist_thought_chain(
-        [{"node_name": "supervisor_agent"}]
-    ) is True
-
-
-def test_build_thought_chain_maps_execution_trace_to_frontend_shape():
-    """测试目标：execution_trace 可转换为前端 thoughtChain 结构。"""
-
-    thought_chain = service_module._build_thought_chain(
-        [
-            {
-                "node_name": "planner",
-                "model_name": "qwen-max",
-                "input_messages": [],
-                "output_text": "完成",
-                "tool_calls": [
-                    {
-                        "tool_name": "query_orders",
-                        "tool_input": {"limit": 10},
-                        "is_error": False,
-                        "error_message": None,
-                    }
-                ],
-            }
-        ]
-    )
-
-    assert thought_chain is not None
-    assert thought_chain[0]["node"] == "planner"
-    assert thought_chain[0]["status"] == "success"
-    assert thought_chain[0]["children"][0]["message"] == "正在调用工具"
-    assert thought_chain[0]["children"][0]["arguments"] == "{\"limit\": 10}"
-    assert "result" not in thought_chain[0]["children"][0]
-    assert "query_orders" not in thought_chain[0]["children"][0]["message"]
-
-
-def test_build_thought_chain_uses_chinese_tool_message_for_known_tools():
-    """测试目标：已知工具在 thought_chain 中写入中文文案。"""
-
-    thought_chain = service_module._build_thought_chain(
-        [
-            {
-                "node_name": "order_agent",
-                "model_name": "qwen-max",
-                "input_messages": [],
-                "output_text": "完成",
-                "tool_calls": [
-                    {
-                        "tool_name": "get_orders_detail",
-                        "tool_input": {"order_id": ["198"]},
-                        "is_error": False,
-                        "error_message": None,
-                    }
-                ],
-            }
-        ]
-    )
-
-    assert thought_chain is not None
-    child = thought_chain[0]["children"][0]
-    assert child["name"] == "get_orders_detail"
-    assert child["message"] == "正在调用订单详情"
+    assert "thought_chain" not in saved_messages[-1]
+    assert saved_messages[-1]["token_usage"]["total_tokens"] == 2
+    assert resolve_calls and resolve_calls[-1]["token_usage"] is None
 
 
 def test_persist_failure_only_logs_warning(monkeypatch):
