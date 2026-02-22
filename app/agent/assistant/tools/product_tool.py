@@ -195,6 +195,12 @@ _PRODUCT_SYSTEM_PROMPT = (
     )
 )
 @traceable(name="Supervisor Product Tool Agent", run_type="chain")
+@tool_call_status(
+    tool_name="正在调用商品子代理",
+    start_message="正在执行查询",
+    error_message="调用商品子代理失败",
+    timely_message="商品子代理正在持续处理中",
+)
 def product_tool_agent(task_description: str) -> str:
     llm = create_chat_model(
         model="qwen-flash",

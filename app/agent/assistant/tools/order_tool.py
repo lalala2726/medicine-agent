@@ -160,6 +160,12 @@ _ORDER_SYSTEM_PROMPT = (
         "输入为自然语言任务描述，内部会自动调用订单工具并返回结果。"
     )
 )
+@tool_call_status(
+    tool_name="正在调用订单子代理",
+    start_message="正在执行查询",
+    error_message="调用订单子代理失败",
+    timely_message="订单子代理正在持续处理中",
+)
 @traceable(name="Supervisor Order Tool Agent", run_type="chain")
 def order_tool_agent(task_description: str) -> str:
     llm = create_chat_model(
