@@ -405,6 +405,7 @@ def test_answer_completed_schedules_async_persist_with_execution_trace(monkeypat
 
     background_calls: list[dict] = []
     saved_messages: list[dict] = []
+    saved_traces: list[dict] = []
     resolve_calls: list[dict] = []
 
     monkeypatch.setattr(
@@ -420,6 +421,12 @@ def test_answer_completed_schedules_async_persist_with_execution_trace(monkeypat
         "add_message",
         lambda **kwargs: saved_messages.append(kwargs) or "507f1f77bcf86cd799439012",
     )
+    monkeypatch.setattr(
+        service_module,
+        "add_message_trace",
+        lambda **kwargs: saved_traces.append(kwargs) or "507f1f77bcf86cd799439013",
+    )
+    monkeypatch.setattr(service_module.uuid, "uuid4", lambda: "msg-uuid-1")
     monkeypatch.setattr(
         service_module,
         "resolve_persistable_token_usage",
@@ -466,10 +473,13 @@ def test_answer_completed_schedules_async_persist_with_execution_trace(monkeypat
     assert background_calls[0]["kwargs"]["conversation_id"] == "507f1f77bcf86cd799439011"
     assert background_calls[0]["kwargs"]["answer_text"] == "AI回复"
     assert background_calls[0]["kwargs"]["status"] == MessageStatus.SUCCESS
-    assert saved_messages[-1]["execution_trace"][0]["node_name"] == "chat_agent"
     assert saved_messages[-1]["status"] == MessageStatus.SUCCESS
-    assert "thought_chain" not in saved_messages[-1]
+    assert saved_messages[-1]["message_uuid"] == "msg-uuid-1"
     assert saved_messages[-1]["token_usage"]["total_tokens"] == 2
+    assert "execution_trace" not in saved_messages[-1]
+    assert saved_traces[-1]["message_uuid"] == "msg-uuid-1"
+    assert saved_traces[-1]["execution_trace"][0]["node_name"] == "chat_agent"
+    assert saved_traces[-1]["token_usage_detail"]["is_complete"] is True
     assert resolve_calls and resolve_calls[-1]["token_usage"] is None
 
 
@@ -477,6 +487,7 @@ def test_answer_completed_marks_error_status_when_stream_failed(monkeypatch):
     """测试目标：流式执行报错时，assistant 消息落库状态为 error。"""
 
     saved_messages: list[dict] = []
+    saved_traces: list[dict] = []
 
     monkeypatch.setattr(
         service_module,
@@ -488,6 +499,12 @@ def test_answer_completed_marks_error_status_when_stream_failed(monkeypatch):
         "add_message",
         lambda **kwargs: saved_messages.append(kwargs) or "507f1f77bcf86cd799439012",
     )
+    monkeypatch.setattr(
+        service_module,
+        "add_message_trace",
+        lambda **kwargs: saved_traces.append(kwargs) or None,
+    )
+    monkeypatch.setattr(service_module.uuid, "uuid4", lambda: "msg-uuid-error")
     monkeypatch.setattr(
         service_module,
         "resolve_persistable_token_usage",
@@ -506,20 +523,16 @@ def test_answer_completed_marks_error_status_when_stream_failed(monkeypatch):
     )
 
     assert saved_messages[-1]["status"] == MessageStatus.ERROR
-    assert "thought_chain" not in saved_messages[-1]
+    assert saved_messages[-1]["message_uuid"] == "msg-uuid-error"
+    assert saved_traces[-1]["message_uuid"] == "msg-uuid-error"
 
 
-def test_answer_completed_does_not_persist_thought_chain_when_trace_contains_supervisor(monkeypatch):
-    """测试目标：新实现不落库 thought_chain；成功标准：即使命中 supervisor 也不传 thought_chain 字段。"""
+def test_persist_assistant_message_trace_failure_only_logs_warning(monkeypatch):
+    """测试目标：trace 持久化失败仅告警；成功标准：主消息已保存且无异常抛出。"""
 
     saved_messages: list[dict] = []
-    resolve_calls: list[dict] = []
+    warning_calls: list[dict] = []
 
-    monkeypatch.setattr(
-        service_module,
-        "_schedule_background_task",
-        lambda *, task_name, func, kwargs: func(**kwargs),
-    )
     monkeypatch.setattr(
         service_module,
         "add_message",
@@ -527,55 +540,48 @@ def test_answer_completed_does_not_persist_thought_chain_when_trace_contains_sup
     )
     monkeypatch.setattr(
         service_module,
+        "add_message_trace",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("trace failed")),
+    )
+    monkeypatch.setattr(
+        service_module,
         "resolve_persistable_token_usage",
-        lambda token_usage, execution_trace: (
-            resolve_calls.append({"token_usage": token_usage, "execution_trace": execution_trace}),
-            {
-                "prompt_tokens": 1,
-                "completion_tokens": 1,
-                "total_tokens": 2,
-                "is_complete": True,
-                "node_breakdown": [],
-            },
-        )[-1],
+        lambda _token_usage, _execution_trace: {
+            "prompt_tokens": 1,
+            "completion_tokens": 1,
+            "total_tokens": 2,
+            "is_complete": True,
+            "node_breakdown": [],
+        },
     )
+    monkeypatch.setattr(service_module.uuid, "uuid4", lambda: "msg-uuid-2")
 
-    callback = service_module._build_assistant_message_callback(
+    class _DummyLogger:
+        def warning(self, message: str, **kwargs):
+            warning_calls.append({"message": message, "kwargs": kwargs})
+
+    monkeypatch.setattr(service_module.logger, "opt", lambda **_kwargs: _DummyLogger())
+
+    service_module._persist_assistant_message(
         conversation_id="507f1f77bcf86cd799439011",
-    )
-    asyncio.run(
-        callback(
-            "复杂回复",
-            [
-                {
-                    "node_name": "supervisor_agent",
-                    "model_name": "qwen-max",
-                    "input_messages": [],
-                    "output_text": "计划已生成",
-                    "tool_calls": [],
-                },
-                {
-                    "node_name": "planner",
-                    "model_name": "unknown",
-                    "input_messages": [],
-                    "output_text": "调度执行",
-                    "tool_calls": [],
-                },
-                {
-                    "node_name": "order_agent",
-                    "model_name": "qwen-plus",
-                    "input_messages": [],
-                    "output_text": "订单结果",
-                    "tool_calls": [],
-                },
-            ],
-            False,
-        )
+        answer_text="复杂回复",
+        execution_trace=[
+            {
+                "node_name": "supervisor_agent",
+                "model_name": "qwen-max",
+                "input_messages": [],
+                "output_text": "计划已生成",
+                "tool_calls": [],
+            }
+        ],
+        token_usage=None,
+        status=MessageStatus.SUCCESS,
     )
 
-    assert "thought_chain" not in saved_messages[-1]
+    assert saved_messages[-1]["message_uuid"] == "msg-uuid-2"
     assert saved_messages[-1]["token_usage"]["total_tokens"] == 2
-    assert resolve_calls and resolve_calls[-1]["token_usage"] is None
+    assert warning_calls
+    assert warning_calls[0]["kwargs"]["message_uuid"] == "msg-uuid-2"
 
 
 def test_persist_failure_only_logs_warning(monkeypatch):
@@ -711,31 +717,12 @@ def test_conversation_messages_returns_latest_page_in_chronological_order(monkey
             "role": MessageRole.ASSISTANT,
             "status": MessageStatus.SUCCESS,
             "content": "AI第二条",
-            "thought_chain": [
-                {
-                    "id": "node-1",
-                    "node": "planner",
-                    "message": "planner",
-                    "status": "success",
-                    "children": [
-                        {
-                            "id": "step-1",
-                            "message": "调用工具 query_orders",
-                            "name": "query_orders",
-                            "arguments": "{\"limit\": 10}",
-                            "result": "这个字段不应返回给前端",
-                            "status": "success",
-                        }
-                    ],
-                }
-            ],
         },
         {
             "uuid": "msg-user-1",
             "role": MessageRole.USER,
             "status": MessageStatus.SUCCESS,
             "content": "用户第一条",
-            "thought_chain": None,
         },
     ]
     monkeypatch.setattr(
@@ -756,9 +743,7 @@ def test_conversation_messages_returns_latest_page_in_chronological_order(monkey
     assert result[0].status is None
     assert result[1].role == "ai"
     assert result[1].status == "success"
-    thought_chain = result[1].model_dump(by_alias=True)["thoughtChain"]
-    assert thought_chain[0]["node"] == "planner"
-    assert "result" not in thought_chain[0]["children"][0]
+    assert result[1].thought_chain is None
 
 
 def test_should_stream_token_only_allows_chat_and_supervisor_nodes():

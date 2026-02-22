@@ -3,7 +3,7 @@ from __future__ import annotations
 import datetime
 import os
 import uuid
-from typing import Annotated, Any
+from typing import Annotated, Any, Mapping
 
 from bson import ObjectId
 from langchain_core.messages import AIMessage, HumanMessage
@@ -18,7 +18,6 @@ from app.core.mongodb import DEFAULT_ADMIN_MESSAGES_COLLECTION, get_mongo_databa
 from app.schemas.admin_message import (
     AdminMessageCreate,
     AdminMessageDocument,
-    ExecutionTraceItem,
     MessageRole,
     MessageStatus,
     TokenUsage,
@@ -60,49 +59,56 @@ def _to_message_document(document: dict[str, Any]) -> AdminMessageDocument:
     return AdminMessageDocument.model_validate(document)
 
 
-def _normalize_execution_trace(
-        execution_trace: list[ExecutionTraceItem | dict[str, Any]] | None,
-) -> list[ExecutionTraceItem] | None:
-    """
-    归一化 execution_trace，自动忽略非法项。
+def _to_non_negative_int(value: Any) -> int | None:
+    """将任意值转换为非负整数。"""
 
-    Args:
-        execution_trace: 原始节点执行追踪数据。
-
-    Returns:
-        list[ExecutionTraceItem] | None: 归一化结果，无有效项时返回 None。
-    """
-
-    if execution_trace is None:
+    if value is None:
         return None
-
-    normalized_items: list[ExecutionTraceItem] = []
-    for item in execution_trace:
-        if isinstance(item, ExecutionTraceItem):
-            normalized_items.append(item)
-            continue
-        if not isinstance(item, dict):
-            continue
-        try:
-            normalized_items.append(ExecutionTraceItem.model_validate(item))
-        except Exception:
-            logger.warning("Ignore invalid execution_trace item while persisting message.")
-    return normalized_items or None
+    try:
+        resolved = int(value)
+    except (TypeError, ValueError):
+        return None
+    if resolved < 0:
+        return None
+    return resolved
 
 
 def _normalize_token_usage(
         token_usage: TokenUsage | dict[str, Any] | None,
 ) -> TokenUsage | None:
-    """归一化 token_usage，自动忽略非法数据。"""
+    """归一化 token_usage，仅保留 prompt/completion/total 总量字段。"""
 
     if token_usage is None:
         return None
     if isinstance(token_usage, TokenUsage):
         return token_usage
-    if not isinstance(token_usage, dict):
+    if not isinstance(token_usage, Mapping):
         return None
+
+    prompt_tokens = _to_non_negative_int(token_usage.get("prompt_tokens"))
+    if prompt_tokens is None:
+        prompt_tokens = _to_non_negative_int(token_usage.get("input_tokens"))
+
+    completion_tokens = _to_non_negative_int(token_usage.get("completion_tokens"))
+    if completion_tokens is None:
+        completion_tokens = _to_non_negative_int(token_usage.get("output_tokens"))
+
+    total_tokens = _to_non_negative_int(token_usage.get("total_tokens"))
+    if prompt_tokens is None and completion_tokens is None and total_tokens is None:
+        return None
+
+    resolved_prompt = prompt_tokens or 0
+    resolved_completion = completion_tokens or 0
+    resolved_total = total_tokens
+    if resolved_total is None:
+        resolved_total = resolved_prompt + resolved_completion
+
     try:
-        return TokenUsage.model_validate(token_usage)
+        return TokenUsage(
+            prompt_tokens=resolved_prompt,
+            completion_tokens=resolved_completion,
+            total_tokens=resolved_total,
+        )
     except Exception:
         logger.warning("Ignore invalid token_usage while persisting message.")
         return None
@@ -114,9 +120,7 @@ def add_message(
         role: MessageRole | str,
         status: MessageStatus | str = MessageStatus.SUCCESS,
         content: Annotated[str, Field(min_length=1)],
-        thought_chain: list[Any] | None = None,
         token_usage: TokenUsage | dict[str, Any] | None = None,
-        execution_trace: list[ExecutionTraceItem | dict[str, Any]] | None = None,
         message_uuid: str | None = None,
 ) -> str:
     """
@@ -127,11 +131,9 @@ def add_message(
         role: 消息角色（user/assistant）。
         status: 消息状态（success/error）。
         content: 消息内容。
-        thought_chain: 可选思维链结构。
-        token_usage: 可选 token 使用明细。通常来源于 workflow state 的 `token_usage`，
+        token_usage: 可选 token 使用总量。支持传入完整 token_usage（含明细），
+            持久化时仅保留 prompt/completion/total 三个字段。
             且仅 assistant 消息会保存，user 消息会被忽略。
-        execution_trace: 可选节点执行追踪明细。通常来源于 workflow state 的
-            `execution_traces`，用于复盘本轮节点/工具调用路径。
         message_uuid: 可选消息 UUID，不传时自动生成。
 
     Returns:
@@ -148,13 +150,11 @@ def add_message(
         role=normalized_role,
         status=status,
         content=content,
-        thought_chain=thought_chain,
         token_usage=(
             _normalize_token_usage(token_usage)
             if normalized_role == MessageRole.ASSISTANT
             else None
         ),
-        execution_trace=_normalize_execution_trace(execution_trace),
     )
 
     now = datetime.datetime.now()

@@ -34,6 +34,7 @@ from app.services.conversation_service import (
     update_admin_conversation_title,
 )
 from app.services.message_service import add_message, get_history, list_messages
+from app.services.message_trace_service import add_message_trace
 from app.services.token_usage_service import resolve_persistable_token_usage
 
 ADMIN_WORKFLOW = build_graph()
@@ -302,50 +303,37 @@ def _persist_assistant_message(
     """
     持久化 assistant 消息。
 
-    仅保存 `execution_trace + token_usage`，不保存 thought_chain。
+    流程：
+    1. 主消息表保存基础消息 + token 总量；
+    2. trace 表保存 execution_trace + token 明细；
+    3. trace 失败仅记录 warning，不影响主消息保存。
     """
     resolved_status = MessageStatus(status)
     persistable_token_usage = resolve_persistable_token_usage(
         token_usage,
         execution_trace,
     )
+    message_uuid = str(uuid.uuid4())
     add_message(
         conversation_id=conversation_id,
         role="assistant",
         status=resolved_status,
         content=answer_text,
         token_usage=persistable_token_usage,
-        execution_trace=execution_trace,
+        message_uuid=message_uuid,
     )
-
-
-def _sanitize_thought_chain_for_response(
-        thought_chain: list[Any] | None,
-) -> list[dict[str, Any]] | None:
-    """
-    清洗 thought_chain，确保不会向前端暴露工具步骤 result 字段。
-    """
-
-    if not isinstance(thought_chain, list):
-        return None
-
-    normalized_nodes: list[dict[str, Any]] = []
-    for raw_node in thought_chain:
-        if not isinstance(raw_node, dict):
-            continue
-        node_payload = dict(raw_node)
-        raw_children = node_payload.get("children")
-        children_payload: list[dict[str, Any]] = []
-        if isinstance(raw_children, list):
-            for raw_child in raw_children:
-                if not isinstance(raw_child, dict):
-                    continue
-                child_payload = {key: value for key, value in raw_child.items() if key != "result"}
-                children_payload.append(child_payload)
-        node_payload["children"] = children_payload
-        normalized_nodes.append(node_payload)
-
-    return normalized_nodes or None
+    try:
+        add_message_trace(
+            message_uuid=message_uuid,
+            conversation_id=conversation_id,
+            execution_trace=execution_trace,
+            token_usage_detail=persistable_token_usage,
+        )
+    except Exception as exc:  # pragma: no cover - 防御性兜底
+        logger.opt(exception=exc).warning(
+            "Persist message_trace failed message_uuid={message_uuid}",
+            message_uuid=message_uuid,
+        )
 
 
 def _build_assistant_message_callback(*, conversation_id: str):
@@ -640,10 +628,6 @@ def conversation_messages(
         }
         if role == "ai":
             payload["status"] = document.status.value
-            if document.thought_chain:
-                sanitized_thought_chain = _sanitize_thought_chain_for_response(document.thought_chain)
-                if sanitized_thought_chain:
-                    payload["thought_chain"] = sanitized_thought_chain
         result.append(ConversationMessageResponse.model_validate(payload))
     return result
 
