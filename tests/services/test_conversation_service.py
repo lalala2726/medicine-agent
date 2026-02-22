@@ -60,7 +60,6 @@ class _DummyCollection:
         self.last_count_query: dict | None = None
         self.last_cursor: _DummyCursor | None = None
         self.update_matched_count: int = 1
-        self.delete_deleted_count: int = 1
 
     def insert_one(self, document: dict) -> _DummyInsertResult:
         self.last_inserted = document
@@ -74,10 +73,6 @@ class _DummyCollection:
         self.last_update_query = query
         self.last_update_doc = update_doc
         return _DummyUpdateResult(self.update_matched_count)
-
-    def delete_one(self, query: dict):
-        self.last_delete_query = query
-        return _DummyDeleteResult(self.delete_deleted_count)
 
     def count_documents(self, query: dict) -> int:
         self.last_count_query = query
@@ -104,6 +99,7 @@ def test_add_admin_conversation_uses_int64_user_id(monkeypatch):
     assert collection.last_inserted["conversation_type"] == "admin"
     assert collection.last_inserted["user_id"] == Int64(1)
     assert isinstance(collection.last_inserted["user_id"], Int64)
+    assert collection.last_inserted["is_deleted"] == 0
 
 
 def test_get_admin_conversation_uses_int64_user_id_in_query(monkeypatch):
@@ -121,6 +117,7 @@ def test_get_admin_conversation_uses_int64_user_id_in_query(monkeypatch):
         "uuid": "conv-1",
         "conversation_type": "admin",
         "user_id": Int64(1),
+        "is_deleted": {"$ne": 1},
     }
 
 
@@ -135,6 +132,7 @@ def test_add_client_conversation_uses_client_type(monkeypatch):
 
     assert collection.last_inserted is not None
     assert collection.last_inserted["conversation_type"] == "client"
+    assert collection.last_inserted["is_deleted"] == 0
 
 
 def test_save_conversation_title_updates_title(monkeypatch):
@@ -146,7 +144,10 @@ def test_save_conversation_title_updates_title(monkeypatch):
         title="新标题",
     )
 
-    assert collection.last_update_query == {"uuid": "conv-1"}
+    assert collection.last_update_query == {
+        "uuid": "conv-1",
+        "is_deleted": {"$ne": 1},
+    }
     assert collection.last_update_doc is not None
     assert collection.last_update_doc["$set"]["title"] == "新标题"
     assert "update_time" in collection.last_update_doc["$set"]
@@ -167,6 +168,7 @@ def test_update_admin_conversation_title_scopes_by_user_and_type(monkeypatch):
         "uuid": "conv-1",
         "conversation_type": "admin",
         "user_id": Int64(2),
+        "is_deleted": {"$ne": 1},
     }
     assert collection.last_update_doc is not None
     assert collection.last_update_doc["$set"]["title"] == "更新标题"
@@ -183,11 +185,15 @@ def test_delete_admin_conversation_scopes_by_user_and_type(monkeypatch):
     )
 
     assert result is True
-    assert collection.last_delete_query == {
+    assert collection.last_update_query == {
         "uuid": "conv-2",
         "conversation_type": "admin",
         "user_id": Int64(3),
+        "is_deleted": {"$ne": 1},
     }
+    assert collection.last_update_doc is not None
+    assert collection.last_update_doc["$set"]["is_deleted"] == 1
+    assert "update_time" in collection.last_update_doc["$set"]
 
 
 def test_list_admin_conversations_returns_uuid_and_title(monkeypatch):
@@ -208,10 +214,12 @@ def test_list_admin_conversations_returns_uuid_and_title(monkeypatch):
     assert collection.last_count_query == {
         "conversation_type": "admin",
         "user_id": Int64(1),
+        "is_deleted": {"$ne": 1},
     }
     assert collection.last_find_query == {
         "conversation_type": "admin",
         "user_id": Int64(1),
+        "is_deleted": {"$ne": 1},
     }
     assert collection.last_find_projection == {
         "_id": 0,
@@ -227,3 +235,16 @@ def test_list_admin_conversations_returns_uuid_and_title(monkeypatch):
         {"conversation_uuid": "conv-1", "title": "会话一"},
         {"conversation_uuid": "conv-2", "title": "新聊天"},
     ]
+
+
+def test_delete_admin_conversation_returns_false_when_not_matched(monkeypatch):
+    collection = _DummyCollection()
+    collection.update_matched_count = 0
+    monkeypatch.setattr(service_module, "get_mongo_database", lambda: {"conversations": collection})
+
+    result = service_module.delete_admin_conversation(
+        conversation_uuid="conv-3",
+        user_id=4,
+    )
+
+    assert result is False

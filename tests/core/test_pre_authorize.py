@@ -62,7 +62,7 @@ def test_pre_authorize_or_expression_allows_when_any_match():
     try:
         @pre_authorize(
             lambda: has_role(RoleCode.ADMIN)
-            or has_permission("admin:assistant:access")
+                    or has_permission("admin:assistant:access")
         )
         def _handler() -> str:
             return "ok"
@@ -84,7 +84,7 @@ def test_pre_authorize_and_expression_rejects_when_condition_not_met():
     try:
         @pre_authorize(
             lambda: has_role(RoleCode.ADMIN)
-            and has_permission("admin:assistant:access")
+                    and has_permission("admin:assistant:access")
         )
         def _handler() -> str:
             return "ok"

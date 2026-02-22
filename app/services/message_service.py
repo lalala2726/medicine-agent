@@ -23,15 +23,14 @@ from app.schemas.admin_message import (
     MessageStatus,
     TokenUsage,
 )
-from app.services.token_usage_service import build_user_token_usage, normalize_token_usage
 
 
 def _resolve_collection_name() -> str:
     """解析 admin_messages 集合名，支持环境变量覆盖。"""
 
     return (
-        (os.getenv("MONGODB_ADMIN_MESSAGES_COLLECTION") or DEFAULT_ADMIN_MESSAGES_COLLECTION).strip()
-        or DEFAULT_ADMIN_MESSAGES_COLLECTION
+            (os.getenv("MONGODB_ADMIN_MESSAGES_COLLECTION") or DEFAULT_ADMIN_MESSAGES_COLLECTION).strip()
+            or DEFAULT_ADMIN_MESSAGES_COLLECTION
     )
 
 
@@ -91,6 +90,24 @@ def _normalize_execution_trace(
     return normalized_items or None
 
 
+def _normalize_token_usage(
+        token_usage: TokenUsage | dict[str, Any] | None,
+) -> TokenUsage | None:
+    """归一化 token_usage，自动忽略非法数据。"""
+
+    if token_usage is None:
+        return None
+    if isinstance(token_usage, TokenUsage):
+        return token_usage
+    if not isinstance(token_usage, dict):
+        return None
+    try:
+        return TokenUsage.model_validate(token_usage)
+    except Exception:
+        logger.warning("Ignore invalid token_usage while persisting message.")
+        return None
+
+
 def add_message(
         *,
         conversation_id: Annotated[str, Field(min_length=1)],
@@ -111,8 +128,10 @@ def add_message(
         status: 消息状态（success/error）。
         content: 消息内容。
         thought_chain: 可选思维链结构。
-        token_usage: 可选 token 消耗明细。
-        execution_trace: 可选节点执行追踪明细。
+        token_usage: 可选 token 使用明细。通常来源于 workflow state 的 `token_usage`，
+            且仅 assistant 消息会保存，user 消息会被忽略。
+        execution_trace: 可选节点执行追踪明细。通常来源于 workflow state 的
+            `execution_traces`，用于复盘本轮节点/工具调用路径。
         message_uuid: 可选消息 UUID，不传时自动生成。
 
     Returns:
@@ -122,25 +141,26 @@ def add_message(
         ServiceException: 当参数不合法或数据库操作失败时抛出。
     """
 
+    normalized_role = MessageRole(role)
     payload = AdminMessageCreate(
         uuid=message_uuid or str(uuid.uuid4()),
         conversation_id=conversation_id,
-        role=role,
+        role=normalized_role,
         status=status,
         content=content,
         thought_chain=thought_chain,
-        token_usage=normalize_token_usage(token_usage),
+        token_usage=(
+            _normalize_token_usage(token_usage)
+            if normalized_role == MessageRole.ASSISTANT
+            else None
+        ),
         execution_trace=_normalize_execution_trace(execution_trace),
     )
-    if payload.token_usage is None and payload.role == MessageRole.USER:
-        payload = payload.model_copy(
-            update={
-                "token_usage": build_user_token_usage(content=payload.content),
-            }
-        )
 
     now = datetime.datetime.now()
     document = payload.model_dump()
+    if document.get("token_usage") is None:
+        document.pop("token_usage", None)
     document["conversation_id"] = _to_object_id(payload.conversation_id)
     document["created_at"] = now
     document["updated_at"] = now

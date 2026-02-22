@@ -61,6 +61,16 @@ def test_exec_tool_known_tool_events_are_emitted_by_decorator_only():
                 "node": "tool:get_order_list",
                 "state": "start",
                 "message": "正在查询订单信息",
+                "name": "get_order_list",
+                "arguments": "{\"page_num\": 1}",
+            },
+        },
+        {
+            "type": "function_call",
+            "content": {
+                "node": "tool:get_order_list",
+                "state": "start",
+                "message": "正在查询订单信息",
             },
         },
         {
@@ -68,6 +78,16 @@ def test_exec_tool_known_tool_events_are_emitted_by_decorator_only():
             "content": {
                 "node": "tool:get_order_list",
                 "state": "end",
+            },
+        },
+        {
+            "type": "function_call",
+            "content": {
+                "node": "tool:get_order_list",
+                "state": "end",
+                "result": "success",
+                "message": "工具调用成功",
+                "name": "get_order_list",
             },
         },
     ]
@@ -92,6 +112,16 @@ def test_exec_tool_known_tool_without_result_emits_timely():
                 "node": "tool:get_order_list",
                 "state": "start",
                 "message": "正在查询订单信息",
+                "name": "get_order_list",
+                "arguments": "{\"page_num\": 1}",
+            },
+        },
+        {
+            "type": "function_call",
+            "content": {
+                "node": "tool:get_order_list",
+                "state": "start",
+                "message": "正在查询订单信息",
             },
         },
         {
@@ -100,6 +130,16 @@ def test_exec_tool_known_tool_without_result_emits_timely():
                 "node": "tool:get_order_list",
                 "state": "timely",
                 "message": "订单信息正在持续处理中",
+            },
+        },
+        {
+            "type": "function_call",
+            "content": {
+                "node": "tool:get_order_list",
+                "state": "end",
+                "result": "success",
+                "message": "工具调用成功",
+                "name": "get_order_list",
             },
         },
     ]
@@ -164,6 +204,16 @@ def test_exec_tool_running_loop_branch_propagates_contextvars():
                 "node": "tool:get_order_list",
                 "state": "start",
                 "message": "正在查询订单信息",
+                "name": "get_order_list",
+                "arguments": "{}",
+            },
+        },
+        {
+            "type": "function_call",
+            "content": {
+                "node": "tool:get_order_list",
+                "state": "start",
+                "message": "正在查询订单信息",
             },
         },
         {
@@ -171,6 +221,16 @@ def test_exec_tool_running_loop_branch_propagates_contextvars():
             "content": {
                 "node": "tool:get_order_list",
                 "state": "end",
+            },
+        },
+        {
+            "type": "function_call",
+            "content": {
+                "node": "tool:get_order_list",
+                "state": "end",
+                "result": "success",
+                "message": "工具调用成功",
+                "name": "get_order_list",
             },
         },
     ]
@@ -208,6 +268,17 @@ def test_exec_tool_known_tool_emits_parent_node_with_status_context():
                 "parent_node": "order",
                 "state": "start",
                 "message": "正在查询订单信息",
+                "name": "get_order_list",
+                "arguments": "{\"page_num\": 1}",
+            },
+        },
+        {
+            "type": "function_call",
+            "content": {
+                "node": "tool:get_order_list",
+                "parent_node": "order",
+                "state": "start",
+                "message": "正在查询订单信息",
             },
         },
         {
@@ -216,6 +287,17 @@ def test_exec_tool_known_tool_emits_parent_node_with_status_context():
                 "node": "tool:get_order_list",
                 "parent_node": "order",
                 "state": "end",
+            },
+        },
+        {
+            "type": "function_call",
+            "content": {
+                "node": "tool:get_order_list",
+                "parent_node": "order",
+                "state": "end",
+                "result": "success",
+                "message": "工具调用成功",
+                "name": "get_order_list",
             },
         },
         {

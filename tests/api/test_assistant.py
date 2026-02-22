@@ -3,11 +3,11 @@ import json
 from fastapi.responses import StreamingResponse
 from fastapi.testclient import TestClient
 
+import app.main as main_module
 from app.api.routes import admin_assistant as assistant_module
 from app.core.codes import ResponseCode
 from app.core.exceptions import ServiceException
 from app.core.role_codes import RoleCode
-import app.main as main_module
 from app.main import app
 from app.schemas.admin_assistant_history import ConversationMessageResponse, ThoughtNodeResponse
 from app.schemas.auth import AuthUser
@@ -21,30 +21,30 @@ def _extract_payloads(response_text: str) -> list[dict]:
 def _build_streaming_response(text: str) -> StreamingResponse:
     async def _stream():
         yield (
-            "data: "
-            + json.dumps(
-                {
-                    "content": {"text": text},
-                    "type": "answer",
-                    "is_end": False,
-                    "timestamp": 1,
-                },
-                ensure_ascii=False,
-            )
-            + "\n\n"
+                "data: "
+                + json.dumps(
+            {
+                "content": {"text": text},
+                "type": "answer",
+                "is_end": False,
+                "timestamp": 1,
+            },
+            ensure_ascii=False,
+        )
+                + "\n\n"
         )
         yield (
-            "data: "
-            + json.dumps(
-                {
-                    "content": {"text": ""},
-                    "type": "answer",
-                    "is_end": True,
-                    "timestamp": 2,
-                },
-                ensure_ascii=False,
-            )
-            + "\n\n"
+                "data: "
+                + json.dumps(
+            {
+                "content": {"text": ""},
+                "type": "answer",
+                "is_end": True,
+                "timestamp": 2,
+            },
+            ensure_ascii=False,
+        )
+                + "\n\n"
         )
 
     return StreamingResponse(_stream(), media_type="text/event-stream")
@@ -55,10 +55,10 @@ def _auth_headers() -> dict[str, str]:
 
 
 def _mock_auth(
-    monkeypatch,
-    *,
-    roles: list[str] | None = None,
-    permissions: list[str] | None = None,
+        monkeypatch,
+        *,
+        roles: list[str] | None = None,
+        permissions: list[str] | None = None,
 ) -> None:
     resolved_roles = [RoleCode.SUPER_ADMIN.value] if roles is None else roles
     resolved_permissions = [] if permissions is None else permissions

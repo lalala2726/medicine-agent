@@ -3,7 +3,6 @@ from functools import lru_cache
 from typing import Optional
 
 from pymongo import MongoClient
-from pymongo.collection import Collection
 from pymongo.database import Database
 from pymongo.errors import PyMongoError
 
@@ -36,6 +35,7 @@ def _parse_timeout_ms(value: Optional[str]) -> int:
         )
     return timeout_ms
 
+
 @lru_cache(maxsize=1)
 def get_mongo_client() -> MongoClient:
     """
@@ -64,8 +64,6 @@ def get_mongo_database() -> Database:
             message="MONGODB_DB_NAME 不能为空",
         )
     return get_mongo_client()[db_name]
-
-
 
 
 def verify_mongodb_connection() -> None:

@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
 
-from app.api.routes import image_parse as image_parse_module
 import app.main as main_module
+from app.api.routes import image_parse as image_parse_module
 from app.main import app
 from app.schemas.auth import AuthUser
 

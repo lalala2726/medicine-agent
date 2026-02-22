@@ -16,7 +16,9 @@
       "Bash(pip3 list:*)",
       "Bash(ls:*)",
       "Bash(git fetch:*)",
-      "Bash(gh pr list:*)"
+      "Bash(gh pr list:*)",
+      "mcp__web-reader__webReader",
+      "WebSearch"
     ]
   }
 }

@@ -9,8 +9,6 @@ from typing import List
 from fastapi import APIRouter
 from pydantic import AliasChoices, BaseModel, Field
 
-from app.core.codes import ResponseCode
-from app.core.exceptions import ServiceException
 from app.schemas.response import ApiResponse
 from app.services.image_parse_service import parse_drug_images
 
