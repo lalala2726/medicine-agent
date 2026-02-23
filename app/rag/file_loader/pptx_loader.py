@@ -7,7 +7,7 @@ from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE
 
 from app.exception.exceptions import ServiceException
-from app.core.file_loader.base import (
+from app.rag.file_loader.base import (
     FileLoader,
     ImageInfo,
     PageContent,

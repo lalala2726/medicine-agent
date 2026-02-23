@@ -2,7 +2,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import List, Optional
 
-from app.core.file_loader.base import FileLoader, PageContent
+from app.rag.file_loader.base import FileLoader, PageContent
 
 
 class _HTMLTextExtractor(HTMLParser):

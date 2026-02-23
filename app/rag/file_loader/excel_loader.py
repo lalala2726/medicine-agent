@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from app.exception.exceptions import ServiceException
-from app.core.file_loader.base import FileLoader, PageContent
+from app.rag.file_loader.base import FileLoader, PageContent
 
 
 def _parse_xlsx(file_path: Path) -> List[PageContent]:

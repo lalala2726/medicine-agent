@@ -11,7 +11,7 @@ from docx.table import Table
 from docx.text.paragraph import Paragraph
 
 from app.exception.exceptions import ServiceException
-from app.core.file_loader.base import (
+from app.rag.file_loader.base import (
     FileLoader,
     ImageInfo,
     PageContent,

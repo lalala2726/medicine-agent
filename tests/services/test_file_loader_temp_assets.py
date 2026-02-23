@@ -1,4 +1,4 @@
-from app.core.file_loader import base
+from app.rag.file_loader import base
 
 
 def test_create_temp_image_dir_uses_env(monkeypatch, tmp_path):
