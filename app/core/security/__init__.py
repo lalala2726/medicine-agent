@@ -12,6 +12,7 @@ from app.core.security.auth_context import (
     set_authorization_header,
     set_current_user,
 )
+from app.core.security.cors import load_cors_config
 from app.core.security.pre_authorize import has_permission, has_role, pre_authorize
 from app.core.security.role_codes import RoleCode
 
@@ -20,6 +21,7 @@ __all__ = [
     "pre_authorize",
     "has_role",
     "has_permission",
+    "load_cors_config",
     "set_authorization_header",
     "reset_authorization_header",
     "get_authorization_header",

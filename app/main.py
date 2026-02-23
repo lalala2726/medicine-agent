@@ -9,7 +9,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import Response
 
 from app.api.main import api_router
-from app.core.cors import load_cors_config
+from app.core.security.cors import load_cors_config
 from app.exception.exception_handlers import ExceptionHandlers
 from app.exception.exceptions import ServiceException
 from app.core.security.auth_context import (
