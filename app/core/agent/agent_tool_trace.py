@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-import json
 from typing import Any, Mapping
-
-from langchain_core.messages import ToolMessage
 
 
 def _to_non_negative_int(value: Any) -> int | None:
@@ -257,50 +254,6 @@ def _aggregate_usage_from_ai_messages(
     }, is_complete
 
 
-def _extract_tool_error_from_content(content: Any) -> tuple[bool, str | None]:
-    """
-    从 ToolMessage 内容推断是否报错。
-
-    Args:
-        content: ToolMessage 的 content 字段。
-
-    Returns:
-        tuple[bool, str | None]: `(is_error, error_message)`。
-    """
-
-    if isinstance(content, Mapping):
-        error_value = content.get("error")
-        if error_value:
-            return True, str(error_value)
-        return False, None
-
-    if isinstance(content, list):
-        for item in content:
-            is_error, error_message = _extract_tool_error_from_content(item)
-            if is_error:
-                return True, error_message
-        return False, None
-
-    text = str(content or "").strip()
-    if not text:
-        return False, None
-
-    if "__ERROR__:" in text:
-        error_message = text.split("__ERROR__:", 1)[1].strip()
-        return True, error_message or text
-
-    try:
-        parsed = json.loads(text)
-    except (TypeError, ValueError, json.JSONDecodeError):
-        return False, None
-
-    if isinstance(parsed, Mapping):
-        error_value = parsed.get("error")
-        if error_value:
-            return True, str(error_value)
-    return False, None
-
-
 def _build_tool_call_traces(messages: list[Any]) -> list[dict[str, Any]]:
     """
     从最终消息序列构建工具调用追踪结构。
@@ -312,15 +265,6 @@ def _build_tool_call_traces(messages: list[Any]) -> list[dict[str, Any]]:
         list[dict[str, Any]]: 结构化工具调用追踪明细。
     """
 
-    tool_messages: dict[str, ToolMessage] = {}
-    for message in messages:
-        if not isinstance(message, ToolMessage):
-            continue
-        tool_call_id = str(getattr(message, "tool_call_id", "") or "").strip()
-        if not tool_call_id:
-            continue
-        tool_messages[tool_call_id] = message
-
     tool_calls: list[dict[str, Any]] = []
     for message in messages:
         if not _is_ai_message(message):
@@ -331,17 +275,12 @@ def _build_tool_call_traces(messages: list[Any]) -> list[dict[str, Any]]:
         for raw_call in raw_tool_calls:
             if not isinstance(raw_call, Mapping):
                 continue
-            tool_call_id = str(raw_call.get("id") or "").strip()
-            matched_tool_message = tool_messages.get(tool_call_id)
-            is_error, error_message = _extract_tool_error_from_content(
-                getattr(matched_tool_message, "content", None)
-            )
             tool_calls.append(
                 {
                     "tool_name": str(raw_call.get("name") or ""),
                     "tool_input": raw_call.get("args"),
-                    "is_error": is_error,
-                    "error_message": error_message,
+                    "is_error": False,
+                    "error_message": None,
                     "llm_used": False,
                     "llm_usage_complete": True,
                     "llm_token_usage": None,

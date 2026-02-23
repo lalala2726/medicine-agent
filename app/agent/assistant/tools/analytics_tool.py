@@ -7,10 +7,7 @@ from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
 from app.utils.prompt_utils import load_prompt
-from app.core.agent.agent_tool_events import (
-    build_tool_status_middleware,
-    tool_call_status,
-)
+from app.core.agent.agent_tool_events import tool_call_status
 from app.core.agent.agent_runtime import run_agent_invoke_with_trace
 from app.core.langsmith import traceable
 from app.core.llm import create_agent_instance
@@ -203,7 +200,6 @@ def analytics_tool_agent(task_description: str) -> str:
             get_analytics_hot_products,
             get_analytics_product_return_rates,
         ],
-        middleware=[build_tool_status_middleware(enabled=False)],
     )
     trace = run_agent_invoke_with_trace(
         agent,

@@ -186,44 +186,57 @@ def run_agent_with_trace(
         dict[str, Any]: 统一追踪结构（text/model_name/usage/is_usage_complete/tool_calls/raw_content）。
     """
 
-    streamed_chunks: list[str] = []
-    latest_state: dict[str, Any] = {}
+    async def _collect_stream_events() -> tuple[list[str], dict[str, Any]]:
+        """
+        异步消费 agent astream 事件并提取增量文本与最终状态。
 
-    for raw_event in agent_instance.stream(
-        {"messages": messages},
-        stream_mode=["messages", "values"],
-    ):
-        if not isinstance(raw_event, tuple) or len(raw_event) != 2:
-            continue
-        mode, payload = raw_event
+        Returns:
+            tuple[list[str], dict[str, Any]]:
+                - 增量文本分片列表；
+                - 最后一次 values 状态。
+        """
 
-        if mode == "values":
-            if isinstance(payload, Mapping):
-                latest_state = dict(payload)
-            continue
+        streamed_chunks: list[str] = []
+        latest_state: dict[str, Any] = {}
 
-        if mode != "messages":
-            continue
-        if not isinstance(payload, tuple) or len(payload) != 2:
-            continue
+        async for raw_event in agent_instance.astream(
+            {"messages": messages},
+            stream_mode=["messages", "values"],
+        ):
+            if not isinstance(raw_event, tuple) or len(raw_event) != 2:
+                continue
+            mode, payload = raw_event
 
-        message_chunk, metadata = payload
-        if not isinstance(metadata, Mapping):
-            continue
-        if str(metadata.get("langgraph_node") or "") != "model":
-            continue
+            if mode == "values":
+                if isinstance(payload, Mapping):
+                    latest_state = dict(payload)
+                continue
 
-        delta = extract_text(message_chunk)
-        if not delta:
-            continue
+            if mode != "messages":
+                continue
+            if not isinstance(payload, tuple) or len(payload) != 2:
+                continue
 
-        streamed_chunks.append(delta)
-        emit_sse_response(
-            AssistantResponse(
-                type=MessageType.ANSWER,
-                content=Content(text=delta),
+            message_chunk, metadata = payload
+            if not isinstance(metadata, Mapping):
+                continue
+            if str(metadata.get("langgraph_node") or "") != "model":
+                continue
+
+            delta = extract_text(message_chunk)
+            if not delta:
+                continue
+
+            streamed_chunks.append(delta)
+            emit_sse_response(
+                AssistantResponse(
+                    type=MessageType.ANSWER,
+                    content=Content(text=delta),
+                )
             )
-        )
+        return streamed_chunks, latest_state
+
+    streamed_chunks, latest_state = _run_async(_collect_stream_events())
 
     final_messages = _resolve_final_messages(latest_state)
     trace_result = _build_trace_result(
