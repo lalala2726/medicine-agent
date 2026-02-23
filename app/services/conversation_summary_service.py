@@ -9,7 +9,7 @@ from pydantic import Field
 from pymongo import ReturnDocument
 
 from app.core.codes import ResponseCode
-from app.exception.exceptions import ServiceException
+from app.core.exception.exceptions import ServiceException
 from app.core.mongodb import DEFAULT_CONVERSATION_SUMMARIES_COLLECTION, get_mongo_database
 from app.schemas.document.conversation_summary import (
     ConversationSummary,

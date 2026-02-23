@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 import app.main as main_module
 from app.api.routes import admin_assistant as assistant_module
 from app.core.codes import ResponseCode
-from app.exception.exceptions import ServiceException
+from app.core.exception.exceptions import ServiceException
 from app.core.security.role_codes import RoleCode
 from app.main import app
 from app.schemas.admin_assistant_history import ConversationMessageResponse, ThoughtNodeResponse

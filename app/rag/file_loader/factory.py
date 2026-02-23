@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Dict, Type
 
 from app.core.codes import ResponseCode
-from app.exception.exceptions import ServiceException
+from app.core.exception.exceptions import ServiceException
 from app.rag.file_loader.base import (
     FileLoader,
     create_temp_image_dir,

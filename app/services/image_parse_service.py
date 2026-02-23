@@ -4,7 +4,7 @@ from typing import List
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.core.codes import ResponseCode
-from app.exception.exceptions import ServiceException
+from app.core.exception.exceptions import ServiceException
 from app.core.llm import create_chat_model
 from app.core.prompts import DRUG_PARSER_PROMPT
 from app.utils.file_utils import FileUtils

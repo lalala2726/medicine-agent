@@ -6,7 +6,7 @@ from pymilvus import (
 )
 
 from app.core.codes import ResponseCode
-from app.exception.exceptions import ServiceException
+from app.core.exception.exceptions import ServiceException
 from app.core.llm import create_embedding_model
 from app.core.milvus import get_milvus_client
 from app.utils.token_utills import TokenUtils

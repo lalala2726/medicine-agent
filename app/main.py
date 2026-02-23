@@ -10,8 +10,8 @@ from starlette.responses import Response
 
 from app.api.main import api_router
 from app.core.security.cors import load_cors_config
-from app.exception.exception_handlers import ExceptionHandlers
-from app.exception.exceptions import ServiceException
+from app.core.exception.exception_handlers import ExceptionHandlers
+from app.core.exception.exceptions import ServiceException
 from app.core.security.auth_context import (
     reset_authorization_header,
     reset_current_user,

@@ -13,7 +13,7 @@ from loguru import logger
 from app.agent.assistant.state import ChatHistoryMessage, ExecutionTraceState, TokenUsageState
 from app.agent.assistant.workflow import build_graph
 from app.core.codes import ResponseCode
-from app.exception.exceptions import ServiceException
+from app.core.exception.exceptions import ServiceException
 from app.core.langsmith import build_langsmith_runnable_config
 from app.core.llm import create_chat_model
 from app.core.security.auth_context import get_user_id

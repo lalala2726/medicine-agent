@@ -6,7 +6,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict
 
 from app.core.codes import ResponseCode
-from app.exception.exceptions import ServiceException
+from app.core.exception.exceptions import ServiceException
 
 
 class HttpResponse(BaseModel):

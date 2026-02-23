@@ -4,7 +4,7 @@ import pytest
 from bson import ObjectId
 
 from app.core.codes import ResponseCode
-from app.exception.exceptions import ServiceException
+from app.core.exception.exceptions import ServiceException
 from app.schemas.document.message_trace import MessageTraceDocument
 from app.services import message_trace_service as service_module
 

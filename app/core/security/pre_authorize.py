@@ -5,7 +5,7 @@ from functools import wraps
 from typing import Callable
 
 from app.core.codes import ResponseCode
-from app.exception.exceptions import ServiceException
+from app.core.exception.exceptions import ServiceException
 from app.core.security.auth_context import get_current_user
 from app.core.security.role_codes import RoleCode
 

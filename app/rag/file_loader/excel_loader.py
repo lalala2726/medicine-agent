@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import List, Optional
 
-from app.exception.exceptions import ServiceException
+from app.core.exception.exceptions import ServiceException
 from app.rag.file_loader.base import FileLoader, PageContent
 
 

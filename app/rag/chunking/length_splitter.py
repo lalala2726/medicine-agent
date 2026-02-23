@@ -6,7 +6,7 @@ from typing import List
 from langchain_text_splitters import CharacterTextSplitter, RecursiveCharacterTextSplitter
 
 from app.rag.chunking.base import ChunkStrategy, SplitChunk, SplitConfig, build_page_metadata
-from app.exception.exceptions import ServiceException
+from app.core.exception.exceptions import ServiceException
 from app.rag.file_loader.base import PageContent
 
 

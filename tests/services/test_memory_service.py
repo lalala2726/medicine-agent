@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.core.codes import ResponseCode
-from app.exception.exceptions import ServiceException
+from app.core.exception.exceptions import ServiceException
 from app.schemas.document.message import MessageRole
 from app.schemas.memory import Memory
 from app.services import memory_service as service_module

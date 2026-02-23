@@ -2,7 +2,7 @@ import importlib.util
 
 import pytest
 
-from app.exception.exceptions import ServiceException
+from app.core.exception.exceptions import ServiceException
 from app.utils.token_utills import TokenUtils
 
 

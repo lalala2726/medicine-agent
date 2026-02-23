@@ -4,7 +4,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Path, Query
 from pydantic import BaseModel, Field, field_validator
 
 from app.rag.chunking import ChunkStrategyType
-from app.exception.exceptions import ServiceException
+from app.core.exception.exceptions import ServiceException
 from app.schemas.response import ApiResponse, PageResponse
 from app.services.knowledge_base_service import (
     create_collection,

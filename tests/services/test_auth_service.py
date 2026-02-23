@@ -5,7 +5,7 @@ import pytest
 
 import app.services.auth_service as auth_service
 from app.core.codes import ResponseCode
-from app.exception.exceptions import ServiceException
+from app.core.exception.exceptions import ServiceException
 from app.schemas.auth import AuthUser
 
 
