@@ -7,7 +7,7 @@ from langchain_core.messages import AIMessage, SystemMessage
 from app.agent.assistant.model_switch import model_switch
 from app.utils.prompt_utils import load_prompt
 from app.agent.assistant.state import AgentState, ExecutionTraceState
-from app.core.agent_trace import run_model_with_trace
+from app.core.agent.agent_runtime import run_model_with_trace
 from app.core.langsmith import traceable
 from app.core.llm import create_chat_model
 from app.services.token_usage_service import append_trace_and_refresh_token_usage

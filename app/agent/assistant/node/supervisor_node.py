@@ -11,7 +11,7 @@ from app.agent.assistant.tools.analytics_tool import analytics_tool_agent
 from app.agent.assistant.tools.chart_tool import chart_tool_agent
 from app.agent.assistant.tools.order_tool import order_tool_agent
 from app.agent.assistant.tools.product_tool import product_tool_agent
-from app.core.agent_trace import run_agent_with_trace
+from app.core.agent.agent_runtime import run_agent_with_trace
 from app.core.langsmith import traceable
 from app.core.llm import create_agent_instance, create_chat_model
 from app.services.token_usage_service import append_trace_and_refresh_token_usage
