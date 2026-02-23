@@ -7,10 +7,9 @@ from typing import Annotated
 from bson import ObjectId
 from pydantic import Field
 from pymongo import ReturnDocument
-from pymongo.errors import PyMongoError
 
 from app.core.codes import ResponseCode
-from app.core.exceptions import ServiceException
+from app.exception.exceptions import ServiceException
 from app.core.mongodb import DEFAULT_CONVERSATION_SUMMARIES_COLLECTION, get_mongo_database
 from app.schemas.document.conversation_summary import (
     ConversationSummary,
@@ -48,7 +47,12 @@ def save_conversation_summary(
         summarized_messages: list[str] | None = None,
         status: str = "success",
 ) -> str:
-    """保存会话 summary（按 conversation_id upsert）。"""
+    """
+    保存会话 summary（按 conversation_id upsert）。
+
+    Note:
+        数据库异常会由全局异常处理器统一拦截。
+    """
 
     normalized_messages = [item for item in (summarized_messages or []) if isinstance(item, str) and item.strip()]
     now = datetime.datetime.now()
@@ -70,15 +74,12 @@ def save_conversation_summary(
     )
     update_doc = update_payload.model_dump(by_alias=True, mode="python")
 
-    try:
-        document = collection.find_one_and_update(
-            query,
-            update_doc,
-            upsert=True,
-            return_document=ReturnDocument.AFTER,
-        )
-    except PyMongoError as exc:
-        raise ServiceException(code=ResponseCode.DATABASE_ERROR, message="数据库错误") from exc
+    document = collection.find_one_and_update(
+        query,
+        update_doc,
+        upsert=True,
+        return_document=ReturnDocument.AFTER,
+    )
 
     if not isinstance(document, dict) or "_id" not in document:
         raise ServiceException(code=ResponseCode.DATABASE_ERROR, message="数据库错误")
@@ -89,16 +90,18 @@ def get_conversation_summary(
         *,
         conversation_id: Annotated[str, Field(min_length=1)],
 ) -> ConversationSummary | None:
-    """按 conversation_id 查询会话 summary。"""
+    """
+    按 conversation_id 查询会话 summary。
+
+    Note:
+        数据库异常会由全局异常处理器统一拦截。
+    """
 
     db = get_mongo_database()
     collection = db[_resolve_collection_name()]
     query = {"conversation_id": _to_object_id(conversation_id)}
 
-    try:
-        document = collection.find_one(query)
-        if document is None:
-            return None
-        return ConversationSummary.model_validate(document)
-    except PyMongoError as exc:
-        raise ServiceException(code=ResponseCode.DATABASE_ERROR, message="数据库错误") from exc
+    document = collection.find_one(query)
+    if document is None:
+        return None
+    return ConversationSummary.model_validate(document)

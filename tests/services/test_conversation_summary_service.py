@@ -4,7 +4,7 @@ import pytest
 from bson import ObjectId
 
 from app.core.codes import ResponseCode
-from app.core.exceptions import ServiceException
+from app.exception.exceptions import ServiceException
 from app.schemas.document.conversation_summary import (
     ConversationSummary,
     ConversationSummarySetOnInsert,

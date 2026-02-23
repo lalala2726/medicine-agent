@@ -6,7 +6,7 @@ from typing import Dict, List, Optional
 from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE
 
-from app.core.exceptions import ServiceException
+from app.exception.exceptions import ServiceException
 from app.core.file_loader.base import (
     FileLoader,
     ImageInfo,

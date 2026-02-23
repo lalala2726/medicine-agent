@@ -4,7 +4,7 @@ from contextvars import ContextVar, Token
 from typing import Optional
 
 from app.core.codes import ResponseCode
-from app.core.exceptions import ServiceException
+from app.exception.exceptions import ServiceException
 from app.schemas.auth import AuthUser
 
 _authorization_header: ContextVar[Optional[str]] = ContextVar(

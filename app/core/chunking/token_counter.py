@@ -3,7 +3,7 @@ from __future__ import annotations
 import importlib.util
 from typing import Optional
 
-from app.core.exceptions import ServiceException
+from app.exception.exceptions import ServiceException
 
 
 def _get_encoder(encoding_name: Optional[str], model_name: Optional[str]):

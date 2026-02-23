@@ -12,7 +12,7 @@ from urllib.parse import unquote, urlparse
 from urllib.request import urlopen
 
 from app.core.codes import ResponseCode
-from app.core.exceptions import ServiceException
+from app.exception.exceptions import ServiceException
 
 
 class FileUtils:

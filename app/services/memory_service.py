@@ -5,7 +5,7 @@ from typing import Literal
 from langchain_core.messages import AIMessage, HumanMessage
 
 from app.core.codes import ResponseCode
-from app.core.exceptions import ServiceException
+from app.exception.exceptions import ServiceException
 from app.schemas.document.message import MessageRole
 from app.schemas.memory import Memory
 from app.services.conversation_service import get_conversation

@@ -5,7 +5,7 @@ from urllib.parse import urlparse
 from pymilvus import MilvusClient
 
 from app.core.codes import ResponseCode
-from app.core.exceptions import ServiceException
+from app.exception.exceptions import ServiceException
 
 
 def _build_milvus_uri() -> str:

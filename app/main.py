@@ -4,13 +4,14 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from pymongo.errors import PyMongoError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import Response
 
 from app.api.main import api_router
 from app.core.cors import load_cors_config
-from app.core.exception_handlers import ExceptionHandlers
-from app.core.exceptions import ServiceException
+from app.exception.exception_handlers import ExceptionHandlers
+from app.exception.exceptions import ServiceException
 from app.core.request_context import (
     reset_authorization_header,
     reset_current_user,
@@ -50,6 +51,7 @@ app.add_exception_handler(
 )
 app.add_exception_handler(ServiceException, ExceptionHandlers.service_exception_handler)
 app.add_exception_handler(StarletteHTTPException, ExceptionHandlers.http_exception_handler)
+app.add_exception_handler(PyMongoError, ExceptionHandlers.pymongo_exception_handler)
 app.add_exception_handler(Exception, ExceptionHandlers.unhandled_exception_handler)
 
 AUTH_BYPASS_PATHS = {

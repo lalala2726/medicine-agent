@@ -6,10 +6,9 @@ from typing import Annotated, Any
 
 from bson import ObjectId
 from pydantic import Field
-from pymongo.errors import PyMongoError
 
 from app.core.codes import ResponseCode
-from app.core.exceptions import ServiceException
+from app.exception.exceptions import ServiceException
 from app.core.mongodb import DEFAULT_MESSAGE_TRACES_COLLECTION, get_mongo_database
 from app.schemas.document.message_trace import (
     ExecutionTraceItem,
@@ -91,6 +90,9 @@ def add_message_trace(
     新增一条 message_trace。
 
     当 execution_trace 与 token_usage_detail 都为空时，直接跳过写入并返回 None。
+
+    Note:
+        数据库异常会由全局异常处理器统一拦截。
     """
 
     normalized_execution_trace = _normalize_execution_trace(execution_trace)
@@ -118,25 +120,24 @@ def add_message_trace(
 
     db = get_mongo_database()
     collection = db[_resolve_collection_name()]
-    try:
-        result = collection.insert_one(document)
-        return str(result.inserted_id)
-    except PyMongoError as exc:
-        raise ServiceException(code=ResponseCode.DATABASE_ERROR, message="数据库错误") from exc
+    result = collection.insert_one(document)
+    return str(result.inserted_id)
 
 
 def get_message_trace_by_message_uuid(
         *,
         message_uuid: Annotated[str, Field(min_length=1)],
 ) -> MessageTraceDocument | None:
-    """按 message_uuid 查询单条 message_trace。"""
+    """
+    按 message_uuid 查询单条 message_trace。
+
+    Note:
+        数据库异常会由全局异常处理器统一拦截。
+    """
 
     db = get_mongo_database()
     collection = db[_resolve_collection_name()]
-    try:
-        document = collection.find_one({"message_uuid": message_uuid})
-        if document is None:
-            return None
-        return MessageTraceDocument.model_validate(document)
-    except PyMongoError as exc:
-        raise ServiceException(code=ResponseCode.DATABASE_ERROR, message="数据库错误") from exc
+    document = collection.find_one({"message_uuid": message_uuid})
+    if document is None:
+        return None
+    return MessageTraceDocument.model_validate(document)

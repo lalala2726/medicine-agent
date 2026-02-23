@@ -5,7 +5,7 @@ from typing import Optional
 from redis import Redis
 
 from app.core.codes import ResponseCode
-from app.core.exceptions import ServiceException
+from app.exception.exceptions import ServiceException
 
 
 def _parse_int(value: Optional[str], name: str, default: int) -> int:

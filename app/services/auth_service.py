@@ -6,7 +6,7 @@ import httpx
 from pydantic import ValidationError
 
 from app.core.codes import ResponseCode
-from app.core.exceptions import ServiceException
+from app.exception.exceptions import ServiceException
 from app.schemas.auth import AuthUser, AuthorizationContext
 from app.schemas.http_response import HttpResponse
 from app.utils.http_client import HttpClient

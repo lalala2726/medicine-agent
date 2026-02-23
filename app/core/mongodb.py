@@ -7,7 +7,7 @@ from pymongo.database import Database
 from pymongo.errors import PyMongoError
 
 from app.core.codes import ResponseCode
-from app.core.exceptions import ServiceException
+from app.exception.exceptions import ServiceException
 
 DEFAULT_MONGODB_URI = "mongodb://localhost:27017"
 DEFAULT_MONGODB_DB_NAME = "medicine_ai_agent"

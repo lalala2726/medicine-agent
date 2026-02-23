@@ -5,10 +5,7 @@ from typing import Annotated, Any, Mapping
 from bson.int64 import Int64
 from pydantic import Field
 from pymongo import DESCENDING
-from pymongo.errors import PyMongoError
 
-from app.core.codes import ResponseCode
-from app.core.exceptions import ServiceException
 from app.core.mongodb import DEFAULT_CONVERSATIONS_COLLECTION, get_mongo_database
 from app.schemas.document.conversation import (
     ConversationCreate,
@@ -68,8 +65,8 @@ def get_conversation(
     Returns:
         ConversationDocument | None: 如果找到匹配的会话则返回会话模型，否则返回 None
 
-    Raises:
-        ServiceException: 当数据库操作出现错误时抛出异常
+    Note:
+        数据库异常会由全局异常处理器统一拦截。
     """
     db = get_mongo_database()
     collection = db[_TABLE_NAME]
@@ -87,11 +84,7 @@ def get_conversation(
         "is_deleted": _NOT_DELETED_FILTER,
     }
 
-    try:
-        document = collection.find_one(query)
-    except PyMongoError as exc:
-        raise ServiceException(code=ResponseCode.DATABASE_ERROR, message="数据库错误") from exc
-
+    document = collection.find_one(query)
     if document is None:
         return None
     return _to_conversation_document(document)
@@ -114,8 +107,8 @@ def get_admin_conversation(
     Returns:
         ConversationDocument | None: 如果找到匹配的会话则返回会话模型，否则返回 None
 
-    Raises:
-        ServiceException: 当数据库操作出现错误时抛出异常
+    Note:
+        数据库异常会由全局异常处理器统一拦截。
     """
     return get_conversation(
         conversation_uuid=conversation_uuid,
@@ -140,10 +133,8 @@ def get_client_conversation(
     Returns:
         ConversationDocument | None: 如果找到匹配的会话则返回会话模型，否则返回 None
 
-    Raises:
-        ServiceException: 当数据库操作出现错误时抛出异常
-        :param conversation_uuid: 会话唯一标识UUID
-        :param user_id: 用户ID
+    Note:
+        数据库异常会由全局异常处理器统一拦截。
     """
     return get_conversation(
         user_id=user_id,
@@ -169,8 +160,8 @@ def _add_conversation(
     Returns:
         str: _id (MongoDB ObjectId 字符串)
 
-    Raises:
-        ServiceException: 当数据库操作出现错误时抛出异常
+    Note:
+        数据库异常会由全局异常处理器统一拦截。
     """
     db = get_mongo_database()
     collection = db[_TABLE_NAME]
@@ -183,11 +174,8 @@ def _add_conversation(
     # 统一从模型序列化到 Mongo 文档，避免散落的手写字段。
     conversation = payload.model_dump(mode="python")
 
-    try:
-        result = collection.insert_one(conversation)
-        return str(result.inserted_id)
-    except PyMongoError as exc:
-        raise ServiceException(code=ResponseCode.DATABASE_ERROR, message="数据库错误") from exc
+    result = collection.insert_one(conversation)
+    return str(result.inserted_id)
 
 
 def add_client_conversation(
@@ -207,8 +195,8 @@ def add_client_conversation(
     Returns:
         str: _id (MongoDB ObjectId 字符串)
 
-    Raises:
-        ServiceException: 当数据库操作出现错误时抛出异常
+    Note:
+        数据库异常会由全局异常处理器统一拦截。
     """
     return _add_conversation(
         conversation_uuid=conversation_uuid,
@@ -234,8 +222,8 @@ def add_admin_conversation(
     Returns:
         str: _id (MongoDB ObjectId 字符串)
 
-    Raises:
-        ServiceException: 当数据库操作出现错误时抛出异常
+    Note:
+        数据库异常会由全局异常处理器统一拦截。
     """
     return _add_conversation(
         conversation_uuid=conversation_uuid,
@@ -263,8 +251,8 @@ def list_admin_conversations(
             - rows: 会话列表项模型列表。
             - total: 总记录数。
 
-    Raises:
-        ServiceException: 当数据库操作失败时抛出异常。
+    Note:
+        数据库异常会由全局异常处理器统一拦截。
     """
 
     db = get_mongo_database()
@@ -282,16 +270,13 @@ def list_admin_conversations(
     }
     skip = (page_num - 1) * page_size
 
-    try:
-        total = collection.count_documents(query)
-        cursor = (
-            collection.find(query, projection)
-            .sort("update_time", DESCENDING)
-            .skip(skip)
-            .limit(page_size)
-        )
-    except PyMongoError as exc:
-        raise ServiceException(code=ResponseCode.DATABASE_ERROR, message="数据库错误") from exc
+    total = collection.count_documents(query)
+    cursor = (
+        collection.find(query, projection)
+        .sort("update_time", DESCENDING)
+        .skip(skip)
+        .limit(page_size)
+    )
 
     rows: list[ConversationListItem] = []
     for item in cursor:
@@ -320,8 +305,8 @@ def save_conversation_title(
         conversation_uuid: 会话唯一标识 UUID。
         title: 新标题。
 
-    Raises:
-        ServiceException: 当数据库操作失败时抛出。
+    Note:
+        数据库异常会由全局异常处理器统一拦截。
     """
 
     db = get_mongo_database()
@@ -335,10 +320,7 @@ def save_conversation_title(
     update_set = ConversationUpdateSet(title=title, update_time=now)
     update_doc = {"$set": update_set.model_dump(mode="python", exclude_none=True)}
 
-    try:
-        collection.update_one(query, update_doc)
-    except PyMongoError as exc:
-        raise ServiceException(code=ResponseCode.DATABASE_ERROR, message="数据库错误") from exc
+    collection.update_one(query, update_doc)
 
 
 def update_admin_conversation_title(
@@ -358,8 +340,8 @@ def update_admin_conversation_title(
     Returns:
         bool: True 表示命中并更新成功；False 表示会话不存在或无权限。
 
-    Raises:
-        ServiceException: 数据库异常时抛出。
+    Note:
+        数据库异常会由全局异常处理器统一拦截。
     """
 
     db = get_mongo_database()
@@ -375,11 +357,8 @@ def update_admin_conversation_title(
     update_set = ConversationUpdateSet(title=title, update_time=now)
     update_doc = {"$set": update_set.model_dump(mode="python", exclude_none=True)}
 
-    try:
-        result = collection.update_one(query, update_doc)
-        return int(getattr(result, "matched_count", 0)) > 0
-    except PyMongoError as exc:
-        raise ServiceException(code=ResponseCode.DATABASE_ERROR, message="数据库错误") from exc
+    result = collection.update_one(query, update_doc)
+    return int(getattr(result, "matched_count", 0)) > 0
 
 
 def delete_admin_conversation(
@@ -397,8 +376,8 @@ def delete_admin_conversation(
     Returns:
         bool: True 表示删除成功；False 表示会话不存在、无权限或已删除。
 
-    Raises:
-        ServiceException: 数据库异常时抛出。
+    Note:
+        数据库异常会由全局异常处理器统一拦截。
     """
 
     db = get_mongo_database()
@@ -414,11 +393,8 @@ def delete_admin_conversation(
     update_set = ConversationUpdateSet(is_deleted=1, update_time=now)
     update_doc = {"$set": update_set.model_dump(mode="python", exclude_none=True)}
 
-    try:
-        result = collection.update_one(query, update_doc)
-        return int(getattr(result, "matched_count", 0)) > 0
-    except PyMongoError as exc:
-        raise ServiceException(code=ResponseCode.DATABASE_ERROR, message="数据库错误") from exc
+    result = collection.update_one(query, update_doc)
+    return int(getattr(result, "matched_count", 0)) > 0
 
 
 def conversation_exists(
@@ -435,8 +411,8 @@ def conversation_exists(
     Returns:
         bool: True 表示会话存在，False 表示会话不存在
 
-    Raises:
-        ServiceException: 当数据库操作出现错误时抛出异常
+    Note:
+        数据库异常会由全局异常处理器统一拦截。
     """
     db = get_mongo_database()
     collection = db[_TABLE_NAME]

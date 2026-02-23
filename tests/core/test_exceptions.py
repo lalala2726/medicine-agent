@@ -1,5 +1,5 @@
 from app.core.codes import ResponseCode
-from app.core.exceptions import ServiceException
+from app.exception.exceptions import ServiceException
 
 
 def test_service_exception_with_response_code_message():

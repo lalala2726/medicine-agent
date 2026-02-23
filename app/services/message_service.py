@@ -9,10 +9,9 @@ from bson import ObjectId
 from loguru import logger
 from pydantic import Field
 from pymongo import ASCENDING, DESCENDING
-from pymongo.errors import PyMongoError
 
 from app.core.codes import ResponseCode
-from app.core.exceptions import ServiceException
+from app.exception.exceptions import ServiceException
 from app.core.mongodb import DEFAULT_MESSAGES_COLLECTION, get_mongo_database
 from app.schemas.document.message import (
     MessageRole,
@@ -139,7 +138,10 @@ def add_message(
         str: 新增消息的 Mongo ObjectId 字符串。
 
     Raises:
-        ServiceException: 当参数不合法或数据库操作失败时抛出。
+        ServiceException: 当参数不合法时抛出。
+
+    Note:
+        数据库异常会由全局异常处理器统一拦截。
     """
 
     normalized_role = MessageRole(role)
@@ -167,11 +169,8 @@ def add_message(
 
     db = get_mongo_database()
     collection = db[_resolve_collection_name()]
-    try:
-        result = collection.insert_one(document)
-        return str(result.inserted_id)
-    except PyMongoError as exc:
-        raise ServiceException(code=ResponseCode.DATABASE_ERROR, message="数据库错误") from exc
+    result = collection.insert_one(document)
+    return str(result.inserted_id)
 
 
 def get_message_by_uuid(message_uuid: Annotated[str, Field(min_length=1)]) -> MessageDocument | None:
@@ -183,17 +182,17 @@ def get_message_by_uuid(message_uuid: Annotated[str, Field(min_length=1)]) -> Me
 
     Returns:
         MessageDocument | None: 命中返回消息模型，否则返回 None。
+
+    Note:
+        数据库异常会由全局异常处理器统一拦截。
     """
 
     db = get_mongo_database()
     collection = db[_resolve_collection_name()]
-    try:
-        document = collection.find_one({"uuid": message_uuid})
-        if document is None:
-            return None
-        return _to_message_document(document)
-    except PyMongoError as exc:
-        raise ServiceException(code=ResponseCode.DATABASE_ERROR, message="数据库错误") from exc
+    document = collection.find_one({"uuid": message_uuid})
+    if document is None:
+        return None
+    return _to_message_document(document)
 
 
 def list_messages(
@@ -215,6 +214,9 @@ def list_messages(
     Returns:
         list[MessageDocument]: 消息文档模型列表。
             仅负责数据库模型输出，不做上层会话消息格式转换。
+
+    Note:
+        数据库异常会由全局异常处理器统一拦截。
     """
 
     sort_direction = ASCENDING if ascending else DESCENDING
@@ -222,8 +224,5 @@ def list_messages(
 
     db = get_mongo_database()
     collection = db[_resolve_collection_name()]
-    try:
-        cursor = collection.find(query).sort("created_at", sort_direction).skip(skip).limit(limit)
-        return [_to_message_document(item) for item in cursor]
-    except PyMongoError as exc:
-        raise ServiceException(code=ResponseCode.DATABASE_ERROR, message="数据库错误") from exc
+    cursor = collection.find(query).sort("created_at", sort_direction).skip(skip).limit(limit)
+    return [_to_message_document(item) for item in cursor]
