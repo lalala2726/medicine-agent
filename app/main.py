@@ -12,7 +12,7 @@ from app.api.main import api_router
 from app.core.cors import load_cors_config
 from app.exception.exception_handlers import ExceptionHandlers
 from app.exception.exceptions import ServiceException
-from app.core.request_context import (
+from app.core.security.auth_context import (
     reset_authorization_header,
     reset_current_user,
     set_authorization_header,

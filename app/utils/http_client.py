@@ -11,7 +11,7 @@ import httpx
 from dotenv import load_dotenv
 from loguru import logger
 
-from app.core.request_context import get_authorization_header
+from app.core.security.auth_context import get_authorization_header
 
 
 class HttpClient:

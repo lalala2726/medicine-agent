@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Path
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.core.pre_authorize import RoleCode, has_permission, has_role, pre_authorize
+from app.core.security.pre_authorize import RoleCode, has_permission, has_role, pre_authorize
 from app.schemas.admin_assistant_history import (
     ConversationMessagesRequest,
 )

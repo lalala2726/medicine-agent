@@ -6,8 +6,8 @@ from typing import Callable
 
 from app.core.codes import ResponseCode
 from app.exception.exceptions import ServiceException
-from app.core.request_context import get_current_user
-from app.core.role_codes import RoleCode
+from app.core.security.auth_context import get_current_user
+from app.core.security.role_codes import RoleCode
 
 FORBIDDEN_MESSAGE = "无权限访问此接口"
 INVALID_PREDICATE_MESSAGE = (

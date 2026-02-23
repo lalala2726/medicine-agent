@@ -4,8 +4,8 @@ import pytest
 
 from app.core.codes import ResponseCode
 from app.exception.exceptions import ServiceException
-from app.core.pre_authorize import RoleCode, has_permission, has_role, pre_authorize
-from app.core.request_context import reset_current_user, set_current_user
+from app.core.security.pre_authorize import RoleCode, has_permission, has_role, pre_authorize
+from app.core.security.auth_context import reset_current_user, set_current_user
 from app.schemas.auth import AuthUser
 
 

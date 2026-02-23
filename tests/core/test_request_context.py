@@ -2,7 +2,7 @@ import pytest
 
 from app.core.codes import ResponseCode
 from app.exception.exceptions import ServiceException
-from app.core.request_context import (
+from app.core.security.auth_context import (
     get_authorization_header,
     get_current_token,
     get_current_user,
