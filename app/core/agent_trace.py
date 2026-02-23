@@ -9,8 +9,8 @@ from typing import Any, Mapping, Optional, Sequence
 from langchain_core.messages import ToolMessage
 from loguru import logger
 
-from app.core.sse_event_bus import emit_function_call, emit_sse_response
-from app.core.sse_tool_events import resolve_tool_call_messages
+from app.core.agent.agent_event_bus import emit_function_call, emit_sse_response
+from app.core.agent.agent_tool_events import resolve_tool_call_messages
 from app.schemas.sse_response import AssistantResponse, Content, MessageType
 
 MAX_TOOL_ROUNDS = 20

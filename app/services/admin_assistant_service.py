@@ -22,7 +22,7 @@ from app.schemas.document.message import MessageRole, MessageStatus
 from app.schemas.document.conversation import ConversationListItem
 from app.schemas.base_request import PageRequest
 from app.schemas.sse_response import AssistantResponse, Content, MessageType
-from app.services.assistant_stream_service import (
+from app.core.agent.agent_orchestrator import (
     AssistantStreamConfig,
     create_streaming_response,
 )

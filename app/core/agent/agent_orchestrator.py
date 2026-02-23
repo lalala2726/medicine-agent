@@ -25,8 +25,9 @@ from typing import Any, AsyncIterable, Awaitable, Callable
 
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
+from loguru import logger
 
-from app.core.sse_event_bus import reset_status_emitter, set_status_emitter
+from app.core.agent.agent_event_bus import reset_status_emitter, set_status_emitter
 from app.schemas.sse_response import AssistantResponse, Content, MessageType
 from app.utils.streaming_utils import extract_text
 
@@ -699,6 +700,7 @@ async def _produce_workflow_events(
         else:
             runtime_state.latest_state = await run_in_threadpool(config.invoke_sync, state)
     except Exception as exc:
+        logger.opt(exception=exc).error("Assistant workflow execution failed")
         await queue.put((EVENT_ERROR, exc))
     finally:
         await queue.put((EVENT_DONE, None))
@@ -849,7 +851,7 @@ async def _event_stream(
                 if delta_text:
                     yield build_answer_sse(delta_text, False)
     finally:
-        with suppress(Exception):
+        try:
             execution_trace = _build_execution_trace_summary(runtime_state.latest_state)
             token_usage = _build_token_usage_summary(runtime_state.latest_state)
             await _invoke_answer_completed_callback(
@@ -859,6 +861,8 @@ async def _event_stream(
                 token_usage,
                 runtime_state.has_emitted_error,
             )
+        except Exception as exc:  # pragma: no cover - 防御性兜底
+            logger.opt(exception=exc).warning("Assistant stream finalize callback failed")
         end_event = await _finalize_stream(emitter_token, producer_task)
         yield end_event
 

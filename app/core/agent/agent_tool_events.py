@@ -4,7 +4,7 @@ import inspect
 from functools import wraps
 from typing import Callable
 
-from app.core.sse_event_bus import emit_function_call
+from app.core.agent.agent_event_bus import emit_function_call
 
 _TOOL_FUNCTION_CALL_MESSAGES: dict[str, dict[str, str]] = {
     "get_order_list": {

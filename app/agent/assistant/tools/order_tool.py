@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 from app.utils.prompt_utils import load_prompt
 from app.agent.assistant.tools.base_tools import _normalize_id_list, format_ids_to_string
-from app.core.sse_tool_events import tool_call_status
+from app.core.agent.agent_tool_events import tool_call_status
 from app.core.agent_trace import run_model_with_trace
 from app.core.langsmith import traceable
 from app.core.llm import create_chat_model

@@ -86,7 +86,10 @@ def _normalize_token_usage(
     allowed_keys = {"prompt_tokens", "completion_tokens", "total_tokens"}
     for key in token_usage.keys():
         if key not in allowed_keys:
-            logger.warning("Ignore invalid token_usage while persisting message.")
+            logger.warning(
+                "Ignore invalid token_usage while persisting message. keys={keys}",
+                keys=sorted(str(item) for item in token_usage.keys()),
+            )
             return None
 
     prompt_tokens = _to_non_negative_int(token_usage.get("prompt_tokens"))
@@ -108,7 +111,10 @@ def _normalize_token_usage(
             total_tokens=resolved_total,
         )
     except Exception:
-        logger.warning("Ignore invalid token_usage while persisting message.")
+        logger.warning(
+            "Ignore invalid token_usage while persisting message. payload={payload}",
+            payload=token_usage,
+        )
         return None
 
 
