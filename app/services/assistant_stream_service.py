@@ -26,9 +26,9 @@ from typing import Any, AsyncIterable, Awaitable, Callable
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
 
-from app.core.assistant_status import reset_status_emitter, set_status_emitter
+from app.core.sse_event_bus import reset_status_emitter, set_status_emitter
 from app.schemas.sse_response import AssistantResponse, Content, MessageType
-from utils.streaming_utils import extract_text
+from app.utils.streaming_utils import extract_text
 
 StreamEvent = tuple[str, Any]
 GraphEventPayload = tuple[str, Any]

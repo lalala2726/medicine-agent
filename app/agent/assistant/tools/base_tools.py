@@ -8,7 +8,7 @@
 """
 
 from langchain_core.tools import tool
-from app.core.assistant_status import tool_call_status
+from app.core.sse_tool_events import tool_call_status
 from app.schemas.http_response import HttpResponse
 from app.utils.http_client import HttpClient
 
