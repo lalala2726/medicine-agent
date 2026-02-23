@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from langchain_core.messages import HumanMessage
+
 
 def _to_non_negative_int(value: Any) -> int | None:
     """
@@ -196,6 +198,24 @@ def _split_generated_messages(
     return list(final_messages[len(input_messages):])
 
 
+def _normalize_input_messages(input_messages: list[Any] | str | None) -> list[Any]:
+    """
+    规范化追踪层输入消息。
+
+    Args:
+        input_messages: 输入消息列表或字符串。字符串会自动包装为 `HumanMessage`。
+
+    Returns:
+        list[Any]: 标准化后的消息列表。
+    """
+
+    if isinstance(input_messages, list):
+        return list(input_messages)
+    if input_messages is None:
+        return []
+    return [HumanMessage(content=str(input_messages))]
+
+
 def _is_ai_message(message: Any) -> bool:
     """
     判断消息是否为 AI 消息。
@@ -288,3 +308,102 @@ def _build_tool_call_traces(messages: list[Any]) -> list[dict[str, Any]]:
                 }
             )
     return tool_calls
+
+
+def resolve_final_messages(payload: Any) -> list[Any]:
+    """
+    从 agent 执行结果中提取最终消息列表。
+
+    Args:
+        payload: 任意可能包含最终消息的载荷，支持：
+            - `agent.invoke(...)` 返回值（dict，含 `messages`）；
+            - `agent_stream(...)` 返回值（dict，含 `final_messages` 或 `latest_state`）；
+            - 直接传入消息列表（list）。
+
+    Returns:
+        list[Any]: 最终消息列表；未命中时返回空列表。
+    """
+
+    if isinstance(payload, list):
+        return list(payload)
+
+    if not isinstance(payload, Mapping):
+        return []
+
+    raw_messages = payload.get("messages")
+    if isinstance(raw_messages, list):
+        return list(raw_messages)
+
+    raw_final_messages = payload.get("final_messages")
+    if isinstance(raw_final_messages, list):
+        return list(raw_final_messages)
+
+    latest_state = payload.get("latest_state")
+    if isinstance(latest_state, Mapping):
+        nested_messages = latest_state.get("messages")
+        if isinstance(nested_messages, list):
+            return list(nested_messages)
+
+    return []
+
+
+def record_agent_trace(
+    *,
+    payload: Any,
+    input_messages: list[Any] | str,
+    fallback_text: str = "",
+) -> dict[str, Any]:
+    """
+    根据最终消息构建统一追踪结果。
+
+    该函数只负责记录与解析，不负责执行 agent，也不负责发送 SSE。
+
+    Args:
+        payload: 任意可用于提取最终消息的载荷，内部会自动解析最终消息。
+        input_messages: 本次调用输入消息序列；支持消息列表或字符串。
+        fallback_text: 在无法从最终 AI 消息提取文本时的兜底文本。
+
+    Returns:
+        dict[str, Any]: 统一追踪结构（text/model_name/usage/is_usage_complete/tool_calls/raw_content）。
+    """
+
+    final_messages = resolve_final_messages(payload)
+    normalized_input_messages = _normalize_input_messages(input_messages)
+    generated_messages = _split_generated_messages(final_messages, normalized_input_messages)
+    preferred_messages = generated_messages or final_messages
+
+    last_ai_message = next(
+        (message for message in reversed(preferred_messages) if _is_ai_message(message)),
+        None,
+    )
+    if last_ai_message is None:
+        last_ai_message = next(
+            (message for message in reversed(final_messages) if _is_ai_message(message)),
+            None,
+        )
+
+    text = extract_text(last_ai_message) if last_ai_message is not None else ""
+    if not text:
+        text = fallback_text or ""
+
+    usage, is_usage_complete = _aggregate_usage_from_ai_messages(preferred_messages)
+    tool_calls = _build_tool_call_traces(preferred_messages)
+    model_name = (
+        _resolve_model_name_from_response(last_ai_message)
+        if last_ai_message is not None
+        else "unknown"
+    )
+    raw_content = (
+        getattr(last_ai_message, "content", None)
+        if last_ai_message is not None
+        else text
+    )
+
+    return {
+        "text": text,
+        "model_name": model_name,
+        "usage": usage,
+        "is_usage_complete": is_usage_complete,
+        "tool_calls": tool_calls,
+        "raw_content": raw_content,
+    }

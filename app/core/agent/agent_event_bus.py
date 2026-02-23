@@ -5,7 +5,7 @@ from typing import Any, Callable
 
 from loguru import logger
 
-from app.schemas.sse_response import AssistantResponse
+from app.schemas.sse_response import AssistantResponse, Content, MessageType
 
 EventPayload = dict[str, Any]
 EventContent = dict[str, Any]
@@ -300,3 +300,25 @@ def emit_sse_response(response: AssistantResponse) -> None:
     normalized_response = response.model_copy(update={"is_end": False})
     payload = normalized_response.model_dump(mode="json", exclude_none=True)
     _emit_payload(payload=payload, source="emit_sse_response")
+
+
+def emit_answer_delta(text: str) -> None:
+    """
+    发送 answer 类型的文本增量事件。
+
+    该函数用于模型流式输出场景，调用方只需传入文本分片，
+    无需重复构造 `AssistantResponse` 对象。
+
+    Args:
+        text: 本次输出的文本分片。
+
+    Returns:
+        None: 事件通过 `emit_sse_response` 推送到 SSE 发射器。
+    """
+
+    emit_sse_response(
+        AssistantResponse(
+            type=MessageType.ANSWER,
+            content=Content(text=text),
+        )
+    )

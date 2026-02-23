@@ -13,8 +13,10 @@ from app.agent.assistant.tools.base_tools import get_current_time
 from app.agent.assistant.tools.chart_tool import chart_tool_agent
 from app.agent.assistant.tools.order_tool import order_tool_agent
 from app.agent.assistant.tools.product_tool import product_tool_agent
-from app.core.agent.agent_runtime import run_agent_with_trace
+from app.core.agent.agent_event_bus import emit_answer_delta
+from app.core.agent.agent_runtime import agent_stream
 from app.core.agent.agent_tool_events import build_tool_status_middleware
+from app.core.agent.agent_tool_trace import record_agent_trace
 from app.core.langsmith import traceable
 from app.core.llm import create_agent_instance
 from app.services.token_usage_service import append_trace_and_refresh_token_usage
@@ -44,7 +46,16 @@ def supervisor_agent(state: AgentState) -> dict[str, Any]:
             ToolCallLimitMiddleware(thread_limit=20, run_limit=10),
         ],
     )
-    trace = run_agent_with_trace(agent, history_messages)
+    stream_result = agent_stream(
+        agent,
+        history_messages,
+        on_model_delta=emit_answer_delta,
+    )
+    trace = record_agent_trace(
+        payload=stream_result,
+        input_messages=history_messages,
+        fallback_text=str(stream_result.get("streamed_text") or ""),
+    )
     text = str(trace.get("text") or "").strip()
     trace_item = ExecutionTraceState(
         node_name="supervisor_agent",

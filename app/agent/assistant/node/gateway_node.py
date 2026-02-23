@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, Mapping
 
 from langchain_core.messages import SystemMessage
 
 from app.utils.prompt_utils import load_prompt
 from app.agent.assistant.state import AgentState, ExecutionTraceState, GatewayRoutingState
-from app.core.agent.agent_runtime import run_agent_invoke_with_trace
+from app.core.agent.agent_runtime import agent_invoke
+from app.core.agent.agent_tool_trace import record_agent_trace
 from app.core.langsmith import traceable
 from app.core.llm import create_agent_instance
 from app.services.token_usage_service import append_trace_and_refresh_token_usage
@@ -26,7 +27,15 @@ def gateway_router(state: AgentState) -> dict[str, Any]:
         system_prompt=SystemMessage(content=_GATEWAY_PROMPT),
     )
     history_messages = list(state.get("history_messages") or [])
-    trace = run_agent_invoke_with_trace(agent, history_messages)
+    result = agent_invoke(agent, history_messages)
+    fallback_text = ""
+    if isinstance(result, Mapping):
+        fallback_text = str(result.get("output") or result.get("text") or "")
+    trace = record_agent_trace(
+        payload=result,
+        input_messages=history_messages,
+        fallback_text=fallback_text,
+    )
     raw_content = trace.get("raw_content")
 
     parsed: dict[str, Any] = {}
