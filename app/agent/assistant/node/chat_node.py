@@ -7,12 +7,10 @@ from langchain_core.messages import AIMessage, SystemMessage
 from app.agent.assistant.model_switch import model_switch
 from app.utils.prompt_utils import load_prompt
 from app.agent.assistant.state import AgentState, ExecutionTraceState
+from app.core.agent_trace import run_model_with_trace
 from app.core.langsmith import traceable
 from app.core.llm import create_chat_model
 from app.services.token_usage_service import append_trace_and_refresh_token_usage
-from app.utils.streaming_utils import (
-    invoke_with_trace,
-)
 
 _BASE_PROMPT = load_prompt("assistant_base_prompt")
 _CHAT_SYSTEM_PROMPT = load_prompt("assistant_chat_system_prompt") + _BASE_PROMPT
@@ -29,7 +27,7 @@ def chat_agent(state: AgentState) -> dict[str, Any]:
     history_messages = list(state.get("history_messages") or [])
 
     messages = [SystemMessage(content=_CHAT_SYSTEM_PROMPT), *history_messages]
-    trace = invoke_with_trace(llm, messages)
+    trace = run_model_with_trace(llm, messages)
     text = str(trace.get("text") or "").strip()
     trace_item = ExecutionTraceState(
         node_name="chat_agent",

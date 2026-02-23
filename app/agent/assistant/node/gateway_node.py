@@ -7,12 +7,10 @@ from langchain_core.messages import SystemMessage
 
 from app.utils.prompt_utils import load_prompt
 from app.agent.assistant.state import AgentState, ExecutionTraceState, GatewayRoutingState
+from app.core.agent_trace import run_model_with_trace
 from app.core.langsmith import traceable
 from app.core.llm import create_chat_model
 from app.services.token_usage_service import append_trace_and_refresh_token_usage
-from app.utils.streaming_utils import (
-    invoke_with_trace,
-)
 
 _GATEWAY_PROMPT = load_prompt("assistant_gateway_prompt")
 
@@ -28,7 +26,7 @@ def gateway_router(state: AgentState) -> dict[str, Any]:
 
     messages = [SystemMessage(content=_GATEWAY_PROMPT), *history_messages]
 
-    trace = invoke_with_trace(llm, messages)
+    trace = run_model_with_trace(llm, messages)
     raw_content = trace.get("raw_content")
 
     parsed: dict[str, Any] = {}

@@ -11,10 +11,10 @@ from app.agent.assistant.tools.analytics_tool import analytics_tool_agent
 from app.agent.assistant.tools.chart_tool import chart_tool_agent
 from app.agent.assistant.tools.order_tool import order_tool_agent
 from app.agent.assistant.tools.product_tool import product_tool_agent
+from app.core.agent_trace import run_agent_with_trace
 from app.core.langsmith import traceable
-from app.core.llm import create_chat_model
+from app.core.llm import create_agent_instance, create_chat_model
 from app.services.token_usage_service import append_trace_and_refresh_token_usage
-from app.utils.streaming_utils import invoke_with_trace
 
 _BASE_PROMPT = load_prompt("assistant_base_prompt")
 _SUPERVISOR_PROMPT = load_prompt("assistant_supervisor_system_prompt") + _BASE_PROMPT
@@ -30,12 +30,12 @@ def supervisor_agent(state: AgentState) -> dict[str, Any]:
     )
     history_messages = list(state.get("history_messages") or [])
 
-    messages = [SystemMessage(content=_SUPERVISOR_PROMPT), *history_messages]
-    trace = invoke_with_trace(
-        llm,
-        messages,
+    agent = create_agent_instance(
+        llm=llm,
+        system_prompt=SystemMessage(content=_SUPERVISOR_PROMPT),
         tools=[order_tool_agent, product_tool_agent, analytics_tool_agent, chart_tool_agent],
     )
+    trace = run_agent_with_trace(agent, history_messages)
     text = str(trace.get("text") or "").strip()
     trace_item = ExecutionTraceState(
         node_name="supervisor_agent",

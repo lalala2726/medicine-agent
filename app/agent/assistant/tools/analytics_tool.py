@@ -8,11 +8,11 @@ from pydantic import BaseModel, Field
 
 from app.utils.prompt_utils import load_prompt
 from app.core.assistant_status import tool_call_status
+from app.core.agent_trace import run_model_with_trace
 from app.core.langsmith import traceable
 from app.core.llm import create_chat_model
 from app.schemas.http_response import HttpResponse
 from app.utils.http_client import HttpClient
-from app.utils.streaming_utils import invoke_with_trace
 
 
 class AnalyticsOrderTrendRequest(BaseModel):
@@ -190,7 +190,7 @@ def analytics_tool_agent(task_description: str) -> str:
         SystemMessage(content=_ANALYTICS_SYSTEM_PROMPT),
         HumanMessage(content=str(task_description or "").strip()),
     ]
-    trace = invoke_with_trace(
+    trace = run_model_with_trace(
         llm,
         messages,
         tools=[

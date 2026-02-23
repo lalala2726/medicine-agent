@@ -12,9 +12,9 @@ from pydantic import BaseModel, Field
 
 from app.utils.prompt_utils import load_prompt
 from app.core.assistant_status import tool_call_status
+from app.core.agent_trace import run_model_with_trace
 from app.core.langsmith import traceable
 from app.core.llm import create_chat_model
-from app.utils.streaming_utils import invoke_with_trace
 
 
 ChartType = Literal[
@@ -196,7 +196,7 @@ def chart_tool_agent(task_description: str) -> str:
         SystemMessage(content=_CHART_SYSTEM_PROMPT),
         HumanMessage(content=str(task_description or "").strip()),
     ]
-    trace = invoke_with_trace(
+    trace = run_model_with_trace(
         llm,
         messages,
         tools=[get_supported_chart_types, get_chart_sample_by_name],
