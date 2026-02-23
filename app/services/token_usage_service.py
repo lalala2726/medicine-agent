@@ -359,7 +359,9 @@ def resolve_persistable_token_usage(
         execution_traces: state 中累计的 execution_traces（用于兜底重建）。
 
     Returns:
-        dict[str, Any] | None: 可直接传给 `add_message(..., token_usage=...)` 的结构。
+        dict[str, Any] | None:
+            可直接传给 `add_message(..., token_usage=...)` 的结构，
+            仅包含 `prompt_tokens/completion_tokens/total_tokens`。
     """
 
     normalized_state_usage = (
@@ -368,12 +370,61 @@ def resolve_persistable_token_usage(
         else None
     )
     if normalized_state_usage is not None:
-        return dict(normalized_state_usage)
+        return {
+            "prompt_tokens": normalized_state_usage["prompt_tokens"],
+            "completion_tokens": normalized_state_usage["completion_tokens"],
+            "total_tokens": normalized_state_usage["total_tokens"],
+        }
 
     rebuilt = build_token_usage_from_execution_traces(execution_traces)
     if rebuilt is None:
         return None
-    return dict(rebuilt)
+    return {
+        "prompt_tokens": rebuilt["prompt_tokens"],
+        "completion_tokens": rebuilt["completion_tokens"],
+        "total_tokens": rebuilt["total_tokens"],
+    }
+
+
+def resolve_persistable_token_usage_detail(
+        state_token_usage: Mapping[str, Any] | None,
+        execution_traces: Sequence[Mapping[str, Any]] | None,
+) -> dict[str, Any] | None:
+    """
+    生成可持久化的 token 明细（用于 message_trace）。
+
+    规则：
+    1. 优先使用 state 中已有的 `token_usage`；
+    2. 若 state 缺失或非法，则基于 `execution_traces` 兜底重建。
+
+    Args:
+        state_token_usage: state 中缓存的消息级 token_usage。
+        execution_traces: state 中累计的 execution_traces（用于兜底重建）。
+
+    Returns:
+        dict[str, Any] | None:
+            可直接传给 `add_message_trace(..., token_usage_detail=...)` 的结构，
+            仅包含 `is_complete/node_breakdown`。
+    """
+
+    normalized_state_usage = (
+        _normalize_state_token_usage(state_token_usage)
+        if isinstance(state_token_usage, Mapping)
+        else None
+    )
+    if normalized_state_usage is not None:
+        return {
+            "is_complete": normalized_state_usage["is_complete"],
+            "node_breakdown": normalized_state_usage["node_breakdown"],
+        }
+
+    rebuilt = build_token_usage_from_execution_traces(execution_traces)
+    if rebuilt is None:
+        return None
+    return {
+        "is_complete": rebuilt["is_complete"],
+        "node_breakdown": rebuilt["node_breakdown"],
+    }
 
 
 def build_message_token_usage(

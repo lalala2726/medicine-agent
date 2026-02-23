@@ -12,8 +12,9 @@ from app.agent.assistant.tools.chart_tool import chart_tool_agent
 from app.agent.assistant.tools.order_tool import order_tool_agent
 from app.agent.assistant.tools.product_tool import product_tool_agent
 from app.core.agent.agent_runtime import run_agent_with_trace
+from app.core.agent.agent_tool_events import build_tool_status_middleware
 from app.core.langsmith import traceable
-from app.core.llm import create_agent_instance, create_chat_model
+from app.core.llm import create_agent_instance
 from app.services.token_usage_service import append_trace_and_refresh_token_usage
 
 _BASE_PROMPT = load_prompt("assistant_base_prompt")
@@ -23,17 +24,14 @@ _SUPERVISOR_PROMPT = load_prompt("assistant_supervisor_system_prompt") + _BASE_P
 @traceable(name="Supervisor Agent Node", run_type="chain")
 def supervisor_agent(state: AgentState) -> dict[str, Any]:
     model_name = model_switch(state)
-
-    llm = create_chat_model(
-        model=model_name,
-        temperature=1.3,
-    )
     history_messages = list(state.get("history_messages") or [])
 
     agent = create_agent_instance(
-        llm=llm,
+        model=model_name,
+        llm_kwargs={"temperature": 1.3},
         system_prompt=SystemMessage(content=_SUPERVISOR_PROMPT),
         tools=[order_tool_agent, product_tool_agent, analytics_tool_agent, chart_tool_agent],
+        middleware=[build_tool_status_middleware(enabled=True)],
     )
     trace = run_agent_with_trace(agent, history_messages)
     text = str(trace.get("text") or "").strip()

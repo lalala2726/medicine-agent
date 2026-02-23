@@ -36,7 +36,10 @@ from app.services.conversation_service import (
 )
 from app.services.message_service import add_message, list_messages
 from app.services.message_trace_service import add_message_trace
-from app.services.token_usage_service import resolve_persistable_token_usage
+from app.services.token_usage_service import (
+    resolve_persistable_token_usage,
+    resolve_persistable_token_usage_detail,
+)
 
 ADMIN_WORKFLOW = build_graph()
 STREAM_OUTPUT_NODES = {
@@ -314,6 +317,10 @@ def _persist_assistant_message(
         token_usage,
         execution_trace,
     )
+    persistable_token_usage_detail = resolve_persistable_token_usage_detail(
+        token_usage,
+        execution_trace,
+    )
     message_uuid = str(uuid.uuid4())
     add_message(
         conversation_id=conversation_id,
@@ -328,7 +335,7 @@ def _persist_assistant_message(
             message_uuid=message_uuid,
             conversation_id=conversation_id,
             execution_trace=execution_trace,
-            token_usage_detail=persistable_token_usage,
+            token_usage_detail=persistable_token_usage_detail,
         )
     except Exception as exc:  # pragma: no cover - 防御性兜底
         logger.opt(exception=exc).warning(

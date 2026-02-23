@@ -75,7 +75,9 @@ def _build_memory_inject_middleware(store: Memory):
 
 def create_agent_instance(
         *,
-        llm: Any,
+        llm: Any | None = None,
+        model: str = DEFAULT_CHAT_MODEL,
+        llm_kwargs: dict[str, Any] | None = None,
         store: Memory | None = None,
         tools: list[Any] | tuple[Any, ...] | None = None,
         system_prompt: Any = None,
@@ -95,7 +97,9 @@ def create_agent_instance(
     创建 Agent 实例（支持业务 Memory 预注入）。
 
     Args:
-        llm: 预创建好的聊天模型实例（或模型名）。
+        llm: 预创建好的聊天模型实例。未传时会使用 `model + llm_kwargs` 内部创建。
+        model: 聊天模型名称；仅在 `llm` 未传时生效。
+        llm_kwargs: 传递给 `create_chat_model` 的参数；仅在 `llm` 未传时生效。
         store: 业务记忆对象；仅用于注入 state.messages 前缀，不透传官方 `store`。
         tools: 可选工具列表。
         system_prompt: 可选系统提示。
@@ -119,8 +123,12 @@ def create_agent_instance(
     if store is not None and store.messages:
         resolved_middleware.insert(0, _build_memory_inject_middleware(store))
 
+    resolved_llm = llm
+    if resolved_llm is None:
+        resolved_llm = create_chat_model(model=model, **(llm_kwargs or {}))
+
     return langchain_create_agent(
-        model=llm,
+        model=resolved_llm,
         tools=tools,
         system_prompt=system_prompt,
         middleware=tuple(resolved_middleware),

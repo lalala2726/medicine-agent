@@ -8,10 +8,13 @@ from pydantic import BaseModel, Field
 
 from app.utils.prompt_utils import load_prompt
 from app.agent.assistant.tools.base_tools import _normalize_id_list, format_ids_to_string
-from app.core.agent.agent_tool_events import tool_call_status
-from app.core.agent.agent_runtime import run_model_with_trace
+from app.core.agent.agent_tool_events import (
+    build_tool_status_middleware,
+    tool_call_status,
+)
+from app.core.agent.agent_runtime import run_agent_invoke_with_trace
 from app.core.langsmith import traceable
-from app.core.llm import create_chat_model
+from app.core.llm import create_agent_instance
 from app.schemas.http_response import HttpResponse
 from app.utils.http_client import HttpClient
 
@@ -187,18 +190,16 @@ _PRODUCT_SYSTEM_PROMPT = load_prompt("assistant_product_system_prompt") + _BASE_
     timely_message="商品子代理正在持续处理中",
 )
 def product_tool_agent(task_description: str) -> str:
-    llm = create_chat_model(
+    agent = create_agent_instance(
         model="qwen-flash",
-        temperature=0.2,
-    )
-    messages = [
-        SystemMessage(content=_PRODUCT_SYSTEM_PROMPT),
-        HumanMessage(content=str(task_description or "").strip()),
-    ]
-    trace = run_model_with_trace(
-        llm,
-        messages,
+        llm_kwargs={"temperature": 0.2},
+        system_prompt=SystemMessage(content=_PRODUCT_SYSTEM_PROMPT),
         tools=[get_product_list, get_product_detail, get_drug_detail],
+        middleware=[build_tool_status_middleware(enabled=False)],
+    )
+    trace = run_agent_invoke_with_trace(
+        agent,
+        [HumanMessage(content=str(task_description or "").strip())],
     )
     text = str(trace.get("text") or "").strip()
     if not text:

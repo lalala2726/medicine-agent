@@ -74,7 +74,7 @@ def _to_non_negative_int(value: Any) -> int | None:
 def _normalize_token_usage(
         token_usage: TokenUsage | dict[str, Any] | None,
 ) -> TokenUsage | None:
-    """归一化 token_usage，仅接受 prompt/completion/total 总量字段。"""
+    """归一化 token_usage，提取 prompt/completion/total 总量字段。"""
 
     if token_usage is None:
         return None
@@ -82,15 +82,6 @@ def _normalize_token_usage(
         return token_usage
     if not isinstance(token_usage, Mapping):
         return None
-
-    allowed_keys = {"prompt_tokens", "completion_tokens", "total_tokens"}
-    for key in token_usage.keys():
-        if key not in allowed_keys:
-            logger.warning(
-                "Ignore invalid token_usage while persisting message. keys={keys}",
-                keys=sorted(str(item) for item in token_usage.keys()),
-            )
-            return None
 
     prompt_tokens = _to_non_negative_int(token_usage.get("prompt_tokens"))
     completion_tokens = _to_non_negative_int(token_usage.get("completion_tokens"))

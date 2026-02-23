@@ -7,10 +7,13 @@ from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
 from app.utils.prompt_utils import load_prompt
-from app.core.agent.agent_tool_events import tool_call_status
-from app.core.agent.agent_runtime import run_model_with_trace
+from app.core.agent.agent_tool_events import (
+    build_tool_status_middleware,
+    tool_call_status,
+)
+from app.core.agent.agent_runtime import run_agent_invoke_with_trace
 from app.core.langsmith import traceable
-from app.core.llm import create_chat_model
+from app.core.llm import create_agent_instance
 from app.schemas.http_response import HttpResponse
 from app.utils.http_client import HttpClient
 
@@ -180,19 +183,18 @@ _ANALYTICS_SYSTEM_PROMPT = load_prompt("assistant_analytics_system_prompt") + _B
         "输入为自然语言任务描述，内部会自动调用分析工具并返回结果。"
     )
 )
+@tool_call_status(
+    tool_name="正在调用运营分析子代理",
+    start_message="正在执行查询",
+    error_message="调用运营分析子代理失败",
+    timely_message="运营分析子代理正在持续处理中",
+)
 @traceable(name="Supervisor Analytics Tool Agent", run_type="chain")
 def analytics_tool_agent(task_description: str) -> str:
-    llm = create_chat_model(
+    agent = create_agent_instance(
         model="qwen-flash",
-        temperature=0.2,
-    )
-    messages = [
-        SystemMessage(content=_ANALYTICS_SYSTEM_PROMPT),
-        HumanMessage(content=str(task_description or "").strip()),
-    ]
-    trace = run_model_with_trace(
-        llm,
-        messages,
+        llm_kwargs={"temperature": 0.2},
+        system_prompt=SystemMessage(content=_ANALYTICS_SYSTEM_PROMPT),
         tools=[
             get_analytics_overview,
             get_analytics_order_trend,
@@ -201,6 +203,11 @@ def analytics_tool_agent(task_description: str) -> str:
             get_analytics_hot_products,
             get_analytics_product_return_rates,
         ],
+        middleware=[build_tool_status_middleware(enabled=False)],
+    )
+    trace = run_agent_invoke_with_trace(
+        agent,
+        [HumanMessage(content=str(task_description or "").strip())],
     )
     text = str(trace.get("text") or "").strip()
     if not text:
