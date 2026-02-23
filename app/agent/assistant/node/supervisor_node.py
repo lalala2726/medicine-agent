@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from langchain.agents.middleware import ToolCallLimitMiddleware
 from langchain_core.messages import AIMessage, SystemMessage
 
 from app.agent.assistant.model_switch import model_switch
@@ -38,7 +39,10 @@ def supervisor_agent(state: AgentState) -> dict[str, Any]:
             analytics_tool_agent,
             chart_tool_agent,
         ],
-        middleware=[build_tool_status_middleware()],
+        middleware=[
+            build_tool_status_middleware(),
+            ToolCallLimitMiddleware(thread_limit=20, run_limit=10),
+        ],
     )
     trace = run_agent_with_trace(agent, history_messages)
     text = str(trace.get("text") or "").strip()
