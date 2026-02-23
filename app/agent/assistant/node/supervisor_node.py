@@ -8,6 +8,7 @@ from app.agent.assistant.model_switch import model_switch
 from app.utils.prompt_utils import load_prompt
 from app.agent.assistant.state import AgentState, ExecutionTraceState
 from app.agent.assistant.tools.analytics_tool import analytics_tool_agent
+from app.agent.assistant.tools.base_tools import get_current_time
 from app.agent.assistant.tools.chart_tool import chart_tool_agent
 from app.agent.assistant.tools.order_tool import order_tool_agent
 from app.agent.assistant.tools.product_tool import product_tool_agent
@@ -30,8 +31,14 @@ def supervisor_agent(state: AgentState) -> dict[str, Any]:
         model=model_name,
         llm_kwargs={"temperature": 1.3},
         system_prompt=SystemMessage(content=_SUPERVISOR_PROMPT),
-        tools=[order_tool_agent, product_tool_agent, analytics_tool_agent, chart_tool_agent],
-        middleware=[build_tool_status_middleware(enabled=True)],
+        tools=[
+            get_current_time,
+            order_tool_agent,
+            product_tool_agent,
+            analytics_tool_agent,
+            chart_tool_agent,
+        ],
+        middleware=[build_tool_status_middleware()],
     )
     trace = run_agent_with_trace(agent, history_messages)
     text = str(trace.get("text") or "").strip()

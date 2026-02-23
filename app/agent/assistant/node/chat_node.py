@@ -4,6 +4,7 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, SystemMessage
 
+from agent.assistant.tools.base_tools import get_current_time
 from app.agent.assistant.model_switch import model_switch
 from app.utils.prompt_utils import load_prompt
 from app.agent.assistant.state import AgentState, ExecutionTraceState
@@ -20,8 +21,12 @@ _CHAT_SYSTEM_PROMPT = load_prompt("assistant_chat_system_prompt") + _BASE_PROMPT
 def chat_agent(state: AgentState) -> dict[str, Any]:
     model_name = model_switch(state)
     history_messages = list(state.get("history_messages") or [])
+    tools = [
+        get_current_time
+    ]
     agent = create_agent_instance(
         model=model_name,
+        tools=tools,
         llm_kwargs={"temperature": 1.3},
         system_prompt=SystemMessage(content=_CHAT_SYSTEM_PROMPT),
     )

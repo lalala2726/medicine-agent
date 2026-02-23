@@ -7,6 +7,8 @@
 3. 详情类工具在收到空 ID 或全空白 ID 时会直接报错并拒绝调用后端接口。
 """
 
+import datetime
+
 from langchain_core.tools import tool
 from app.core.agent.agent_tool_events import tool_call_status
 from app.schemas.http_response import HttpResponse
@@ -46,6 +48,26 @@ async def get_user_info() -> dict:
         return HttpResponse.parse_data(response)
 
 
+@tool(
+    description="获取当前系统时间（ISO 8601 格式）获取当前的时间必须调用此参数。"
+)
+@tool_call_status(
+    tool_name="获取当前时间",
+    start_message="正在获取当前时间",
+    error_message="获取当前时间失败",
+    timely_message="当前时间正在持续处理中",
+)
+def get_current_time() -> dict:
+    """返回当前系统时间。"""
+
+    now = datetime.datetime.now(datetime.timezone.utc)
+    return {
+        "current_time": now.isoformat(),
+        "timezone": "UTC",
+    }
+
+
 ADMIN_TOOLS = [
     get_user_info,
+    get_current_time,
 ]

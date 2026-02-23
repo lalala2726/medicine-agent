@@ -11,10 +11,7 @@ from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
 from app.utils.prompt_utils import load_prompt
-from app.core.agent.agent_tool_events import (
-    build_tool_status_middleware,
-    tool_call_status,
-)
+from app.core.agent.agent_tool_events import tool_call_status
 from app.core.agent.agent_runtime import run_agent_invoke_with_trace
 from app.core.langsmith import traceable
 from app.core.llm import create_agent_instance
@@ -202,7 +199,6 @@ def chart_tool_agent(task_description: str) -> str:
         llm_kwargs={"temperature": 0.2},
         system_prompt=SystemMessage(content=_CHART_SYSTEM_PROMPT),
         tools=[get_supported_chart_types, get_chart_sample_by_name],
-        middleware=[build_tool_status_middleware(enabled=False)],
     )
     trace = run_agent_invoke_with_trace(
         agent,
