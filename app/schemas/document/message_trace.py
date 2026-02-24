@@ -17,19 +17,6 @@ class TokenCounter(BaseModel):
     total_tokens: int = Field(default=0, ge=0, description="总 Token 数")
 
 
-class ToolLlmBreakdown(BaseModel):
-    """工具级 LLM token 明细（支持递归 children）。"""
-
-    model_config = ConfigDict(extra="forbid")
-
-    tool_name: str = Field(..., min_length=1, description="工具名称")
-    tool_input: Any = Field(default=None, description="工具输入参数")
-    prompt_tokens: int = Field(default=0, ge=0, description="输入 Token 数")
-    completion_tokens: int = Field(default=0, ge=0, description="输出 Token 数")
-    total_tokens: int = Field(default=0, ge=0, description="工具总 Token 数")
-    children: list["ToolLlmBreakdown"] = Field(default_factory=list, description="子工具明细")
-
-
 class NodeTokenBreakdown(BaseModel):
     """节点级 token 明细。"""
 
@@ -40,8 +27,6 @@ class NodeTokenBreakdown(BaseModel):
     prompt_tokens: int = Field(default=0, ge=0, description="节点输入 Token 数")
     completion_tokens: int = Field(default=0, ge=0, description="节点输出 Token 数")
     total_tokens: int = Field(default=0, ge=0, description="节点总 Token 数")
-    tool_tokens_total: int = Field(default=0, ge=0, description="节点下工具 LLM 总 Token 数")
-    tool_llm_breakdown: list[ToolLlmBreakdown] = Field(default_factory=list, description="工具级明细")
 
 
 class MessageTraceTokenDetail(BaseModel):
@@ -129,4 +114,3 @@ class MessageTraceDocument(BaseModel):
 
 
 ToolCallTraceItem.model_rebuild()
-ToolLlmBreakdown.model_rebuild()

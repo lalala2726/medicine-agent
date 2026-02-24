@@ -16,7 +16,7 @@ def test_sum_usage_supports_prompt_and_input_alias():
     }
 
 
-def test_build_message_token_usage_accumulates_node_and_tool_llm():
+def test_build_message_token_usage_only_accumulates_node_llm():
     result = service_module.build_message_token_usage(
         [
             {
@@ -57,12 +57,10 @@ def test_build_message_token_usage_accumulates_node_and_tool_llm():
     )
 
     assert result is not None
-    assert result["prompt_tokens"] == 15
-    assert result["completion_tokens"] == 6
-    assert result["total_tokens"] == 21
+    assert result["prompt_tokens"] == 8
+    assert result["completion_tokens"] == 3
+    assert result["total_tokens"] == 11
     assert result["is_complete"] is True
-    assert result["node_breakdown"][1]["tool_tokens_total"] == 10
-    assert result["node_breakdown"][1]["tool_llm_breakdown"][0]["children"][0]["tool_name"] == "get_order_list"
 
 
 def test_build_message_token_usage_marks_incomplete_when_usage_missing():

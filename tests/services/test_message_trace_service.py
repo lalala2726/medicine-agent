@@ -61,8 +61,6 @@ def test_add_message_trace_inserts_expected_document(monkeypatch):
                     "prompt_tokens": 1,
                     "completion_tokens": 2,
                     "total_tokens": 3,
-                    "tool_tokens_total": 0,
-                    "tool_llm_breakdown": [],
                 }
             ],
         },

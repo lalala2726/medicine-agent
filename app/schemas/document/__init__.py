@@ -26,7 +26,6 @@ from .message_trace import (
     NodeTokenBreakdown,
     TokenCounter,
     ToolCallTraceItem,
-    ToolLlmBreakdown,
 )
 
 __all__ = [
@@ -51,5 +50,4 @@ __all__ = [
     "TokenCounter",
     "TokenUsage",
     "ToolCallTraceItem",
-    "ToolLlmBreakdown",
 ]
