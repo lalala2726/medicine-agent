@@ -207,6 +207,3 @@ def analytics_tool_agent(task_description: str) -> str:
         input_messages,
     )
     return result.content
-
-
-analytics_agent = analytics_tool_agent

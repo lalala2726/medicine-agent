@@ -199,6 +199,3 @@ def product_tool_agent(task_description: str) -> str:
         input_messages,
     )
     return result.content
-
-
-product_agent = product_tool_agent

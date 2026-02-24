@@ -206,6 +206,3 @@ def chart_tool_agent(task_description: str) -> str:
         input_messages,
     )
     return result.content
-
-
-chart_agent = chart_tool_agent

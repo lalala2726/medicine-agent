@@ -165,6 +165,3 @@ def order_tool_agent(task_description: str) -> str:
         task_description,
     )
     return result.content
-
-
-order_agent = order_tool_agent
