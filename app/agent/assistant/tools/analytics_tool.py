@@ -10,7 +10,7 @@ from app.utils.prompt_utils import load_prompt
 from app.core.agent.agent_tool_events import tool_call_status
 from app.core.agent.agent_runtime import agent_invoke
 from app.core.langsmith import traceable
-from app.core.llm import create_agent_instance
+from app.core.llm import create_agent
 from app.schemas.http_response import HttpResponse
 from app.utils.http_client import HttpClient
 
@@ -188,7 +188,7 @@ _ANALYTICS_SYSTEM_PROMPT = load_prompt("assistant_analytics_system_prompt") + _B
 )
 @traceable(name="Supervisor Analytics Tool Agent", run_type="chain")
 def analytics_tool_agent(task_description: str) -> str:
-    agent = create_agent_instance(
+    agent = create_agent(
         model="qwen-flash",
         llm_kwargs={"temperature": 0.2},
         system_prompt=SystemMessage(content=_ANALYTICS_SYSTEM_PROMPT),

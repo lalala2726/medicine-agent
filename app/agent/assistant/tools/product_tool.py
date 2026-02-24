@@ -11,7 +11,7 @@ from app.agent.assistant.tools.base_tools import _normalize_id_list, format_ids_
 from app.core.agent.agent_tool_events import tool_call_status
 from app.core.agent.agent_runtime import agent_invoke
 from app.core.langsmith import traceable
-from app.core.llm import create_agent_instance
+from app.core.llm import create_agent
 from app.schemas.http_response import HttpResponse
 from app.utils.http_client import HttpClient
 
@@ -187,7 +187,7 @@ _PRODUCT_SYSTEM_PROMPT = load_prompt("assistant_product_system_prompt") + _BASE_
     timely_message="商品子代理正在持续处理中",
 )
 def product_tool_agent(task_description: str) -> str:
-    agent = create_agent_instance(
+    agent = create_agent(
         model="qwen-flash",
         llm_kwargs={"temperature": 0.2},
         system_prompt=SystemMessage(content=_PRODUCT_SYSTEM_PROMPT),

@@ -18,7 +18,7 @@ from app.core.agent.agent_runtime import agent_stream
 from app.core.agent.agent_tool_events import build_tool_status_middleware
 from app.core.agent.agent_tool_trace import record_agent_trace
 from app.core.langsmith import traceable
-from app.core.llm import create_agent_instance
+from app.core.llm import create_agent
 from app.services.token_usage_service import append_trace_and_refresh_token_usage
 
 _BASE_PROMPT = load_prompt("assistant_base_prompt")
@@ -30,7 +30,7 @@ def supervisor_agent(state: AgentState) -> dict[str, Any]:
     model_name = model_switch(state)
     history_messages = list(state.get("history_messages") or [])
 
-    agent = create_agent_instance(
+    agent = create_agent(
         model=model_name,
         llm_kwargs={"temperature": 1.3},
         system_prompt=SystemMessage(content=_SUPERVISOR_PROMPT),

@@ -8,10 +8,11 @@ from app.agent.assistant.tools.base_tools import get_current_time
 from app.agent.assistant.model_switch import model_switch
 from app.utils.prompt_utils import load_prompt
 from app.agent.assistant.state import AgentState, ExecutionTraceState
-from app.core.agent.agent_runtime import agent_invoke
+from app.core.agent.agent_event_bus import emit_answer_delta
+from app.core.agent.agent_runtime import agent_stream
 from app.core.agent.agent_tool_trace import record_agent_trace
 from app.core.langsmith import traceable
-from app.core.llm import create_agent_instance
+from app.core.llm import create_agent
 from app.services.token_usage_service import append_trace_and_refresh_token_usage
 
 _BASE_PROMPT = load_prompt("assistant_base_prompt")
@@ -25,17 +26,21 @@ def chat_agent(state: AgentState) -> dict[str, Any]:
     tools = [
         get_current_time
     ]
-    agent = create_agent_instance(
+    agent = create_agent(
         model=model_name,
         tools=tools,
         llm_kwargs={"temperature": 1.3},
         system_prompt=SystemMessage(content=_CHAT_SYSTEM_PROMPT),
     )
-    result = agent_invoke(agent, history_messages)
+    stream_result = agent_stream(
+        agent,
+        history_messages,
+        on_model_delta=emit_answer_delta,
+    )
     trace = record_agent_trace(
-        payload=result.payload,
+        payload=stream_result,
         input_messages=history_messages,
-        fallback_text=result.content,
+        fallback_text=str(stream_result.get("streamed_text") or ""),
     )
     text = str(trace.get("text") or "").strip()
     trace_item = ExecutionTraceState(

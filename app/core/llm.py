@@ -1,11 +1,12 @@
 import os
-from typing import Any, Optional
+from typing import Any, Optional, TypeAlias
 
 from langchain.agents import create_agent as langchain_create_agent
 from langchain.agents.middleware import before_model
 from langchain.messages import RemoveMessage
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langgraph.graph.message import REMOVE_ALL_MESSAGES
+from langgraph.graph.state import CompiledStateGraph
 from pydantic import SecretStr
 
 from app.schemas.memory import Memory
@@ -15,6 +16,8 @@ DEFAULT_CHAT_MODEL = os.getenv("DASHSCOPE_CHAT_MODEL", "qwen-max")
 DEFAULT_IMAGE_MODEL = os.getenv("DASHSCOPE_IMAGE_MODEL", "qwen3-vl-flash")
 DEFAULT_EMBEDDING_MODEL = os.getenv("DASHSCOPE_EMBEDDING_MODEL", "text-embedding-v4")
 DEFAULT_BASE_URL = os.getenv("DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+
+AgentGraph: TypeAlias = CompiledStateGraph[Any, Any, Any, Any]
 
 
 def _normalize_message_signature(message: Any) -> tuple[str, str]:
@@ -73,7 +76,7 @@ def _build_memory_inject_middleware(store: Memory):
     return _inject_memory
 
 
-def create_agent_instance(
+def create_agent(
         *,
         llm: Any | None = None,
         model: str = DEFAULT_CHAT_MODEL,
@@ -92,7 +95,7 @@ def create_agent_instance(
         name: str | None = None,
         cache: Any = None,
         **kwargs: Any,
-) -> Any:
+) -> AgentGraph:
     """
     创建 Agent 实例（支持业务 Memory 预注入）。
 
@@ -116,7 +119,7 @@ def create_agent_instance(
         **kwargs: 其余透传 `langchain.agents.create_agent` 的参数。
 
     Returns:
-        Any: 由 LangChain `create_agent` 返回的可执行 Agent 实例。
+        AgentGraph: LangChain create_agent 构建后的 CompiledStateGraph 实例。
     """
 
     resolved_middleware = list(middleware)
@@ -143,7 +146,6 @@ def create_agent_instance(
         cache=cache,
         **kwargs,
     )
-
 
 def _resolve_extra_body(
         model_kwargs: dict[str, Any],

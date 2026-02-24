@@ -14,7 +14,7 @@ from app.utils.prompt_utils import load_prompt
 from app.core.agent.agent_tool_events import tool_call_status
 from app.core.agent.agent_runtime import agent_invoke
 from app.core.langsmith import traceable
-from app.core.llm import create_agent_instance
+from app.core.llm import create_agent
 
 
 ChartType = Literal[
@@ -194,7 +194,7 @@ _CHART_SYSTEM_PROMPT = load_prompt("assistant_chart_system_prompt") + _BASE_PROM
 )
 @traceable(name="Supervisor Chart Tool Agent", run_type="chain")
 def chart_tool_agent(task_description: str) -> str:
-    agent = create_agent_instance(
+    agent = create_agent(
         model="qwen-flash",
         llm_kwargs={"temperature": 0.2},
         system_prompt=SystemMessage(content=_CHART_SYSTEM_PROMPT),

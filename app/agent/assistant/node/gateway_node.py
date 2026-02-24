@@ -10,7 +10,7 @@ from app.agent.assistant.state import AgentState, ExecutionTraceState, GatewayRo
 from app.core.agent.agent_runtime import agent_invoke
 from app.core.agent.agent_tool_trace import record_agent_trace
 from app.core.langsmith import traceable
-from app.core.llm import create_agent_instance
+from app.core.llm import create_agent
 from app.services.token_usage_service import append_trace_and_refresh_token_usage
 
 _GATEWAY_PROMPT = load_prompt("assistant_gateway_prompt")
@@ -18,7 +18,7 @@ _GATEWAY_PROMPT = load_prompt("assistant_gateway_prompt")
 
 @traceable(name="Supervisor Gateway Router Node", run_type="chain")
 def gateway_router(state: AgentState) -> dict[str, Any]:
-    agent = create_agent_instance(
+    agent = create_agent(
         model="qwen-flash",
         llm_kwargs={
             "temperature": 0.0,
