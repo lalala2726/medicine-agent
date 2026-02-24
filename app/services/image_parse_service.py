@@ -6,8 +6,10 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException
 from app.core.llm import create_chat_model
-from app.core.prompts import DRUG_PARSER_PROMPT
 from app.utils.file_utils import FileUtils
+from app.utils.prompt_utils import load_prompt
+
+_DRUG_PARSER_PROMPT = load_prompt("drug_parser_prompt")
 
 
 def parse_drug_images(images: List[str]) -> dict:
@@ -30,7 +32,7 @@ def parse_drug_images(images: List[str]) -> dict:
         response_format={"type": "json_object"},
     )
     messages = [
-        SystemMessage(content=DRUG_PARSER_PROMPT),
+        SystemMessage(content=_DRUG_PARSER_PROMPT),
         HumanMessage(content=image_parts),
     ]
     result = model.invoke(messages)
