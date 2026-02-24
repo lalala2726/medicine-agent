@@ -3,7 +3,7 @@ name: analysis
 description: 面向 supervisor 主代理的数据分析技能，指导跨订单/商品/运营/图表子代理完成取数、分析与可视化输出。
 license: Apache-2.0
 metadata:
-  author: medicine-ai-agent
+  author: Chuang
   version: "1.1"
 ---
 

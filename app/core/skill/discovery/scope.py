@@ -6,15 +6,16 @@ SKILLS_ROOT = Path(__file__).resolve().parents[4] / "resources" / "skills"
 _MAX_SCOPE_LEVEL = 3
 
 
-def _normalize_scope(scope: str) -> tuple[str, Path]:
-    """规范化并校验技能作用域。
+def normalize_scope(scope: str | None) -> tuple[str, Path]:
+    """规范化并校验 Skill 作用域。
 
     作用：
         将传入的 `scope` 清洗为标准格式，并计算其在技能根目录下的绝对路径，
         同时执行层级限制与路径安全校验。
 
     参数：
-        scope: 技能作用域，例如 `supervisor` 或 `supervisor/a`。
+        scope: Skill 作用域，例如 `supervisor` 或 `supervisor/order`。
+            当 scope 为空（`None`、空字符串、仅空白）时，默认指向技能根目录。
 
     返回：
         tuple[str, Path]:
@@ -22,13 +23,10 @@ def _normalize_scope(scope: str) -> tuple[str, Path]:
             - 对应的绝对目录路径
 
     异常：
-        ValueError: 当 scope 为空、层级超限或存在非法路径片段时抛出。
+        ValueError: 当 scope 层级超限或存在非法路径片段时抛出。
     """
 
     normalized = str(scope or "").strip().strip("/")
-    if not normalized:
-        raise ValueError("Skill scope cannot be empty")
-
     parts = [part for part in normalized.split("/") if part]
     if len(parts) > _MAX_SCOPE_LEVEL:
         raise ValueError(f"Skill scope depth cannot exceed {_MAX_SCOPE_LEVEL}: {scope}")

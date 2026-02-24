@@ -6,7 +6,7 @@ from typing import Any
 from loguru import logger
 import yaml
 
-from app.core.skill.discovery.scope import _is_path_within_root, _normalize_scope
+from app.core.skill.discovery.scope import _is_path_within_root, normalize_scope
 from app.core.skill.types.models import SkillExtraMetadata, SkillFileIndex, SkillMetadata
 
 
@@ -119,7 +119,7 @@ def _read_frontmatter_block(skill_file: Path) -> str:
         return ""
 
 
-def _discover_skills_metadata(scope: str) -> tuple[list[SkillMetadata], SkillFileIndex]:
+def discover_skills_metadata(scope: str | None) -> tuple[list[SkillMetadata], SkillFileIndex]:
     """发现指定作用域下的技能元数据，并建立内部索引。
 
     作用：
@@ -127,7 +127,7 @@ def _discover_skills_metadata(scope: str) -> tuple[list[SkillMetadata], SkillFil
         返回对模型可见的元数据列表，以及仅内部使用的 `name -> 文件路径` 索引。
 
     参数：
-        scope: 技能作用域。
+        scope: 技能作用域。为空时表示扫描技能根目录。
 
     返回：
         tuple[list[SkillMetadata], SkillFileIndex]:
@@ -135,7 +135,7 @@ def _discover_skills_metadata(scope: str) -> tuple[list[SkillMetadata], SkillFil
             - skill_file_index: `frontmatter.name -> SKILL.md` 路径映射
     """
 
-    _, scope_dir = _normalize_scope(scope)
+    _, scope_dir = normalize_scope(scope)
     if not scope_dir.exists() or not scope_dir.is_dir():
         return [], {}
 
@@ -196,14 +196,14 @@ def _discover_skills_metadata(scope: str) -> tuple[list[SkillMetadata], SkillFil
     return deduped_metadata, skill_file_index
 
 
-def discover_skills(scope: str) -> tuple[list[SkillMetadata], SkillFileIndex]:
+def discover_skills(scope: str | None = None) -> tuple[list[SkillMetadata], SkillFileIndex]:
     """对外暴露的技能发现入口。
 
     作用：
         统一封装技能元数据发现逻辑，供中间件或测试调用。
 
     参数：
-        scope: 技能作用域。
+        scope: 技能作用域。为空时表示扫描技能根目录。
 
     返回：
         tuple[list[SkillMetadata], SkillFileIndex]:
@@ -211,4 +211,4 @@ def discover_skills(scope: str) -> tuple[list[SkillMetadata], SkillFileIndex]:
             - 技能文件索引映射
     """
 
-    return _discover_skills_metadata(scope)
+    return discover_skills_metadata(scope)

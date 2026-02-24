@@ -124,6 +124,29 @@ def test_discover_skills_raises_when_scope_depth_exceeds_three_levels() -> None:
         discover_skills("supervisor/a/c/d")
 
 
+def test_discover_skills_uses_root_directory_when_scope_is_empty(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """验证空 scope 默认扫描技能根目录。
+
+    测试目的：
+        确认 `scope` 为空时不报错，并按根目录规则扫描 `resources/skills/*/SKILL.md`。
+
+    预期结果：
+        返回根目录直系技能，忽略更深层级的技能文件。
+    """
+
+    skills_root = tmp_path / "skills"
+    _write_skill(skills_root, "a", "desc a", skill_name="a")
+    _write_skill(skills_root, "b", "desc b", skill_name="b")
+    _write_skill(skills_root, "supervisor/analysis", "nested ignored", skill_name="analysis")
+    monkeypatch.setattr(scope_module, "SKILLS_ROOT", skills_root)
+
+    metadata, _ = discover_skills("")
+
+    assert [item["name"] for item in metadata] == ["a", "b"]
+
+
 def test_before_agent_is_idempotent_when_skills_metadata_already_exists() -> None:
     """验证 `before_agent` 的幂等行为。
 
@@ -140,6 +163,31 @@ def test_before_agent_is_idempotent_when_skills_metadata_already_exists() -> Non
     result = middleware.before_agent(state, runtime=None)
 
     assert result is None
+
+
+def test_skill_middleware_defaults_to_root_scope_when_scope_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """验证 `SkillMiddleware()` 默认使用根目录 scope。
+
+    测试目的：
+        确认中间件在未显式传 scope 时也能发现技能并写入元数据。
+
+    预期结果：
+        `before_agent` 返回根目录直系技能元数据。
+    """
+
+    skills_root = tmp_path / "skills"
+    _write_skill(skills_root, "root-skill", "root desc", skill_name="root-skill")
+    monkeypatch.setattr(scope_module, "SKILLS_ROOT", skills_root)
+
+    middleware = SkillMiddleware()
+    result = middleware.before_agent({}, runtime=None)
+
+    assert result is not None
+    assert result["skills_metadata"] == [
+        {"name": "root-skill", "description": "root desc"},
+    ]
 
 
 def test_before_agent_returns_metadata_without_path(

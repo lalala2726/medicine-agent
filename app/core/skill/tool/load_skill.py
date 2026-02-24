@@ -4,12 +4,12 @@ from collections.abc import Callable
 
 from langchain_core.tools import tool
 
-from app.core.skill.discovery.scope import _normalize_scope
+from app.core.skill.discovery.scope import normalize_scope
 from app.core.skill.types.models import SkillFileIndex
 
 
 def create_load_skill_tool(
-    scope: str,
+    scope: str | None,
     get_skill_file_index: Callable[[], SkillFileIndex],
 ):
     """创建 `load_skill` 工具函数。
@@ -19,14 +19,15 @@ def create_load_skill_tool(
         该函数返回一个可注册到 LangChain 的工具对象。
 
     参数：
-        scope: 技能作用域，用于错误提示与作用域校验。
+        scope: 技能作用域，用于错误提示与作用域校验。为空时默认技能根目录。
         get_skill_file_index: 获取最新技能索引的回调函数，返回 `name -> 文件路径`。
 
     返回：
         Callable: 可供模型调用的 `load_skill(skill_name)` 工具。
     """
 
-    normalized_scope, _ = _normalize_scope(scope)
+    normalized_scope, _ = normalize_scope(scope)
+    scope_label = normalized_scope or "resources/skills"
 
     @tool(
         description=(
@@ -57,7 +58,7 @@ def create_load_skill_tool(
             available_names = sorted(skill_file_index.keys())
             available_text = ", ".join(available_names) if available_names else "(none)"
             return (
-                f"Skill '{normalized_skill_name}' not found under scope '{normalized_scope}'. "
+                f"Skill '{normalized_skill_name}' not found under scope '{scope_label}'. "
                 f"Available skills: {available_text}"
             )
 

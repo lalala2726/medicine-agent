@@ -1,16 +1,16 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from typing import Any, NotRequired, TypedDict
+from typing import Any, NotRequired, TypedDict, cast
 
 from langchain.agents.middleware import AgentMiddleware, ModelRequest, ModelResponse
 from langchain_core.messages import SystemMessage
 
-from app.core.skill.discovery.metadata import _discover_skills_metadata
-from app.core.skill.discovery.scope import _normalize_scope
+from app.core.skill.discovery.metadata import discover_skills_metadata
+from app.core.skill.discovery.scope import normalize_scope
 from app.core.skill.prompt.templates import SKILLS_SYSTEM_PROMPT, build_skills_prompt
 from app.core.skill.tool.load_skill import create_load_skill_tool
-from app.core.skill.types.models import SkillExtraMetadata, SkillFileIndex, SkillMetadata
+from app.core.skill.types.models import SkillFileIndex, SkillMetadata
 
 
 class SkillMiddlewareState(TypedDict, total=False):
@@ -37,18 +37,19 @@ class SkillMiddleware(AgentMiddleware):
 
     state_schema = SkillMiddlewareState
 
-    def __init__(self, scope: str, system_prompt_template: str = SKILLS_SYSTEM_PROMPT):
+    def __init__(self, scope: str | None = None, system_prompt_template: str = SKILLS_SYSTEM_PROMPT):
         """初始化技能中间件。
 
         参数：
             scope: 技能作用域，例如 `supervisor`、`supervisor/a`。
+                为空时默认扫描技能根目录 `resources/skills`。
             system_prompt_template: 技能提示词模板，默认使用内置模板。
 
         返回：
             None
         """
 
-        normalized_scope, _ = _normalize_scope(scope)
+        normalized_scope, _ = normalize_scope(scope)
         self.scope = normalized_scope
         self._scope_marker = "## 技能系统"
         self._system_prompt_template = system_prompt_template
@@ -84,39 +85,14 @@ class SkillMiddleware(AgentMiddleware):
             ModelRequest: 注入后（或原样）的模型请求对象。
         """
 
-        raw_metadata = request.state.get("skills_metadata", [])
-        skills_metadata: list[SkillMetadata] = []
-        if isinstance(raw_metadata, list):
-            for item in raw_metadata:
-                if not isinstance(item, dict):
-                    continue
-                name = str(item.get("name") or "").strip()
-                if not name:
-                    continue
-                description = str(item.get("description") or "").strip()
-                if not description:
-                    continue
-
-                skill_item: SkillMetadata = {"name": name, "description": description}
-                license_name = str(item.get("license") or "").strip()
-                if license_name:
-                    skill_item["license"] = license_name
-                extra_metadata = item.get("metadata")
-                if isinstance(extra_metadata, dict):
-                    parsed_metadata: SkillExtraMetadata = {}
-                    author = str(extra_metadata.get("author") or "").strip()
-                    if author:
-                        parsed_metadata["author"] = author
-                    version = str(extra_metadata.get("version") or "").strip()
-                    if version:
-                        parsed_metadata["version"] = version
-                    if parsed_metadata:
-                        skill_item["metadata"] = parsed_metadata
-
-                skills_metadata.append(skill_item)
+        # 元数据合法性由文件发现阶段统一校验，这里不重复做字段级校验。
+        state_dict = cast(dict[str, Any], cast(object, request.state))
+        raw_metadata = state_dict.get("skills_metadata", [])
+        skills_metadata = raw_metadata if isinstance(raw_metadata, list) else []
 
         skills_section = self._build_skills_section(skills_metadata)
         system_message = request.system_message
+        # 如果系统消息中已包含技能提示词，则不重复注入
         if system_message is not None and self._scope_marker in system_message.text:
             return request
 
@@ -143,13 +119,14 @@ class SkillMiddleware(AgentMiddleware):
         """
 
         _ = runtime
-        skills_metadata, skill_file_index = _discover_skills_metadata(self.scope)
+        skills_metadata, skill_file_index = discover_skills_metadata(self.scope)
         self._skill_file_index = skill_file_index
         if "skills_metadata" in state:
             return None
         return {"skills_metadata": skills_metadata}
 
     async def abefore_agent(self, state: dict[str, Any], runtime: Any) -> dict[str, Any] | None:
+
         """异步阶段预加载技能元数据。
 
         参数：
