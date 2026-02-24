@@ -1,3 +1,15 @@
-from app.core.skill.types.models import SkillExtraMetadata, SkillFileIndex, SkillMetadata
+from app.core.skill.types.models import (
+    SkillExtraMetadata,
+    SkillFileIndex,
+    SkillMetadata,
+    SkillTreeNode,
+    SkillTreeResponse,
+)
 
-__all__ = ["SkillMetadata", "SkillExtraMetadata", "SkillFileIndex"]
+__all__ = [
+    "SkillMetadata",
+    "SkillExtraMetadata",
+    "SkillFileIndex",
+    "SkillTreeNode",
+    "SkillTreeResponse",
+]

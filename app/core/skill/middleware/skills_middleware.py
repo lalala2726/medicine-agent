@@ -9,7 +9,8 @@ from langchain_core.messages import SystemMessage
 from app.core.skill.discovery.metadata import discover_skills_metadata
 from app.core.skill.discovery.scope import normalize_scope
 from app.core.skill.prompt.templates import SKILLS_SYSTEM_PROMPT, build_skills_prompt
-from app.core.skill.tool.load_skill import create_load_skill_tool
+from app.core.skill.tool.list_skill_resources import create_list_skill_resources_tool
+from app.core.skill.tool.load_skill import create_load_skill_resource_tool, create_load_skill_tool
 from app.core.skill.types.models import SkillFileIndex, SkillMetadata
 
 
@@ -32,7 +33,7 @@ class SkillMiddleware(AgentMiddleware):
     作用：
         1. 在 `before_agent/abefore_agent` 阶段预加载技能元数据；
         2. 在模型调用前向系统提示词注入技能列表与使用说明；
-        3. 注册 `load_skill` 工具，支持按名称懒加载完整技能文件。
+        3. 注册技能工具，支持按名称懒加载技能文件与资源文件。
     """
 
     state_schema = SkillMiddlewareState
@@ -58,7 +59,19 @@ class SkillMiddleware(AgentMiddleware):
             normalized_scope,
             get_skill_file_index=lambda: self._skill_file_index,
         )
-        self.tools = [self._load_skill_tool]
+        self._load_skill_resource_tool = create_load_skill_resource_tool(
+            normalized_scope,
+            get_skill_file_index=lambda: self._skill_file_index,
+        )
+        self._list_skill_resources_tool = create_list_skill_resources_tool(
+            normalized_scope,
+            get_skill_file_index=lambda: self._skill_file_index,
+        )
+        self.tools = [
+            self._load_skill_tool,
+            self._load_skill_resource_tool,
+            self._list_skill_resources_tool,
+        ]
 
     def _build_skills_section(self, skills_metadata: list[SkillMetadata]) -> str:
         """构建技能提示词段落。
