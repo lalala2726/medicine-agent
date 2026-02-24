@@ -15,6 +15,7 @@ from app.agent.assistant.tools.order_tool import order_tool_agent
 from app.agent.assistant.tools.product_tool import product_tool_agent
 from app.core.agent.agent_event_bus import emit_answer_delta
 from app.core.agent.agent_runtime import agent_stream
+from app.core.skill import SkillMiddleware
 from app.core.agent.agent_tool_events import build_tool_status_middleware
 from app.core.agent.agent_tool_trace import record_agent_trace
 from app.core.langsmith import traceable
@@ -42,6 +43,7 @@ def supervisor_agent(state: AgentState) -> dict[str, Any]:
             chart_tool_agent,
         ],
         middleware=[
+            SkillMiddleware(scope="supervisor"),
             build_tool_status_middleware(),
             ToolCallLimitMiddleware(thread_limit=20, run_limit=10),
         ],

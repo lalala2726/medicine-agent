@@ -14,6 +14,7 @@ from app.core.agent.agent_tool_trace import record_agent_trace
 from app.core.langsmith import traceable
 from app.core.llm import create_agent
 from app.services.token_usage_service import append_trace_and_refresh_token_usage
+from core.skill import SkillMiddleware
 
 _BASE_PROMPT = load_prompt("assistant_base_prompt")
 _CHAT_SYSTEM_PROMPT = load_prompt("assistant_chat_system_prompt") + _BASE_PROMPT
@@ -31,6 +32,9 @@ def chat_agent(state: AgentState) -> dict[str, Any]:
         tools=tools,
         llm_kwargs={"temperature": 1.3},
         system_prompt=SystemMessage(content=_CHAT_SYSTEM_PROMPT),
+        middleware=[
+            SkillMiddleware(scope="supervisor"),
+        ]
     )
     stream_result = agent_stream(
         agent,
