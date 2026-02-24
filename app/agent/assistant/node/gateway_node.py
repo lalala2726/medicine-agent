@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Mapping
+from typing import Any
 
 from langchain_core.messages import SystemMessage
 
@@ -28,13 +28,10 @@ def gateway_router(state: AgentState) -> dict[str, Any]:
     )
     history_messages = list(state.get("history_messages") or [])
     result = agent_invoke(agent, history_messages)
-    fallback_text = ""
-    if isinstance(result, Mapping):
-        fallback_text = str(result.get("output") or result.get("text") or "")
     trace = record_agent_trace(
-        payload=result,
+        payload=result.payload,
         input_messages=history_messages,
-        fallback_text=fallback_text,
+        fallback_text=result.content,
     )
     raw_content = trace.get("raw_content")
 

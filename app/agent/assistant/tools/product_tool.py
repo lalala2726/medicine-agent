@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Mapping, Optional
+from typing import Optional
 
 from langchain_core.messages import SystemMessage
 from langchain_core.tools import tool
@@ -10,7 +10,6 @@ from app.utils.prompt_utils import load_prompt
 from app.agent.assistant.tools.base_tools import _normalize_id_list, format_ids_to_string
 from app.core.agent.agent_tool_events import tool_call_status
 from app.core.agent.agent_runtime import agent_invoke
-from app.core.agent.agent_tool_trace import record_agent_trace
 from app.core.langsmith import traceable
 from app.core.llm import create_agent_instance
 from app.schemas.http_response import HttpResponse
@@ -199,18 +198,7 @@ def product_tool_agent(task_description: str) -> str:
         agent,
         input_messages,
     )
-    fallback_text = ""
-    if isinstance(result, Mapping):
-        fallback_text = str(result.get("output") or result.get("text") or "")
-    trace = record_agent_trace(
-        payload=result,
-        input_messages=input_messages,
-        fallback_text=fallback_text,
-    )
-    text = str(trace.get("text") or "").strip()
-    if not text:
-        return "未获取到商品数据，请补充筛选条件后重试。"
-    return text
+    return result.content
 
 
 product_agent = product_tool_agent

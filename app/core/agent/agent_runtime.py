@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 
 from langchain_core.messages import HumanMessage
@@ -53,10 +54,68 @@ def _normalize_history_messages(history_messages: list[Any] | str | None) -> lis
     return [HumanMessage(content=str(history_messages))]
 
 
+def _resolve_messages_from_payload(payload: Any) -> list[Any]:
+    """
+    从 agent 调用返回值中提取消息列表。
+
+    Args:
+        payload: `agent.invoke/ainvoke` 原始返回值。
+
+    Returns:
+        list[Any]: 消息列表；无法解析时返回空列表。
+    """
+
+    if not isinstance(payload, Mapping):
+        return []
+    raw_messages = payload.get("messages")
+    if isinstance(raw_messages, list):
+        return list(raw_messages)
+    return []
+
+
+def _resolve_content_from_messages(messages: list[Any]) -> tuple[str, Any]:
+    """
+    从消息序列中提取最后一条 AI 消息文本及原始 content。
+
+    Args:
+        messages: 消息列表。
+
+    Returns:
+        tuple[str, Any]:
+            - 文本内容（已 strip）；
+            - 原始 content。
+    """
+
+    for message in reversed(messages):
+        if str(getattr(message, "type", "") or "").lower() != "ai":
+            continue
+        raw_content = getattr(message, "content", None)
+        return extract_text(message).strip(), raw_content
+    return "", None
+
+
+@dataclass(frozen=True)
+class AgentInvokeResult:
+    """
+    `agent_invoke` 的标准化返回结构。
+
+    Attributes:
+        payload: agent 原始返回值。
+        messages: 从 payload 提取的消息列表。
+        content: 优先最后一条 AI 文本，否则回退 payload 的 `output/text`。
+        raw_content: 最后一条 AI 原始 content（若存在）。
+    """
+
+    payload: Any
+    messages: list[Any]
+    content: str
+    raw_content: Any
+
+
 def agent_invoke(
     agent_instance: Any,
     history_messages: list[Any] | str,
-) -> Any:
+) -> AgentInvokeResult:
     """
     执行 agent 的 invoke 调用（优先异步 ainvoke）。
 
@@ -65,14 +124,29 @@ def agent_invoke(
         history_messages: 输入消息列表。
 
     Returns:
-        Any: agent 返回结果。
+        AgentInvokeResult: 标准化后的 invoke 结果。
     """
 
     payload = {"messages": _normalize_history_messages(history_messages)}
     ainvoke = getattr(agent_instance, "ainvoke", None)
     if callable(ainvoke):
-        return _run_async(ainvoke(payload))
-    return agent_instance.invoke(payload)
+        raw_result = _run_async(ainvoke(payload))
+    else:
+        raw_result = agent_instance.invoke(payload)
+
+    messages = _resolve_messages_from_payload(raw_result)
+    content, raw_content = _resolve_content_from_messages(messages)
+    if not content and isinstance(raw_result, Mapping):
+        content = str(raw_result.get("output") or raw_result.get("text") or "").strip()
+        if raw_content is None:
+            raw_content = raw_result.get("output") or raw_result.get("text")
+
+    return AgentInvokeResult(
+        payload=raw_result,
+        messages=messages,
+        content=content,
+        raw_content=raw_content,
+    )
 
 
 def agent_stream(

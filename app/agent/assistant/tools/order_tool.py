@@ -10,7 +10,6 @@ from app.utils.prompt_utils import load_prompt
 from app.agent.assistant.tools.base_tools import _normalize_id_list, format_ids_to_string
 from app.core.agent.agent_tool_events import tool_call_status
 from app.core.agent.agent_runtime import agent_invoke
-from app.core.agent.agent_tool_trace import record_agent_trace
 from app.core.langsmith import traceable
 from app.core.llm import create_agent_instance
 from app.schemas.http_response import HttpResponse
@@ -165,14 +164,7 @@ def order_tool_agent(task_description: str) -> str:
         agent,
         task_description,
     )
-    trace = record_agent_trace(
-        payload=result,
-        input_messages=task_description,
-    )
-    text = str(trace.get("text") or "").strip()
-    if not text:
-        return "未获取到订单数据，请补充订单号或筛选条件后重试。"
-    return text
+    return result.content
 
 
 order_agent = order_tool_agent

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal, Mapping
+from typing import Literal
 
 from langchain_core.messages import SystemMessage
 from langchain_core.tools import tool
@@ -9,7 +9,6 @@ from pydantic import BaseModel, Field
 from app.utils.prompt_utils import load_prompt
 from app.core.agent.agent_tool_events import tool_call_status
 from app.core.agent.agent_runtime import agent_invoke
-from app.core.agent.agent_tool_trace import record_agent_trace
 from app.core.langsmith import traceable
 from app.core.llm import create_agent_instance
 from app.schemas.http_response import HttpResponse
@@ -207,18 +206,7 @@ def analytics_tool_agent(task_description: str) -> str:
         agent,
         input_messages,
     )
-    fallback_text = ""
-    if isinstance(result, Mapping):
-        fallback_text = str(result.get("output") or result.get("text") or "")
-    trace = record_agent_trace(
-        payload=result,
-        input_messages=input_messages,
-        fallback_text=fallback_text,
-    )
-    text = str(trace.get("text") or "").strip()
-    if not text:
-        return "未获取到运营分析数据，请补充查询维度或条件后重试。"
-    return text
+    return result.content
 
 
 analytics_agent = analytics_tool_agent

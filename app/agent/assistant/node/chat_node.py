@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Mapping
+from typing import Any
 
 from langchain_core.messages import AIMessage, SystemMessage
 
@@ -32,13 +32,10 @@ def chat_agent(state: AgentState) -> dict[str, Any]:
         system_prompt=SystemMessage(content=_CHAT_SYSTEM_PROMPT),
     )
     result = agent_invoke(agent, history_messages)
-    fallback_text = ""
-    if isinstance(result, Mapping):
-        fallback_text = str(result.get("output") or result.get("text") or "")
     trace = record_agent_trace(
-        payload=result,
+        payload=result.payload,
         input_messages=history_messages,
-        fallback_text=fallback_text,
+        fallback_text=result.content,
     )
     text = str(trace.get("text") or "").strip()
     trace_item = ExecutionTraceState(
