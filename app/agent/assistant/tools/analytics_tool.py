@@ -170,8 +170,8 @@ async def get_analytics_product_return_rates(limit: int = 10) -> dict:
         return HttpResponse.parse_data(response)
 
 
-_BASE_PROMPT = load_prompt("assistant_base_prompt")
-_ANALYTICS_SYSTEM_PROMPT = load_prompt("assistant_analytics_system_prompt") + _BASE_PROMPT
+_BASE_PROMPT = load_prompt("assistant/base_prompt.md")
+_ANALYTICS_SYSTEM_PROMPT = load_prompt("assistant/analytics_system_prompt.md") + _BASE_PROMPT
 
 
 @tool(

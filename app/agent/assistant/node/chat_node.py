@@ -16,8 +16,8 @@ from app.core.llm import create_agent
 from app.services.token_usage_service import append_trace_and_refresh_token_usage
 from core.skill import SkillMiddleware
 
-_BASE_PROMPT = load_prompt("assistant_base_prompt")
-_CHAT_SYSTEM_PROMPT = load_prompt("assistant_chat_system_prompt") + _BASE_PROMPT
+_BASE_PROMPT = load_prompt("assistant/base_prompt.md")
+_CHAT_SYSTEM_PROMPT = load_prompt("assistant/chat_system_prompt.md") + _BASE_PROMPT
 
 
 @traceable(name="Supervisor Chat Agent Node", run_type="chain")

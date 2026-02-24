@@ -13,7 +13,7 @@ from app.core.langsmith import traceable
 from app.core.llm import create_agent
 from app.services.token_usage_service import append_trace_and_refresh_token_usage
 
-_GATEWAY_PROMPT = load_prompt("assistant_gateway_prompt")
+_GATEWAY_PROMPT = load_prompt("assistant/gateway_prompt.md")
 
 
 @traceable(name="Supervisor Gateway Router Node", run_type="chain")

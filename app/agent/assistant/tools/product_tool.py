@@ -169,8 +169,8 @@ async def get_drug_detail(product_id: list[str]) -> dict:
         return HttpResponse.parse_data(response)
 
 
-_BASE_PROMPT = load_prompt("assistant_base_prompt")
-_PRODUCT_SYSTEM_PROMPT = load_prompt("assistant_product_system_prompt") + _BASE_PROMPT
+_BASE_PROMPT = load_prompt("assistant/base_prompt.md")
+_PRODUCT_SYSTEM_PROMPT = load_prompt("assistant/product_system_prompt.md") + _BASE_PROMPT
 
 
 @tool(

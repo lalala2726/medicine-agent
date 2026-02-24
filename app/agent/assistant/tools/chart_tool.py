@@ -176,8 +176,8 @@ def get_chart_sample_by_name(chart_name: ChartType) -> dict:
     }
 
 
-_BASE_PROMPT = load_prompt("assistant_base_prompt")
-_CHART_SYSTEM_PROMPT = load_prompt("assistant_chart_system_prompt") + _BASE_PROMPT
+_BASE_PROMPT = load_prompt("assistant/base_prompt.md")
+_CHART_SYSTEM_PROMPT = load_prompt("assistant/chart_system_prompt.md") + _BASE_PROMPT
 
 
 @tool(

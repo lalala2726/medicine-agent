@@ -136,8 +136,8 @@ async def get_orders_detail(order_id: list[str]) -> dict:
         return HttpResponse.parse_data(response)
 
 
-_BASE_PROMPT = load_prompt("assistant_base_prompt")
-_ORDER_SYSTEM_PROMPT = load_prompt("assistant_order_system_prompt") + _BASE_PROMPT
+_BASE_PROMPT = load_prompt("assistant/base_prompt.md")
+_ORDER_SYSTEM_PROMPT = load_prompt("assistant/order_system_prompt.md") + _BASE_PROMPT
 
 
 @tool(

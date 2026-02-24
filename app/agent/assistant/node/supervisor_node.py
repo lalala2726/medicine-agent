@@ -22,8 +22,8 @@ from app.core.langsmith import traceable
 from app.core.llm import create_agent
 from app.services.token_usage_service import append_trace_and_refresh_token_usage
 
-_BASE_PROMPT = load_prompt("assistant_base_prompt")
-_SUPERVISOR_PROMPT = load_prompt("assistant_supervisor_system_prompt") + _BASE_PROMPT
+_BASE_PROMPT = load_prompt("assistant/base_prompt.md")
+_SUPERVISOR_PROMPT = load_prompt("assistant/supervisor_system_prompt.md") + _BASE_PROMPT
 
 
 @traceable(name="Supervisor Agent Node", run_type="chain")

@@ -5,7 +5,7 @@ from langchain_core.prompts import SystemMessagePromptTemplate
 from app.core.skill.types.models import SkillMetadata
 from app.utils.prompt_utils import load_prompt
 
-SKILLS_SYSTEM_PROMPT_FILE = "assistant_skill_system_prompt"
+SKILLS_SYSTEM_PROMPT_FILE = "system/skill_system_prompt.md"
 SKILLS_SYSTEM_PROMPT = load_prompt(SKILLS_SYSTEM_PROMPT_FILE).strip()
 
 

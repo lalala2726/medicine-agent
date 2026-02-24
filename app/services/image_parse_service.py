@@ -9,7 +9,7 @@ from app.core.llm import create_chat_model
 from app.utils.file_utils import FileUtils
 from app.utils.prompt_utils import load_prompt
 
-_DRUG_PARSER_PROMPT = load_prompt("drug_parser_prompt")
+_DRUG_PARSER_PROMPT = load_prompt("image_parser/drug_prompt.md")
 
 
 def parse_drug_images(images: List[str]) -> dict:
