@@ -3,34 +3,31 @@ from __future__ import annotations
 import datetime
 import os
 import uuid
-from typing import Annotated, Any
+from typing import Annotated, Any, Mapping
 
 from bson import ObjectId
-from langchain_core.messages import AIMessage, HumanMessage
 from loguru import logger
 from pydantic import Field
 from pymongo import ASCENDING, DESCENDING
-from pymongo.errors import PyMongoError
 
 from app.core.codes import ResponseCode
-from app.core.exceptions import ServiceException
-from app.core.mongodb import DEFAULT_ADMIN_MESSAGES_COLLECTION, get_mongo_database
-from app.schemas.admin_message import (
-    AdminMessageCreate,
-    AdminMessageDocument,
-    ExecutionTraceItem,
+from app.core.exception.exceptions import ServiceException
+from app.core.mongodb import DEFAULT_MESSAGES_COLLECTION, get_mongo_database
+from app.schemas.document.message import (
     MessageRole,
+    MessageCreate,
+    MessageDocument,
     MessageStatus,
     TokenUsage,
 )
 
 
 def _resolve_collection_name() -> str:
-    """解析 admin_messages 集合名，支持环境变量覆盖。"""
+    """解析 messages 集合名，支持环境变量覆盖。"""
 
     return (
-            (os.getenv("MONGODB_ADMIN_MESSAGES_COLLECTION") or DEFAULT_ADMIN_MESSAGES_COLLECTION).strip()
-            or DEFAULT_ADMIN_MESSAGES_COLLECTION
+            (os.getenv("MONGODB_MESSAGES_COLLECTION") or DEFAULT_MESSAGES_COLLECTION).strip()
+            or DEFAULT_MESSAGES_COLLECTION
     )
 
 
@@ -50,61 +47,65 @@ def _to_object_id(raw_conversation_id: str) -> ObjectId:
         ) from exc
 
 
-def _to_message_document(document: dict[str, Any]) -> AdminMessageDocument:
+def _to_message_document(document: dict[str, Any]) -> MessageDocument:
     """
     将 Mongo 原始文档转换为消息模型。
 
     统一由 schema 做字段归一化（如 ObjectId -> str），避免业务层重复转换逻辑。
     """
 
-    return AdminMessageDocument.model_validate(document)
+    return MessageDocument.model_validate(document)
 
 
-def _normalize_execution_trace(
-        execution_trace: list[ExecutionTraceItem | dict[str, Any]] | None,
-) -> list[ExecutionTraceItem] | None:
-    """
-    归一化 execution_trace，自动忽略非法项。
+def _to_non_negative_int(value: Any) -> int | None:
+    """将任意值转换为非负整数。"""
 
-    Args:
-        execution_trace: 原始节点执行追踪数据。
-
-    Returns:
-        list[ExecutionTraceItem] | None: 归一化结果，无有效项时返回 None。
-    """
-
-    if execution_trace is None:
+    if value is None:
         return None
-
-    normalized_items: list[ExecutionTraceItem] = []
-    for item in execution_trace:
-        if isinstance(item, ExecutionTraceItem):
-            normalized_items.append(item)
-            continue
-        if not isinstance(item, dict):
-            continue
-        try:
-            normalized_items.append(ExecutionTraceItem.model_validate(item))
-        except Exception:
-            logger.warning("Ignore invalid execution_trace item while persisting message.")
-    return normalized_items or None
+    try:
+        resolved = int(value)
+    except (TypeError, ValueError):
+        return None
+    if resolved < 0:
+        return None
+    return resolved
 
 
 def _normalize_token_usage(
         token_usage: TokenUsage | dict[str, Any] | None,
 ) -> TokenUsage | None:
-    """归一化 token_usage，自动忽略非法数据。"""
+    """归一化 token_usage，提取 prompt/completion/total 总量字段。"""
 
     if token_usage is None:
         return None
     if isinstance(token_usage, TokenUsage):
         return token_usage
-    if not isinstance(token_usage, dict):
+    if not isinstance(token_usage, Mapping):
         return None
+
+    prompt_tokens = _to_non_negative_int(token_usage.get("prompt_tokens"))
+    completion_tokens = _to_non_negative_int(token_usage.get("completion_tokens"))
+    total_tokens = _to_non_negative_int(token_usage.get("total_tokens"))
+    if prompt_tokens is None and completion_tokens is None and total_tokens is None:
+        return None
+
+    resolved_prompt = prompt_tokens or 0
+    resolved_completion = completion_tokens or 0
+    resolved_total = total_tokens
+    if resolved_total is None:
+        resolved_total = resolved_prompt + resolved_completion
+
     try:
-        return TokenUsage.model_validate(token_usage)
+        return TokenUsage(
+            prompt_tokens=resolved_prompt,
+            completion_tokens=resolved_completion,
+            total_tokens=resolved_total,
+        )
     except Exception:
-        logger.warning("Ignore invalid token_usage while persisting message.")
+        logger.warning(
+            "Ignore invalid token_usage while persisting message. payload={payload}",
+            payload=token_usage,
+        )
         return None
 
 
@@ -114,50 +115,48 @@ def add_message(
         role: MessageRole | str,
         status: MessageStatus | str = MessageStatus.SUCCESS,
         content: Annotated[str, Field(min_length=1)],
-        thought_chain: list[Any] | None = None,
         token_usage: TokenUsage | dict[str, Any] | None = None,
-        execution_trace: list[ExecutionTraceItem | dict[str, Any]] | None = None,
         message_uuid: str | None = None,
 ) -> str:
     """
-    新增一条管理助手消息。
+    新增一条会话消息。
 
     Args:
         conversation_id: 所属会话 Mongo ObjectId（字符串形式）。
-        role: 消息角色（user/assistant）。
+        role: 消息角色（user/ai）。
         status: 消息状态（success/error）。
         content: 消息内容。
-        thought_chain: 可选思维链结构。
-        token_usage: 可选 token 使用明细。通常来源于 workflow state 的 `token_usage`，
-            且仅 assistant 消息会保存，user 消息会被忽略。
-        execution_trace: 可选节点执行追踪明细。通常来源于 workflow state 的
-            `execution_traces`，用于复盘本轮节点/工具调用路径。
+        token_usage: 可选 token 使用总量，仅支持
+            prompt_tokens/completion_tokens/total_tokens 三个字段。
+            且仅 ai 消息会保存，user 消息会被忽略。
         message_uuid: 可选消息 UUID，不传时自动生成。
 
     Returns:
         str: 新增消息的 Mongo ObjectId 字符串。
 
     Raises:
-        ServiceException: 当参数不合法或数据库操作失败时抛出。
+        ServiceException: 当参数不合法时抛出。
+
+    Note:
+        数据库异常会由全局异常处理器统一拦截。
     """
 
     normalized_role = MessageRole(role)
-    payload = AdminMessageCreate(
+    payload = MessageCreate(
         uuid=message_uuid or str(uuid.uuid4()),
         conversation_id=conversation_id,
         role=normalized_role,
         status=status,
         content=content,
-        thought_chain=thought_chain,
         token_usage=(
             _normalize_token_usage(token_usage)
-            if normalized_role == MessageRole.ASSISTANT
+            if normalized_role == MessageRole.AI
             else None
         ),
-        execution_trace=_normalize_execution_trace(execution_trace),
     )
 
     now = datetime.datetime.now()
+    # Mongo 写入文档统一由 Pydantic 模型序列化产出。
     document = payload.model_dump()
     if document.get("token_usage") is None:
         document.pop("token_usage", None)
@@ -167,36 +166,30 @@ def add_message(
 
     db = get_mongo_database()
     collection = db[_resolve_collection_name()]
-    try:
-        result = collection.insert_one(document)
-        return str(result.inserted_id)
-    except PyMongoError as exc:
-        raise ServiceException(code=ResponseCode.DATABASE_ERROR, message="数据库错误") from exc
+    result = collection.insert_one(document)
+    return str(result.inserted_id)
 
 
-def get_message_by_uuid(
-        *,
-        message_uuid: Annotated[str, Field(min_length=1)],
-) -> AdminMessageDocument | None:
+def get_message_by_uuid(message_uuid: Annotated[str, Field(min_length=1)]) -> MessageDocument | None:
     """
-    按消息 UUID 查询单条管理助手消息。
+    按消息 UUID 查询单条会话消息。
 
     Args:
         message_uuid: 消息业务唯一ID。
 
     Returns:
-        AdminMessageDocument | None: 命中返回消息模型，否则返回 None。
+        MessageDocument | None: 命中返回消息模型，否则返回 None。
+
+    Note:
+        数据库异常会由全局异常处理器统一拦截。
     """
 
     db = get_mongo_database()
     collection = db[_resolve_collection_name()]
-    try:
-        document = collection.find_one({"uuid": message_uuid})
-        if document is None:
-            return None
-        return _to_message_document(document)
-    except PyMongoError as exc:
-        raise ServiceException(code=ResponseCode.DATABASE_ERROR, message="数据库错误") from exc
+    document = collection.find_one({"uuid": message_uuid})
+    if document is None:
+        return None
+    return _to_message_document(document)
 
 
 def list_messages(
@@ -205,7 +198,7 @@ def list_messages(
         limit: Annotated[int, Field(ge=1)] = 50,
         skip: Annotated[int, Field(ge=0)] = 0,
         ascending: bool = True,
-) -> list[AdminMessageDocument]:
+) -> list[MessageDocument]:
     """
     查询某个会话下的消息列表。
 
@@ -216,7 +209,11 @@ def list_messages(
         ascending: 是否按创建时间升序，默认 True（旧到新）。
 
     Returns:
-        list[AdminMessageDocument]: 消息模型列表。
+        list[MessageDocument]: 消息文档模型列表。
+            仅负责数据库模型输出，不做上层会话消息格式转换。
+
+    Note:
+        数据库异常会由全局异常处理器统一拦截。
     """
 
     sort_direction = ASCENDING if ascending else DESCENDING
@@ -224,50 +221,5 @@ def list_messages(
 
     db = get_mongo_database()
     collection = db[_resolve_collection_name()]
-    try:
-        cursor = collection.find(query).sort("created_at", sort_direction).skip(skip).limit(limit)
-        return [_to_message_document(item) for item in cursor]
-    except PyMongoError as exc:
-        raise ServiceException(code=ResponseCode.DATABASE_ERROR, message="数据库错误") from exc
-
-
-def _to_langchain_message(
-        message: AdminMessageDocument,
-) -> HumanMessage | AIMessage:
-    """
-    将消息文档映射为 LangChain 消息对象。
-
-    映射规则：
-    - role=user -> HumanMessage
-    - role=assistant -> AIMessage
-    """
-
-    if message.role == MessageRole.USER:
-        return HumanMessage(content=message.content)
-    return AIMessage(content=message.content)
-
-
-def get_history(
-        *,
-        conversation_id: Annotated[str, Field(min_length=1)],
-        limit: Annotated[int, Field(ge=1)] = 50,
-        ascending: bool = True,
-) -> list[HumanMessage | AIMessage]:
-    """
-    查询并构建对话历史（LangChain 消息格式）。
-
-    Args:
-        conversation_id: 所属会话 Mongo ObjectId（字符串形式）。
-        limit: 返回条数上限，默认 50。
-        ascending: 是否按创建时间升序，默认 True（旧到新）。
-
-    Returns:
-        list[HumanMessage | AIMessage]: 可直接喂给模型的历史消息列表。
-    """
-
-    message_list = list_messages(
-        conversation_id=conversation_id,
-        limit=limit,
-        ascending=ascending,
-    )
-    return [_to_langchain_message(item) for item in message_list]
+    cursor = collection.find(query).sort("created_at", sort_direction).skip(skip).limit(limit)
+    return [_to_message_document(item) for item in cursor]

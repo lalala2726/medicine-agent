@@ -61,23 +61,6 @@ class ExecutionTraceState(TypedDict, total=False):
     tool_calls: list[ToolCallTraceState]
 
 
-class ToolLlmBreakdownState(TypedDict):
-    """工具级 LLM token 明细（支持递归 children）。"""
-
-    # 工具名称。
-    tool_name: str
-    # 工具输入参数。
-    tool_input: Any
-    # 当前工具（含子工具）输入 token 总数。
-    prompt_tokens: int
-    # 当前工具（含子工具）输出 token 总数。
-    completion_tokens: int
-    # 当前工具（含子工具）token 总数。
-    total_tokens: int
-    # 子工具 token 明细。
-    children: list["ToolLlmBreakdownState"]
-
-
 class NodeTokenBreakdownState(TypedDict):
     """节点级 token 明细。"""
 
@@ -91,20 +74,16 @@ class NodeTokenBreakdownState(TypedDict):
     completion_tokens: int
     # 节点自身 total token 数。
     total_tokens: int
-    # 节点下工具 LLM total token 汇总。
-    tool_tokens_total: int
-    # 节点下工具级递归明细。
-    tool_llm_breakdown: list[ToolLlmBreakdownState]
 
 
 class TokenUsageState(TypedDict):
     """消息级 token 使用汇总。"""
 
-    # 消息输入 token 总数（包含节点与工具内 LLM）。
+    # 消息输入 token 总数（仅节点模型）。
     prompt_tokens: int
-    # 消息输出 token 总数（包含节点与工具内 LLM）。
+    # 消息输出 token 总数（仅节点模型）。
     completion_tokens: int
-    # 消息 total token 总数（包含节点与工具内 LLM）。
+    # 消息 total token 总数（仅节点模型）。
     total_tokens: int
     # 是否所有 LLM 调用都拿到了 usage。
     is_complete: bool

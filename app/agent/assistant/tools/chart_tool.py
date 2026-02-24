@@ -4,17 +4,17 @@ import copy
 import json
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Mapping
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import SystemMessage
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
 from app.utils.prompt_utils import load_prompt
-from app.core.assistant_status import tool_call_status
+from app.core.agent.agent_tool_events import tool_call_status
+from app.core.agent.agent_runtime import agent_invoke
 from app.core.langsmith import traceable
-from app.core.llm import create_chat_model
-from app.utils.streaming_utils import invoke_with_trace
+from app.core.llm import create_agent
 
 
 ChartType = Literal[
@@ -90,7 +90,7 @@ def _load_chart_samples() -> dict[str, dict[str, Any]]:
     # 忽略以 _ 开头的元数据字段（如 _meta）
     meta_keys = {k for k in payload.keys() if k.startswith("_")}
     payload_keys = set(payload.keys()) - meta_keys
-    expected_keys = set(SUPPORTED_CHART_TYPES)
+    set(SUPPORTED_CHART_TYPES)
     missing = [chart for chart in SUPPORTED_CHART_TYPES if chart not in payload_keys]
     if missing:
         raise ValueError(f"Chart samples keys mismatch: missing={missing}")
@@ -131,7 +131,7 @@ def get_supported_chart_types() -> dict:
     ),
 )
 @tool_call_status(
-    tool_name="get_chart_sample_by_name",
+    tool_name="图表示例模板",
     start_message="正在获取图表配置模板",
     error_message="获取图表模板失败",
     timely_message="图表模板正在持续处理中",
@@ -186,25 +186,23 @@ _CHART_SYSTEM_PROMPT = load_prompt("assistant_chart_system_prompt") + _BASE_PROM
         "输入为自然语言任务描述，内部会自动调用图表模板工具并返回结果。"
     )
 )
+@tool_call_status(
+    tool_name="正在调用图表子代理",
+    start_message="正在执行查询",
+    error_message="调用图表子代理失败",
+    timely_message="图表子代理正在持续处理中",
+)
 @traceable(name="Supervisor Chart Tool Agent", run_type="chain")
 def chart_tool_agent(task_description: str) -> str:
-    llm = create_chat_model(
+    agent = create_agent(
         model="qwen-flash",
-        temperature=0.2,
-    )
-    messages = [
-        SystemMessage(content=_CHART_SYSTEM_PROMPT),
-        HumanMessage(content=str(task_description or "").strip()),
-    ]
-    trace = invoke_with_trace(
-        llm,
-        messages,
+        llm_kwargs={"temperature": 0.2},
+        system_prompt=SystemMessage(content=_CHART_SYSTEM_PROMPT),
         tools=[get_supported_chart_types, get_chart_sample_by_name],
     )
-    text = str(trace.get("text") or "").strip()
-    if not text:
-        return "未获取到图表模板数据，请补充图表名称或场景后重试。"
-    return text
-
-
-chart_agent = chart_tool_agent
+    input_messages = str(task_description or "").strip()
+    result = agent_invoke(
+        agent,
+        input_messages,
+    )
+    return result.content

@@ -6,7 +6,6 @@ from app.agent.assistant.state import (
     ExecutionTraceState,
     NodeTokenBreakdownState,
     TokenUsageState,
-    ToolLlmBreakdownState,
 )
 
 
@@ -118,104 +117,11 @@ def sum_usage(usages: Sequence[Mapping[str, Any] | None]) -> dict[str, int]:
     }
 
 
-def merge_node_and_tool_usage(
-        node_usage: Mapping[str, Any] | None,
-        tool_usage: Mapping[str, Any] | None,
-) -> dict[str, int]:
-    """
-    合并节点 usage 与工具 usage。
-
-    Args:
-        node_usage: 节点自身 usage。
-        tool_usage: 节点下工具 usage 汇总。
-
-    Returns:
-        dict[str, int]: 合并后的 usage 结果。
-    """
-
-    return sum_usage([node_usage, tool_usage])
-
-
-def _build_tool_breakdown(
-        tool_calls: Sequence[Mapping[str, Any]] | None,
-) -> tuple[list[ToolLlmBreakdownState], dict[str, int], bool]:
-    """
-    递归构建工具级 token 明细。
-
-    Args:
-        tool_calls: 节点工具调用列表（支持 children 递归）。
-
-    Returns:
-        tuple[list[ToolLlmBreakdownState], dict[str, int], bool]:
-            - 工具级 token 明细；
-            - 工具 token 汇总；
-            - usage 是否完整（任意 LLM 调用缺 usage 则为 False）。
-    """
-
-    if not tool_calls:
-        return [], _zero_usage(), True
-
-    breakdown: list[ToolLlmBreakdownState] = []
-    all_prompt = 0
-    all_completion = 0
-    all_total = 0
-    is_complete = True
-
-    for item in tool_calls:
-        if not isinstance(item, Mapping):
-            continue
-
-        tool_name = str(item.get("tool_name") or "").strip() or "unknown_tool"
-        tool_input = item.get("tool_input")
-        llm_used = bool(item.get("llm_used"))
-        llm_usage_complete = bool(item.get("llm_usage_complete", True))
-        llm_token_usage = item.get("llm_token_usage")
-        own_usage = (
-            _normalize_usage_payload(llm_token_usage)
-            if isinstance(llm_token_usage, Mapping)
-            else None
-        )
-        if llm_used and own_usage is None:
-            llm_usage_complete = False
-        own_usage = own_usage or _zero_usage()
-
-        raw_children = item.get("children")
-        children_breakdown, children_usage, children_complete = _build_tool_breakdown(
-            raw_children if isinstance(raw_children, list) else None
-        )
-        tool_usage = merge_node_and_tool_usage(own_usage, children_usage)
-        breakdown.append(
-            ToolLlmBreakdownState(
-                tool_name=tool_name,
-                tool_input=tool_input,
-                prompt_tokens=tool_usage["prompt_tokens"],
-                completion_tokens=tool_usage["completion_tokens"],
-                total_tokens=tool_usage["total_tokens"],
-                children=children_breakdown,
-            )
-        )
-
-        all_prompt += tool_usage["prompt_tokens"]
-        all_completion += tool_usage["completion_tokens"]
-        all_total += tool_usage["total_tokens"]
-        is_complete = is_complete and children_complete and (not llm_used or llm_usage_complete)
-
-    return (
-        breakdown,
-        {
-            "prompt_tokens": all_prompt,
-            "completion_tokens": all_completion,
-            "total_tokens": all_total,
-        },
-        is_complete,
-    )
-
-
 def build_token_usage_from_execution_traces(
         execution_traces: Sequence[Mapping[str, Any]] | None,
 ) -> TokenUsageState | None:
     """
-    由 execution_traces 构建消息级 token 使用汇总。
+    由 execution_traces 构建消息级 token 使用汇总（仅统计节点模型）。
 
     Args:
         execution_traces: workflow state 中累计的节点执行轨迹。
@@ -256,10 +162,6 @@ def build_token_usage_from_execution_traces(
             llm_usage_complete = False
         node_usage = node_usage or _zero_usage()
 
-        raw_tool_calls = trace.get("tool_calls")
-        tools_breakdown, tools_usage, tools_complete = _build_tool_breakdown(
-            raw_tool_calls if isinstance(raw_tool_calls, list) else None
-        )
         node_breakdown.append(
             NodeTokenBreakdownState(
                 node_name=node_name,
@@ -267,15 +169,13 @@ def build_token_usage_from_execution_traces(
                 prompt_tokens=node_usage["prompt_tokens"],
                 completion_tokens=node_usage["completion_tokens"],
                 total_tokens=node_usage["total_tokens"],
-                tool_tokens_total=tools_usage["total_tokens"],
-                tool_llm_breakdown=tools_breakdown,
             )
         )
 
-        message_prompt += node_usage["prompt_tokens"] + tools_usage["prompt_tokens"]
-        message_completion += node_usage["completion_tokens"] + tools_usage["completion_tokens"]
-        message_total += node_usage["total_tokens"] + tools_usage["total_tokens"]
-        is_complete = is_complete and tools_complete and (not llm_used or llm_usage_complete)
+        message_prompt += node_usage["prompt_tokens"]
+        message_completion += node_usage["completion_tokens"]
+        message_total += node_usage["total_tokens"]
+        is_complete = is_complete and (not llm_used or llm_usage_complete)
 
     if not node_breakdown:
         return None
@@ -359,7 +259,9 @@ def resolve_persistable_token_usage(
         execution_traces: state 中累计的 execution_traces（用于兜底重建）。
 
     Returns:
-        dict[str, Any] | None: 可直接传给 `add_message(..., token_usage=...)` 的结构。
+        dict[str, Any] | None:
+            可直接传给 `add_message(..., token_usage=...)` 的结构，
+            仅包含 `prompt_tokens/completion_tokens/total_tokens`。
     """
 
     normalized_state_usage = (
@@ -368,12 +270,61 @@ def resolve_persistable_token_usage(
         else None
     )
     if normalized_state_usage is not None:
-        return dict(normalized_state_usage)
+        return {
+            "prompt_tokens": normalized_state_usage["prompt_tokens"],
+            "completion_tokens": normalized_state_usage["completion_tokens"],
+            "total_tokens": normalized_state_usage["total_tokens"],
+        }
 
     rebuilt = build_token_usage_from_execution_traces(execution_traces)
     if rebuilt is None:
         return None
-    return dict(rebuilt)
+    return {
+        "prompt_tokens": rebuilt["prompt_tokens"],
+        "completion_tokens": rebuilt["completion_tokens"],
+        "total_tokens": rebuilt["total_tokens"],
+    }
+
+
+def resolve_persistable_token_usage_detail(
+        state_token_usage: Mapping[str, Any] | None,
+        execution_traces: Sequence[Mapping[str, Any]] | None,
+) -> dict[str, Any] | None:
+    """
+    生成可持久化的 token 明细（用于 message_trace）。
+
+    规则：
+    1. 优先使用 state 中已有的 `token_usage`；
+    2. 若 state 缺失或非法，则基于 `execution_traces` 兜底重建。
+
+    Args:
+        state_token_usage: state 中缓存的消息级 token_usage。
+        execution_traces: state 中累计的 execution_traces（用于兜底重建）。
+
+    Returns:
+        dict[str, Any] | None:
+            可直接传给 `add_message_trace(..., token_usage_detail=...)` 的结构，
+            仅包含 `is_complete/node_breakdown`。
+    """
+
+    normalized_state_usage = (
+        _normalize_state_token_usage(state_token_usage)
+        if isinstance(state_token_usage, Mapping)
+        else None
+    )
+    if normalized_state_usage is not None:
+        return {
+            "is_complete": normalized_state_usage["is_complete"],
+            "node_breakdown": normalized_state_usage["node_breakdown"],
+        }
+
+    rebuilt = build_token_usage_from_execution_traces(execution_traces)
+    if rebuilt is None:
+        return None
+    return {
+        "is_complete": rebuilt["is_complete"],
+        "node_breakdown": rebuilt["node_breakdown"],
+    }
 
 
 def build_message_token_usage(

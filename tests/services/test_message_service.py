@@ -2,11 +2,10 @@ import datetime
 
 import pytest
 from bson import ObjectId
-from langchain_core.messages import AIMessage, HumanMessage
 
 from app.core.codes import ResponseCode
-from app.core.exceptions import ServiceException
-from app.schemas.admin_message import AdminMessageDocument, MessageRole, MessageStatus
+from app.core.exception.exceptions import ServiceException
+from app.schemas.document.message import MessageDocument, MessageRole, MessageStatus
 from app.services import message_service as service_module
 
 
@@ -78,15 +77,14 @@ def test_add_message_inserts_expected_document(monkeypatch):
     monkeypatch.setattr(
         service_module,
         "get_mongo_database",
-        lambda: {"admin_messages": collection},
+        lambda: {"messages": collection},
     )
-    monkeypatch.setattr(service_module, "_resolve_collection_name", lambda: "admin_messages")
+    monkeypatch.setattr(service_module, "_resolve_collection_name", lambda: "messages")
 
     result = service_module.add_message(
         conversation_id="507f1f77bcf86cd799439011",
         role=MessageRole.USER,
         content="你好",
-        thought_chain=[{"step": "plan"}],
         message_uuid="msg-uuid-1",
     )
 
@@ -102,33 +100,148 @@ def test_add_message_inserts_expected_document(monkeypatch):
     assert isinstance(collection.last_inserted["updated_at"], datetime.datetime)
 
 
+def test_add_message_persists_token_usage_totals_for_assistant(monkeypatch):
+    """验证 assistant 消息落库 token_usage（仅支持新字段）。"""
+
+    collection = _DummyCollection()
+    monkeypatch.setattr(
+        service_module,
+        "get_mongo_database",
+        lambda: {"messages": collection},
+    )
+    monkeypatch.setattr(service_module, "_resolve_collection_name", lambda: "messages")
+
+    service_module.add_message(
+        conversation_id="507f1f77bcf86cd799439011",
+        role=MessageRole.AI,
+        content="助手回复",
+        token_usage={
+            "prompt_tokens": 5,
+            "completion_tokens": 3,
+            "total_tokens": 8,
+        },
+    )
+
+    assert collection.last_inserted is not None
+    assert collection.last_inserted["token_usage"] == {
+        "prompt_tokens": 5,
+        "completion_tokens": 3,
+        "total_tokens": 8,
+    }
+
+
+def test_add_message_ignores_token_usage_with_legacy_fields(monkeypatch):
+    """验证 token_usage 包含旧字段时会被忽略。"""
+
+    collection = _DummyCollection()
+    monkeypatch.setattr(
+        service_module,
+        "get_mongo_database",
+        lambda: {"messages": collection},
+    )
+    monkeypatch.setattr(service_module, "_resolve_collection_name", lambda: "messages")
+
+    service_module.add_message(
+        conversation_id="507f1f77bcf86cd799439011",
+        role=MessageRole.AI,
+        content="助手回复",
+        token_usage={
+            "prompt_tokens": 5,
+            "completion_tokens": 3,
+            "total_tokens": 8,
+            "is_complete": True,
+        },
+    )
+
+    assert collection.last_inserted is not None
+    assert "token_usage" not in collection.last_inserted
+
+
+def test_add_message_user_ignores_token_usage(monkeypatch):
+    """验证 user 消息不会保存 token_usage。"""
+
+    collection = _DummyCollection()
+    monkeypatch.setattr(
+        service_module,
+        "get_mongo_database",
+        lambda: {"messages": collection},
+    )
+    monkeypatch.setattr(service_module, "_resolve_collection_name", lambda: "messages")
+
+    service_module.add_message(
+        conversation_id="507f1f77bcf86cd799439011",
+        role=MessageRole.USER,
+        content="用户提问",
+        token_usage={
+            "prompt_tokens": 9,
+            "completion_tokens": 9,
+            "total_tokens": 18,
+        },
+    )
+
+    assert collection.last_inserted is not None
+    assert "token_usage" not in collection.last_inserted
+
+
+def test_add_message_rejects_invalid_conversation_id(monkeypatch):
+    """验证 add_message：非法 conversation_id 会返回 BAD_REQUEST。"""
+
+    collection = _DummyCollection()
+    monkeypatch.setattr(
+        service_module,
+        "get_mongo_database",
+        lambda: {"messages": collection},
+    )
+    monkeypatch.setattr(service_module, "_resolve_collection_name", lambda: "messages")
+
+    with pytest.raises(ServiceException) as exc_info:
+        service_module.add_message(
+            conversation_id="invalid-object-id",
+            role=MessageRole.AI,
+            content="hello",
+        )
+
+    assert exc_info.value.code == ResponseCode.BAD_REQUEST
+
+
 def test_get_message_by_uuid_returns_typed_model(monkeypatch):
-    """验证 get_message_by_uuid：查询结果会被转换为 AdminMessageDocument。"""
+    """验证 get_message_by_uuid：查询结果会被转换为 MessageDocument。"""
 
     collection = _DummyCollection()
     collection.find_one_result = {
         "_id": ObjectId("507f1f77bcf86cd799439012"),
         "uuid": "msg-1",
         "conversation_id": ObjectId("507f1f77bcf86cd799439011"),
-        "role": "assistant",
+        "role": "ai",
         "content": "hello",
+        "token_usage": {
+            "prompt_tokens": 2,
+            "completion_tokens": 1,
+            "total_tokens": 3,
+        },
         "created_at": datetime.datetime(2026, 1, 1, 10, 0, 0),
         "updated_at": datetime.datetime(2026, 1, 1, 10, 0, 0),
     }
     monkeypatch.setattr(
         service_module,
         "get_mongo_database",
-        lambda: {"admin_messages": collection},
+        lambda: {"messages": collection},
     )
-    monkeypatch.setattr(service_module, "_resolve_collection_name", lambda: "admin_messages")
+    monkeypatch.setattr(service_module, "_resolve_collection_name", lambda: "messages")
 
     result = service_module.get_message_by_uuid(message_uuid="msg-1")
 
-    assert isinstance(result, AdminMessageDocument)
+    assert isinstance(result, MessageDocument)
     assert result is not None
     assert result.id == "507f1f77bcf86cd799439012"
     assert result.conversation_id == "507f1f77bcf86cd799439011"
-    assert result.role == MessageRole.ASSISTANT
+    assert result.role == MessageRole.AI
+    assert result.token_usage is not None
+    assert result.token_usage.model_dump() == {
+        "prompt_tokens": 2,
+        "completion_tokens": 1,
+        "total_tokens": 3,
+    }
 
 
 def test_list_messages_returns_typed_models(monkeypatch):
@@ -140,7 +253,7 @@ def test_list_messages_returns_typed_models(monkeypatch):
             "_id": ObjectId("507f1f77bcf86cd799439022"),
             "uuid": "msg-2",
             "conversation_id": ObjectId("507f1f77bcf86cd799439011"),
-            "role": "assistant",
+            "role": "ai",
             "content": "b",
             "created_at": datetime.datetime(2026, 1, 1, 10, 0, 2),
             "updated_at": datetime.datetime(2026, 1, 1, 10, 0, 2),
@@ -158,9 +271,9 @@ def test_list_messages_returns_typed_models(monkeypatch):
     monkeypatch.setattr(
         service_module,
         "get_mongo_database",
-        lambda: {"admin_messages": collection},
+        lambda: {"messages": collection},
     )
-    monkeypatch.setattr(service_module, "_resolve_collection_name", lambda: "admin_messages")
+    monkeypatch.setattr(service_module, "_resolve_collection_name", lambda: "messages")
 
     result = service_module.list_messages(
         conversation_id="507f1f77bcf86cd799439011",
@@ -173,7 +286,7 @@ def test_list_messages_returns_typed_models(monkeypatch):
         "conversation_id": ObjectId("507f1f77bcf86cd799439011"),
     }
     assert len(result) == 2
-    assert all(isinstance(item, AdminMessageDocument) for item in result)
+    assert all(isinstance(item, MessageDocument) for item in result)
     assert result[0].content == "a"
     assert result[1].content == "b"
 
@@ -187,7 +300,7 @@ def test_list_messages_supports_skip_with_descending_order(monkeypatch):
             "_id": ObjectId("507f1f77bcf86cd799439020"),
             "uuid": "msg-1",
             "conversation_id": ObjectId("507f1f77bcf86cd799439011"),
-            "role": "assistant",
+            "role": "ai",
             "content": "a",
             "created_at": datetime.datetime(2026, 1, 1, 10, 0, 1),
             "updated_at": datetime.datetime(2026, 1, 1, 10, 0, 1),
@@ -196,7 +309,7 @@ def test_list_messages_supports_skip_with_descending_order(monkeypatch):
             "_id": ObjectId("507f1f77bcf86cd799439021"),
             "uuid": "msg-2",
             "conversation_id": ObjectId("507f1f77bcf86cd799439011"),
-            "role": "assistant",
+            "role": "ai",
             "content": "b",
             "created_at": datetime.datetime(2026, 1, 1, 10, 0, 2),
             "updated_at": datetime.datetime(2026, 1, 1, 10, 0, 2),
@@ -205,7 +318,7 @@ def test_list_messages_supports_skip_with_descending_order(monkeypatch):
             "_id": ObjectId("507f1f77bcf86cd799439022"),
             "uuid": "msg-3",
             "conversation_id": ObjectId("507f1f77bcf86cd799439011"),
-            "role": "assistant",
+            "role": "ai",
             "content": "c",
             "created_at": datetime.datetime(2026, 1, 1, 10, 0, 3),
             "updated_at": datetime.datetime(2026, 1, 1, 10, 0, 3),
@@ -214,9 +327,9 @@ def test_list_messages_supports_skip_with_descending_order(monkeypatch):
     monkeypatch.setattr(
         service_module,
         "get_mongo_database",
-        lambda: {"admin_messages": collection},
+        lambda: {"messages": collection},
     )
-    monkeypatch.setattr(service_module, "_resolve_collection_name", lambda: "admin_messages")
+    monkeypatch.setattr(service_module, "_resolve_collection_name", lambda: "messages")
 
     result = service_module.list_messages(
         conversation_id="507f1f77bcf86cd799439011",
@@ -227,180 +340,3 @@ def test_list_messages_supports_skip_with_descending_order(monkeypatch):
 
     assert len(result) == 1
     assert result[0].uuid == "msg-2"
-
-
-def test_add_message_rejects_invalid_conversation_id(monkeypatch):
-    """验证 add_message：非法 conversation_id 会返回 BAD_REQUEST。"""
-
-    collection = _DummyCollection()
-    monkeypatch.setattr(
-        service_module,
-        "get_mongo_database",
-        lambda: {"admin_messages": collection},
-    )
-    monkeypatch.setattr(service_module, "_resolve_collection_name", lambda: "admin_messages")
-
-    with pytest.raises(ServiceException) as exc_info:
-        service_module.add_message(
-            conversation_id="invalid-object-id",
-            role=MessageRole.ASSISTANT,
-            content="hello",
-        )
-
-    assert exc_info.value.code == ResponseCode.BAD_REQUEST
-
-
-def test_add_message_persists_execution_trace_for_assistant(monkeypatch):
-    """测试目标：assistant execution_trace 可落库；成功标准：trace 字段完整写入。"""
-
-    collection = _DummyCollection()
-    monkeypatch.setattr(service_module, "get_mongo_database", lambda: {"admin_messages": collection})
-    monkeypatch.setattr(service_module, "_resolve_collection_name", lambda: "admin_messages")
-
-    service_module.add_message(
-        conversation_id="507f1f77bcf86cd799439011",
-        role=MessageRole.ASSISTANT,
-        content="助手回复",
-        execution_trace=[
-            {
-                "node_name": "order_agent",
-                "model_name": "qwen3-max",
-                "input_messages": [{"role": "system", "content": "请处理订单"}],
-                "output_text": "订单已处理",
-                "tool_calls": [
-                    {
-                        "tool_name": "get_order_list",
-                        "tool_input": {"page_num": 1},
-                        "is_error": False,
-                        "error_message": None,
-                    }
-                ],
-            }
-        ],
-    )
-
-    assert collection.last_inserted is not None
-    execution_trace = collection.last_inserted["execution_trace"]
-    assert execution_trace[0]["node_name"] == "order_agent"
-    assert execution_trace[0]["model_name"] == "qwen3-max"
-    assert execution_trace[0]["tool_calls"][0]["tool_name"] == "get_order_list"
-    assert execution_trace[0]["tool_calls"][0]["tool_input"] == {"page_num": 1}
-    assert "tool_output" not in execution_trace[0]["tool_calls"][0]
-
-
-def test_add_message_persists_error_status(monkeypatch):
-    """验证 add_message：支持显式写入 error 状态。"""
-
-    collection = _DummyCollection()
-    monkeypatch.setattr(service_module, "get_mongo_database", lambda: {"admin_messages": collection})
-    monkeypatch.setattr(service_module, "_resolve_collection_name", lambda: "admin_messages")
-
-    service_module.add_message(
-        conversation_id="507f1f77bcf86cd799439011",
-        role=MessageRole.ASSISTANT,
-        status=MessageStatus.ERROR,
-        content="查询失败",
-    )
-
-    assert collection.last_inserted is not None
-    assert collection.last_inserted["status"] == MessageStatus.ERROR
-
-
-def test_add_message_user_does_not_persist_execution_trace_by_default(monkeypatch):
-    """测试目标：user 消息默认不带 execution_trace。"""
-
-    collection = _DummyCollection()
-    monkeypatch.setattr(service_module, "get_mongo_database", lambda: {"admin_messages": collection})
-    monkeypatch.setattr(service_module, "_resolve_collection_name", lambda: "admin_messages")
-
-    service_module.add_message(
-        conversation_id="507f1f77bcf86cd799439011",
-        role=MessageRole.USER,
-        content="你好",
-    )
-
-    assert collection.last_inserted is not None
-    assert "token_usage" not in collection.last_inserted
-    assert collection.last_inserted.get("execution_trace") is None
-
-
-def test_add_message_persists_token_usage_only_for_assistant(monkeypatch):
-    """测试目标：仅 assistant 消息保存 token_usage。"""
-
-    collection = _DummyCollection()
-    monkeypatch.setattr(service_module, "get_mongo_database", lambda: {"admin_messages": collection})
-    monkeypatch.setattr(service_module, "_resolve_collection_name", lambda: "admin_messages")
-
-    service_module.add_message(
-        conversation_id="507f1f77bcf86cd799439011",
-        role=MessageRole.ASSISTANT,
-        content="助手回复",
-        token_usage={
-            "prompt_tokens": 5,
-            "completion_tokens": 3,
-            "total_tokens": 8,
-            "is_complete": True,
-            "node_breakdown": [],
-        },
-    )
-    assert collection.last_inserted is not None
-    assert collection.last_inserted["token_usage"]["total_tokens"] == 8
-
-    service_module.add_message(
-        conversation_id="507f1f77bcf86cd799439011",
-        role=MessageRole.USER,
-        content="用户提问",
-        token_usage={
-            "prompt_tokens": 9,
-            "completion_tokens": 9,
-            "total_tokens": 18,
-            "is_complete": True,
-            "node_breakdown": [],
-        },
-    )
-    assert collection.last_inserted is not None
-    assert "token_usage" not in collection.last_inserted
-
-
-def test_get_history_maps_role_to_langchain_messages(monkeypatch):
-    """验证 get_history：能按 role 正确映射为 HumanMessage/AIMessage。"""
-
-    collection = _DummyCollection()
-    collection.find_rows = [
-        {
-            "_id": ObjectId("507f1f77bcf86cd799439021"),
-            "uuid": "msg-1",
-            "conversation_id": ObjectId("507f1f77bcf86cd799439011"),
-            "role": "user",
-            "content": "用户提问",
-            "created_at": datetime.datetime(2026, 1, 1, 10, 0, 1),
-            "updated_at": datetime.datetime(2026, 1, 1, 10, 0, 1),
-        },
-        {
-            "_id": ObjectId("507f1f77bcf86cd799439022"),
-            "uuid": "msg-2",
-            "conversation_id": ObjectId("507f1f77bcf86cd799439011"),
-            "role": "assistant",
-            "content": "助手回答",
-            "created_at": datetime.datetime(2026, 1, 1, 10, 0, 2),
-            "updated_at": datetime.datetime(2026, 1, 1, 10, 0, 2),
-        },
-    ]
-    monkeypatch.setattr(
-        service_module,
-        "get_mongo_database",
-        lambda: {"admin_messages": collection},
-    )
-    monkeypatch.setattr(service_module, "_resolve_collection_name", lambda: "admin_messages")
-
-    result = service_module.get_history(
-        conversation_id="507f1f77bcf86cd799439011",
-        limit=10,
-        ascending=True,
-    )
-
-    assert len(result) == 2
-    assert isinstance(result[0], HumanMessage)
-    assert isinstance(result[1], AIMessage)
-    assert result[0].content == "用户提问"
-    assert result[1].content == "助手回答"

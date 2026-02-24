@@ -2,15 +2,15 @@ from pathlib import Path
 
 from loguru import logger
 
-from app.core.chunking import ChunkStrategyType, SplitConfig, split_file
+from app.rag.chunking import ChunkStrategyType, SplitConfig, split_file
 from app.core.codes import ResponseCode
-from app.core.exceptions import ServiceException
-from app.core.file_loader.base import (
+from app.core.exception.exceptions import ServiceException
+from app.rag.file_loader.base import (
     cleanup_temp_assets,
     create_temp_image_dir,
     register_temp_assets,
 )
-from app.core.file_loader.factory import FileLoaderFactory
+from app.rag.file_loader.factory import FileLoaderFactory
 from app.services import vector_service
 from app.utils.file_utils import FileUtils
 

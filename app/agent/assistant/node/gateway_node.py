@@ -7,28 +7,32 @@ from langchain_core.messages import SystemMessage
 
 from app.utils.prompt_utils import load_prompt
 from app.agent.assistant.state import AgentState, ExecutionTraceState, GatewayRoutingState
+from app.core.agent.agent_runtime import agent_invoke
+from app.core.agent.agent_tool_trace import record_agent_trace
 from app.core.langsmith import traceable
-from app.core.llm import create_chat_model
+from app.core.llm import create_agent
 from app.services.token_usage_service import append_trace_and_refresh_token_usage
-from app.utils.streaming_utils import (
-    invoke_with_trace,
-)
 
 _GATEWAY_PROMPT = load_prompt("assistant_gateway_prompt")
 
 
 @traceable(name="Supervisor Gateway Router Node", run_type="chain")
 def gateway_router(state: AgentState) -> dict[str, Any]:
-    llm = create_chat_model(
+    agent = create_agent(
         model="qwen-flash",
-        temperature=0.0,
-        response_format={"type": "json_object"},
+        llm_kwargs={
+            "temperature": 0.0,
+            "response_format": {"type": "json_object"},
+        },
+        system_prompt=SystemMessage(content=_GATEWAY_PROMPT),
     )
     history_messages = list(state.get("history_messages") or [])
-
-    messages = [SystemMessage(content=_GATEWAY_PROMPT), *history_messages]
-
-    trace = invoke_with_trace(llm, messages)
+    result = agent_invoke(agent, history_messages)
+    trace = record_agent_trace(
+        payload=result.payload,
+        input_messages=history_messages,
+        fallback_text=result.content,
+    )
     raw_content = trace.get("raw_content")
 
     parsed: dict[str, Any] = {}

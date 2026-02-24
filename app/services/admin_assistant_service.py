@@ -7,21 +7,22 @@ from dataclasses import dataclass
 from typing import Any
 
 from fastapi.responses import StreamingResponse
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from loguru import logger
 
 from app.agent.assistant.state import ChatHistoryMessage, ExecutionTraceState, TokenUsageState
 from app.agent.assistant.workflow import build_graph
 from app.core.codes import ResponseCode
-from app.core.exceptions import ServiceException
+from app.core.exception.exceptions import ServiceException
 from app.core.langsmith import build_langsmith_runnable_config
 from app.core.llm import create_chat_model
-from app.core.request_context import get_user_id
+from app.core.security.auth_context import get_user_id
 from app.schemas.admin_assistant_history import ConversationMessageResponse
-from app.schemas.admin_message import MessageRole, MessageStatus
+from app.schemas.document.message import MessageRole, MessageStatus
+from app.schemas.document.conversation import ConversationListItem
 from app.schemas.base_request import PageRequest
 from app.schemas.sse_response import AssistantResponse, Content, MessageType
-from app.services.assistant_stream_service import (
+from app.core.agent.agent_orchestrator import (
     AssistantStreamConfig,
     create_streaming_response,
 )
@@ -33,8 +34,12 @@ from app.services.conversation_service import (
     save_conversation_title,
     update_admin_conversation_title,
 )
-from app.services.message_service import add_message, get_history, list_messages
-from app.services.token_usage_service import resolve_persistable_token_usage
+from app.services.message_service import add_message, list_messages
+from app.services.message_trace_service import add_message_trace
+from app.services.token_usage_service import (
+    resolve_persistable_token_usage,
+    resolve_persistable_token_usage_detail,
+)
 
 ADMIN_WORKFLOW = build_graph()
 STREAM_OUTPUT_NODES = {
@@ -238,7 +243,7 @@ def _load_admin_conversation(
     if conversation is None:
         raise ServiceException(code=ResponseCode.NOT_FOUND, message="会话不存在")
 
-    conversation_id = conversation.get("_id")
+    conversation_id = conversation.id
     if conversation_id is None:
         raise ServiceException(code=ResponseCode.DATABASE_ERROR, message="会话数据异常")
     return str(conversation_id)
@@ -300,52 +305,43 @@ def _persist_assistant_message(
         status: MessageStatus | str,
 ) -> None:
     """
-    持久化 assistant 消息。
+    持久化 ai 消息。
 
-    仅保存 `execution_trace + token_usage`，不保存 thought_chain。
+    流程：
+    1. 主消息表保存基础消息 + token 总量；
+    2. trace 表保存 execution_trace + token 明细；
+    3. trace 失败仅记录 warning，不影响主消息保存。
     """
     resolved_status = MessageStatus(status)
     persistable_token_usage = resolve_persistable_token_usage(
         token_usage,
         execution_trace,
     )
+    persistable_token_usage_detail = resolve_persistable_token_usage_detail(
+        token_usage,
+        execution_trace,
+    )
+    message_uuid = str(uuid.uuid4())
     add_message(
         conversation_id=conversation_id,
-        role="assistant",
+        role="ai",
         status=resolved_status,
         content=answer_text,
         token_usage=persistable_token_usage,
-        execution_trace=execution_trace,
+        message_uuid=message_uuid,
     )
-
-
-def _sanitize_thought_chain_for_response(
-        thought_chain: list[Any] | None,
-) -> list[dict[str, Any]] | None:
-    """
-    清洗 thought_chain，确保不会向前端暴露工具步骤 result 字段。
-    """
-
-    if not isinstance(thought_chain, list):
-        return None
-
-    normalized_nodes: list[dict[str, Any]] = []
-    for raw_node in thought_chain:
-        if not isinstance(raw_node, dict):
-            continue
-        node_payload = dict(raw_node)
-        raw_children = node_payload.get("children")
-        children_payload: list[dict[str, Any]] = []
-        if isinstance(raw_children, list):
-            for raw_child in raw_children:
-                if not isinstance(raw_child, dict):
-                    continue
-                child_payload = {key: value for key, value in raw_child.items() if key != "result"}
-                children_payload.append(child_payload)
-        node_payload["children"] = children_payload
-        normalized_nodes.append(node_payload)
-
-    return normalized_nodes or None
+    try:
+        add_message_trace(
+            message_uuid=message_uuid,
+            conversation_id=conversation_id,
+            execution_trace=execution_trace,
+            token_usage_detail=persistable_token_usage_detail,
+        )
+    except Exception as exc:  # pragma: no cover - 防御性兜底
+        logger.opt(exception=exc).warning(
+            "Persist message_trace failed message_uuid={message_uuid}",
+            message_uuid=message_uuid,
+        )
 
 
 def _build_assistant_message_callback(*, conversation_id: str):
@@ -565,18 +561,24 @@ def load_history(
     2. 再反转为正序，保证喂给模型时上下文顺序正确。
     """
 
-    history_messages = get_history(
+    message_documents = list_messages(
         conversation_id=conversation_id,
         limit=limit,
         ascending=False,
     )
+    history_messages: list[ChatHistoryMessage] = [
+        HumanMessage(content=document.content)
+        if document.role == MessageRole.USER
+        else AIMessage(content=document.content)
+        for document in message_documents
+    ]
     return list(reversed(history_messages))
 
 
 def conversation_list(
         *,
         page_request: PageRequest,
-) -> tuple[list[dict[str, str]], int]:
+) -> tuple[list[ConversationListItem], int]:
     """
     分页查询当前用户的管理助手会话列表。
 
@@ -586,8 +588,8 @@ def conversation_list(
         page_request: 分页请求参数。
 
     Returns:
-        tuple[list[dict[str, str]], int]:
-            - rows: 当前页会话列表，每项仅包含 `conversation_uuid` 与 `title`。
+        tuple[list[ConversationListItem], int]:
+            - rows: 当前页会话列表项模型。
             - total: 会话总数。
     """
 
@@ -640,10 +642,6 @@ def conversation_messages(
         }
         if role == "ai":
             payload["status"] = document.status.value
-            if document.thought_chain:
-                sanitized_thought_chain = _sanitize_thought_chain_for_response(document.thought_chain)
-                if sanitized_thought_chain:
-                    payload["thought_chain"] = sanitized_thought_chain
         result.append(ConversationMessageResponse.model_validate(payload))
     return result
 

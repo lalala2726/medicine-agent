@@ -4,7 +4,7 @@ import importlib.util
 from functools import lru_cache
 from typing import Optional, Sequence
 
-from app.core.exceptions import ServiceException
+from app.core.exception.exceptions import ServiceException
 
 
 class TokenUtils:

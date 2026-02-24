@@ -7,13 +7,15 @@ from pymongo.database import Database
 from pymongo.errors import PyMongoError
 
 from app.core.codes import ResponseCode
-from app.core.exceptions import ServiceException
+from app.core.exception.exceptions import ServiceException
 
 DEFAULT_MONGODB_URI = "mongodb://localhost:27017"
 DEFAULT_MONGODB_DB_NAME = "medicine_ai_agent"
 DEFAULT_MONGODB_TIMEOUT_MS = 3000
 DEFAULT_CONVERSATIONS_COLLECTION = "conversations"
-DEFAULT_ADMIN_MESSAGES_COLLECTION = "admin_messages"
+DEFAULT_MESSAGES_COLLECTION = "messages"
+DEFAULT_MESSAGE_TRACES_COLLECTION = "message_traces"
+DEFAULT_CONVERSATION_SUMMARIES_COLLECTION = "conversation_summaries"
 DEFAULT_MONGODB_STARTUP_PING_ENABLED = False
 
 

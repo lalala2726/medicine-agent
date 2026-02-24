@@ -1,17 +1,20 @@
 import asyncio
+import datetime
 import json
 
 import pytest
+from bson import ObjectId
 from fastapi.responses import StreamingResponse
 from langchain_core.messages import AIMessage, HumanMessage
 
 from app.core.codes import ResponseCode
-from app.core.exceptions import ServiceException
-from app.schemas.admin_message import MessageRole, MessageStatus
+from app.core.exception.exceptions import ServiceException
+from app.schemas.document.message import MessageRole, MessageStatus
+from app.schemas.document.conversation import ConversationDocument, ConversationListItem, ConversationType
 from app.schemas.base_request import PageRequest
 from app.schemas.sse_response import MessageType
 from app.services import admin_assistant_service as service_module
-from app.services.assistant_stream_service import AssistantStreamConfig
+from app.core.agent.agent_orchestrator import AssistantStreamConfig
 
 
 class _DummyGraph:
@@ -63,7 +66,7 @@ def test_chat_list_returns_current_user_conversations(monkeypatch):
                     "page_size": page_size,
                 }
             ),
-            ([{"conversation_uuid": "conv-1", "title": "标题1"}], 1),
+            ([ConversationListItem(conversation_uuid="conv-1", title="标题1")], 1),
         )[-1],
     )
 
@@ -79,7 +82,9 @@ def test_chat_list_returns_current_user_conversations(monkeypatch):
         "page_num": 2,
         "page_size": 20,
     }
-    assert rows == [{"conversation_uuid": "conv-1", "title": "标题1"}]
+    assert len(rows) == 1
+    assert rows[0].conversation_uuid == "conv-1"
+    assert rows[0].title == "标题1"
     assert total == 1
 
 
@@ -151,6 +156,53 @@ def test_update_conversation_title_rejects_blank_title(monkeypatch):
             title="   ",
         )
     assert exc_info.value.code == ResponseCode.BAD_REQUEST.code
+
+
+def test_load_admin_conversation_returns_document_id(monkeypatch):
+    monkeypatch.setattr(
+        service_module,
+        "get_admin_conversation",
+        lambda *, conversation_uuid, user_id: ConversationDocument(
+            _id=ObjectId("507f1f77bcf86cd799439041"),
+            uuid=conversation_uuid,
+            conversation_type=ConversationType.ADMIN,
+            user_id=user_id,
+            title="会话标题",
+            create_time=datetime.datetime(2026, 1, 1, 10, 0, 0),
+            update_time=datetime.datetime(2026, 1, 1, 10, 0, 0),
+            is_deleted=0,
+        ),
+    )
+
+    conversation_id = service_module._load_admin_conversation(
+        conversation_uuid="conv-1",
+        user_id=101,
+    )
+
+    assert conversation_id == "507f1f77bcf86cd799439041"
+
+
+def test_load_admin_conversation_raises_database_error_when_id_missing(monkeypatch):
+    monkeypatch.setattr(
+        service_module,
+        "get_admin_conversation",
+        lambda *, conversation_uuid, user_id: ConversationDocument(
+            uuid=conversation_uuid,
+            conversation_type=ConversationType.ADMIN,
+            user_id=user_id,
+            title="会话标题",
+            create_time=datetime.datetime(2026, 1, 1, 10, 0, 0),
+            update_time=datetime.datetime(2026, 1, 1, 10, 0, 0),
+            is_deleted=0,
+        ),
+    )
+
+    with pytest.raises(ServiceException) as exc_info:
+        service_module._load_admin_conversation(
+            conversation_uuid="conv-1",
+            user_id=101,
+        )
+    assert exc_info.value.code == ResponseCode.DATABASE_ERROR.code
 
 
 def test_prepare_new_conversation_returns_context_with_created_event(monkeypatch):
@@ -331,11 +383,16 @@ def test_assistant_chat_schedules_user_persist_without_blocking_main_flow(monkey
     monkeypatch.setattr(
         service_module,
         "get_admin_conversation",
-        lambda *, conversation_uuid, user_id: {
-            "_id": "507f1f77bcf86cd799439011",
-            "uuid": conversation_uuid,
-            "user_id": user_id,
-        },
+        lambda *, conversation_uuid, user_id: ConversationDocument(
+            _id=ObjectId("507f1f77bcf86cd799439011"),
+            uuid=conversation_uuid,
+            conversation_type=ConversationType.ADMIN,
+            user_id=user_id,
+            title="会话标题",
+            create_time=datetime.datetime(2026, 1, 1, 10, 0, 0),
+            update_time=datetime.datetime(2026, 1, 1, 10, 0, 0),
+            is_deleted=0,
+        ),
     )
     monkeypatch.setattr(
         service_module,
@@ -405,6 +462,7 @@ def test_answer_completed_schedules_async_persist_with_execution_trace(monkeypat
 
     background_calls: list[dict] = []
     saved_messages: list[dict] = []
+    saved_traces: list[dict] = []
     resolve_calls: list[dict] = []
 
     monkeypatch.setattr(
@@ -420,6 +478,12 @@ def test_answer_completed_schedules_async_persist_with_execution_trace(monkeypat
         "add_message",
         lambda **kwargs: saved_messages.append(kwargs) or "507f1f77bcf86cd799439012",
     )
+    monkeypatch.setattr(
+        service_module,
+        "add_message_trace",
+        lambda **kwargs: saved_traces.append(kwargs) or "507f1f77bcf86cd799439013",
+    )
+    monkeypatch.setattr(service_module.uuid, "uuid4", lambda: "msg-uuid-1")
     monkeypatch.setattr(
         service_module,
         "resolve_persistable_token_usage",
@@ -466,10 +530,13 @@ def test_answer_completed_schedules_async_persist_with_execution_trace(monkeypat
     assert background_calls[0]["kwargs"]["conversation_id"] == "507f1f77bcf86cd799439011"
     assert background_calls[0]["kwargs"]["answer_text"] == "AI回复"
     assert background_calls[0]["kwargs"]["status"] == MessageStatus.SUCCESS
-    assert saved_messages[-1]["execution_trace"][0]["node_name"] == "chat_agent"
     assert saved_messages[-1]["status"] == MessageStatus.SUCCESS
-    assert "thought_chain" not in saved_messages[-1]
+    assert saved_messages[-1]["message_uuid"] == "msg-uuid-1"
     assert saved_messages[-1]["token_usage"]["total_tokens"] == 2
+    assert "execution_trace" not in saved_messages[-1]
+    assert saved_traces[-1]["message_uuid"] == "msg-uuid-1"
+    assert saved_traces[-1]["execution_trace"][0]["node_name"] == "chat_agent"
+    assert saved_traces[-1]["token_usage_detail"]["is_complete"] is True
     assert resolve_calls and resolve_calls[-1]["token_usage"] is None
 
 
@@ -477,6 +544,7 @@ def test_answer_completed_marks_error_status_when_stream_failed(monkeypatch):
     """测试目标：流式执行报错时，assistant 消息落库状态为 error。"""
 
     saved_messages: list[dict] = []
+    saved_traces: list[dict] = []
 
     monkeypatch.setattr(
         service_module,
@@ -488,6 +556,12 @@ def test_answer_completed_marks_error_status_when_stream_failed(monkeypatch):
         "add_message",
         lambda **kwargs: saved_messages.append(kwargs) or "507f1f77bcf86cd799439012",
     )
+    monkeypatch.setattr(
+        service_module,
+        "add_message_trace",
+        lambda **kwargs: saved_traces.append(kwargs) or None,
+    )
+    monkeypatch.setattr(service_module.uuid, "uuid4", lambda: "msg-uuid-error")
     monkeypatch.setattr(
         service_module,
         "resolve_persistable_token_usage",
@@ -506,20 +580,16 @@ def test_answer_completed_marks_error_status_when_stream_failed(monkeypatch):
     )
 
     assert saved_messages[-1]["status"] == MessageStatus.ERROR
-    assert "thought_chain" not in saved_messages[-1]
+    assert saved_messages[-1]["message_uuid"] == "msg-uuid-error"
+    assert saved_traces[-1]["message_uuid"] == "msg-uuid-error"
 
 
-def test_answer_completed_does_not_persist_thought_chain_when_trace_contains_supervisor(monkeypatch):
-    """测试目标：新实现不落库 thought_chain；成功标准：即使命中 supervisor 也不传 thought_chain 字段。"""
+def test_persist_assistant_message_trace_failure_only_logs_warning(monkeypatch):
+    """测试目标：trace 持久化失败仅告警；成功标准：主消息已保存且无异常抛出。"""
 
     saved_messages: list[dict] = []
-    resolve_calls: list[dict] = []
+    warning_calls: list[dict] = []
 
-    monkeypatch.setattr(
-        service_module,
-        "_schedule_background_task",
-        lambda *, task_name, func, kwargs: func(**kwargs),
-    )
     monkeypatch.setattr(
         service_module,
         "add_message",
@@ -527,55 +597,48 @@ def test_answer_completed_does_not_persist_thought_chain_when_trace_contains_sup
     )
     monkeypatch.setattr(
         service_module,
+        "add_message_trace",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("trace failed")),
+    )
+    monkeypatch.setattr(
+        service_module,
         "resolve_persistable_token_usage",
-        lambda token_usage, execution_trace: (
-            resolve_calls.append({"token_usage": token_usage, "execution_trace": execution_trace}),
-            {
-                "prompt_tokens": 1,
-                "completion_tokens": 1,
-                "total_tokens": 2,
-                "is_complete": True,
-                "node_breakdown": [],
-            },
-        )[-1],
+        lambda _token_usage, _execution_trace: {
+            "prompt_tokens": 1,
+            "completion_tokens": 1,
+            "total_tokens": 2,
+            "is_complete": True,
+            "node_breakdown": [],
+        },
     )
+    monkeypatch.setattr(service_module.uuid, "uuid4", lambda: "msg-uuid-2")
 
-    callback = service_module._build_assistant_message_callback(
+    class _DummyLogger:
+        def warning(self, message: str, **kwargs):
+            warning_calls.append({"message": message, "kwargs": kwargs})
+
+    monkeypatch.setattr(service_module.logger, "opt", lambda **_kwargs: _DummyLogger())
+
+    service_module._persist_assistant_message(
         conversation_id="507f1f77bcf86cd799439011",
-    )
-    asyncio.run(
-        callback(
-            "复杂回复",
-            [
-                {
-                    "node_name": "supervisor_agent",
-                    "model_name": "qwen-max",
-                    "input_messages": [],
-                    "output_text": "计划已生成",
-                    "tool_calls": [],
-                },
-                {
-                    "node_name": "planner",
-                    "model_name": "unknown",
-                    "input_messages": [],
-                    "output_text": "调度执行",
-                    "tool_calls": [],
-                },
-                {
-                    "node_name": "order_agent",
-                    "model_name": "qwen-plus",
-                    "input_messages": [],
-                    "output_text": "订单结果",
-                    "tool_calls": [],
-                },
-            ],
-            False,
-        )
+        answer_text="复杂回复",
+        execution_trace=[
+            {
+                "node_name": "supervisor_agent",
+                "model_name": "qwen-max",
+                "input_messages": [],
+                "output_text": "计划已生成",
+                "tool_calls": [],
+            }
+        ],
+        token_usage=None,
+        status=MessageStatus.SUCCESS,
     )
 
-    assert "thought_chain" not in saved_messages[-1]
+    assert saved_messages[-1]["message_uuid"] == "msg-uuid-2"
     assert saved_messages[-1]["token_usage"]["total_tokens"] == 2
-    assert resolve_calls and resolve_calls[-1]["token_usage"] is None
+    assert warning_calls
+    assert warning_calls[0]["kwargs"]["message_uuid"] == "msg-uuid-2"
 
 
 def test_persist_failure_only_logs_warning(monkeypatch):
@@ -675,13 +738,17 @@ def test_load_history_reads_latest_window_and_returns_chronological(monkeypatch)
 
     captured: dict = {}
 
-    def _fake_get_history(*, conversation_id: str, limit: int, ascending: bool):
+    def _fake_list_messages(*, conversation_id: str, limit: int, ascending: bool):
         captured["conversation_id"] = conversation_id
         captured["limit"] = limit
         captured["ascending"] = ascending
-        return [HumanMessage(content="Q2"), AIMessage(content="A1"), HumanMessage(content="Q1")]
+        return [
+            type("Doc", (), {"role": MessageRole.USER, "content": "Q2"})(),
+            type("Doc", (), {"role": MessageRole.AI, "content": "A1"})(),
+            type("Doc", (), {"role": MessageRole.USER, "content": "Q1"})(),
+        ]
 
-    monkeypatch.setattr(service_module, "get_history", _fake_get_history)
+    monkeypatch.setattr(service_module, "list_messages", _fake_list_messages)
 
     history_messages = service_module.load_history(
         conversation_id="507f1f77bcf86cd799439011",
@@ -693,6 +760,9 @@ def test_load_history_reads_latest_window_and_returns_chronological(monkeypatch)
         "limit": 50,
         "ascending": False,
     }
+    assert isinstance(history_messages[0], HumanMessage)
+    assert isinstance(history_messages[1], AIMessage)
+    assert isinstance(history_messages[2], HumanMessage)
     assert [message.content for message in history_messages] == ["Q1", "A1", "Q2"]
 
 
@@ -708,34 +778,15 @@ def test_conversation_messages_returns_latest_page_in_chronological_order(monkey
     mock_docs = [
         {
             "uuid": "msg-ai-2",
-            "role": MessageRole.ASSISTANT,
+            "role": MessageRole.AI,
             "status": MessageStatus.SUCCESS,
             "content": "AI第二条",
-            "thought_chain": [
-                {
-                    "id": "node-1",
-                    "node": "planner",
-                    "message": "planner",
-                    "status": "success",
-                    "children": [
-                        {
-                            "id": "step-1",
-                            "message": "调用工具 query_orders",
-                            "name": "query_orders",
-                            "arguments": "{\"limit\": 10}",
-                            "result": "这个字段不应返回给前端",
-                            "status": "success",
-                        }
-                    ],
-                }
-            ],
         },
         {
             "uuid": "msg-user-1",
             "role": MessageRole.USER,
             "status": MessageStatus.SUCCESS,
             "content": "用户第一条",
-            "thought_chain": None,
         },
     ]
     monkeypatch.setattr(
@@ -756,9 +807,7 @@ def test_conversation_messages_returns_latest_page_in_chronological_order(monkey
     assert result[0].status is None
     assert result[1].role == "ai"
     assert result[1].status == "success"
-    thought_chain = result[1].model_dump(by_alias=True)["thoughtChain"]
-    assert thought_chain[0]["node"] == "planner"
-    assert "result" not in thought_chain[0]["children"][0]
+    assert result[1].thought_chain is None
 
 
 def test_should_stream_token_only_allows_chat_and_supervisor_nodes():
@@ -767,5 +816,5 @@ def test_should_stream_token_only_allows_chat_and_supervisor_nodes():
     latest_state = {"routing": {"route_target": "chat_agent", "task_difficulty": "simple"}}
     assert service_module._should_stream_token("chat_agent", latest_state) is True
     assert service_module._should_stream_token("supervisor_agent", latest_state) is True
-    assert service_module._should_stream_token("order_agent", latest_state) is False
-    assert service_module._should_stream_token("product_agent", latest_state) is False
+    assert service_module._should_stream_token("order_tool_agent", latest_state) is False
+    assert service_module._should_stream_token("product_tool_agent", latest_state) is False

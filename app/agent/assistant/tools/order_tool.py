@@ -2,18 +2,18 @@ from __future__ import annotations
 
 from typing import Optional
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import SystemMessage
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
 from app.utils.prompt_utils import load_prompt
 from app.agent.assistant.tools.base_tools import _normalize_id_list, format_ids_to_string
-from app.core.assistant_status import tool_call_status
+from app.core.agent.agent_tool_events import tool_call_status
+from app.core.agent.agent_runtime import agent_invoke
 from app.core.langsmith import traceable
-from app.core.llm import create_chat_model
+from app.core.llm import create_agent
 from app.schemas.http_response import HttpResponse
 from app.utils.http_client import HttpClient
-from app.utils.streaming_utils import invoke_with_trace
 
 
 class MallOrderListRequest(BaseModel):
@@ -154,23 +154,14 @@ _ORDER_SYSTEM_PROMPT = load_prompt("assistant_order_system_prompt") + _BASE_PROM
 )
 @traceable(name="Supervisor Order Tool Agent", run_type="chain")
 def order_tool_agent(task_description: str) -> str:
-    llm = create_chat_model(
+    agent = create_agent(
         model="qwen-flash",
-        temperature=0.2,
-    )
-    messages = [
-        SystemMessage(content=_ORDER_SYSTEM_PROMPT),
-        HumanMessage(content=str(task_description or "").strip()),
-    ]
-    trace = invoke_with_trace(
-        llm,
-        messages,
+        llm_kwargs={"temperature": 0.2},
+        system_prompt=SystemMessage(content=_ORDER_SYSTEM_PROMPT),
         tools=[get_order_list, get_orders_detail],
     )
-    text = str(trace.get("text") or "").strip()
-    if not text:
-        return "未获取到订单数据，请补充订单号或筛选条件后重试。"
-    return text
-
-
-order_agent = order_tool_agent
+    result = agent_invoke(
+        agent,
+        task_description,
+    )
+    return result.content

@@ -2,17 +2,17 @@ from __future__ import annotations
 
 from typing import Literal
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import SystemMessage
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
 from app.utils.prompt_utils import load_prompt
-from app.core.assistant_status import tool_call_status
+from app.core.agent.agent_tool_events import tool_call_status
+from app.core.agent.agent_runtime import agent_invoke
 from app.core.langsmith import traceable
-from app.core.llm import create_chat_model
+from app.core.llm import create_agent
 from app.schemas.http_response import HttpResponse
 from app.utils.http_client import HttpClient
-from app.utils.streaming_utils import invoke_with_trace
 
 
 class AnalyticsOrderTrendRequest(BaseModel):
@@ -180,19 +180,18 @@ _ANALYTICS_SYSTEM_PROMPT = load_prompt("assistant_analytics_system_prompt") + _B
         "输入为自然语言任务描述，内部会自动调用分析工具并返回结果。"
     )
 )
+@tool_call_status(
+    tool_name="正在调用运营分析子代理",
+    start_message="正在执行查询",
+    error_message="调用运营分析子代理失败",
+    timely_message="运营分析子代理正在持续处理中",
+)
 @traceable(name="Supervisor Analytics Tool Agent", run_type="chain")
 def analytics_tool_agent(task_description: str) -> str:
-    llm = create_chat_model(
+    agent = create_agent(
         model="qwen-flash",
-        temperature=0.2,
-    )
-    messages = [
-        SystemMessage(content=_ANALYTICS_SYSTEM_PROMPT),
-        HumanMessage(content=str(task_description or "").strip()),
-    ]
-    trace = invoke_with_trace(
-        llm,
-        messages,
+        llm_kwargs={"temperature": 0.2},
+        system_prompt=SystemMessage(content=_ANALYTICS_SYSTEM_PROMPT),
         tools=[
             get_analytics_overview,
             get_analytics_order_trend,
@@ -202,10 +201,9 @@ def analytics_tool_agent(task_description: str) -> str:
             get_analytics_product_return_rates,
         ],
     )
-    text = str(trace.get("text") or "").strip()
-    if not text:
-        return "未获取到运营分析数据，请补充查询维度或条件后重试。"
-    return text
-
-
-analytics_agent = analytics_tool_agent
+    input_messages = str(task_description or "").strip()
+    result = agent_invoke(
+        agent,
+        input_messages,
+    )
+    return result.content

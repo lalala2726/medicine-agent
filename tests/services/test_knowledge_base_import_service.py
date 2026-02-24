@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from app.core.chunking import ChunkStrategyType
+from app.rag.chunking import ChunkStrategyType
 from app.services import knowledge_base_service
 
 

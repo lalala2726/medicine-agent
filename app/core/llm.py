@@ -1,8 +1,15 @@
 import os
-from typing import Any, Optional
+from typing import Any, Optional, TypeAlias
 
+from langchain.agents import create_agent as langchain_create_agent
+from langchain.agents.middleware import before_model
+from langchain.messages import RemoveMessage
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langgraph.graph.message import REMOVE_ALL_MESSAGES
+from langgraph.graph.state import CompiledStateGraph
 from pydantic import SecretStr
+
+from app.schemas.memory import Memory
 
 # Load from environment variables
 DEFAULT_CHAT_MODEL = os.getenv("DASHSCOPE_CHAT_MODEL", "qwen-max")
@@ -10,6 +17,135 @@ DEFAULT_IMAGE_MODEL = os.getenv("DASHSCOPE_IMAGE_MODEL", "qwen3-vl-flash")
 DEFAULT_EMBEDDING_MODEL = os.getenv("DASHSCOPE_EMBEDDING_MODEL", "text-embedding-v4")
 DEFAULT_BASE_URL = os.getenv("DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
 
+AgentGraph: TypeAlias = CompiledStateGraph[Any, Any, Any, Any]
+
+
+def _normalize_message_signature(message: Any) -> tuple[str, str]:
+    """提取消息类型与文本内容，用于判断记忆前缀是否已存在。"""
+
+    raw_type = getattr(message, "type", None)
+    message_type = str(raw_type or message.__class__.__name__).lower()
+    content = getattr(message, "content", "")
+    if isinstance(content, str):
+        return message_type, content
+    if isinstance(content, list):
+        text_parts: list[str] = []
+        for item in content:
+            if isinstance(item, str):
+                text_parts.append(item)
+                continue
+            if isinstance(item, dict):
+                text_parts.append(str(item.get("text") or ""))
+        return message_type, "".join(text_parts)
+    return message_type, str(content)
+
+
+def _has_memory_prefix(messages: list[Any], memory_messages: list[Any]) -> bool:
+    """判断当前状态消息是否已以前缀方式包含 memory。"""
+
+    if len(messages) < len(memory_messages):
+        return False
+    for index, memory_message in enumerate(memory_messages):
+        if _normalize_message_signature(messages[index]) != _normalize_message_signature(memory_message):
+            return False
+    return True
+
+
+def _build_memory_inject_middleware(store: Memory):
+    """构建 before_model 中间件：把 memory 作为消息前缀注入。"""
+
+    @before_model
+    def _inject_memory(state: dict[str, Any], runtime: Any) -> dict[str, Any] | None:
+        _ = runtime
+        memory_messages = list(store.messages or [])
+        if not memory_messages:
+            return None
+        state_messages = list(state.get("messages") or [])
+        if not state_messages:
+            return None
+        if _has_memory_prefix(state_messages, memory_messages):
+            return None
+        return {
+            "messages": [
+                RemoveMessage(id=REMOVE_ALL_MESSAGES),
+                *memory_messages,
+                *state_messages,
+            ]
+        }
+
+    return _inject_memory
+
+
+def create_agent(
+        *,
+        llm: Any | None = None,
+        model: str = DEFAULT_CHAT_MODEL,
+        llm_kwargs: dict[str, Any] | None = None,
+        store: Memory | None = None,
+        tools: list[Any] | tuple[Any, ...] | None = None,
+        system_prompt: Any = None,
+        middleware: list[Any] | tuple[Any, ...] = (),
+        response_format: Any = None,
+        state_schema: type[Any] | None = None,
+        context_schema: type[Any] | None = None,
+        checkpointer: Any = None,
+        interrupt_before: list[str] | None = None,
+        interrupt_after: list[str] | None = None,
+        debug: bool = False,
+        name: str | None = None,
+        cache: Any = None,
+        **kwargs: Any,
+) -> AgentGraph:
+    """
+    创建 Agent 实例（支持业务 Memory 预注入）。
+
+    Args:
+        llm: 预创建好的聊天模型实例。未传时会使用 `model + llm_kwargs` 内部创建。
+        model: 聊天模型名称；仅在 `llm` 未传时生效。
+        llm_kwargs: 传递给 `create_chat_model` 的参数；仅在 `llm` 未传时生效。
+        store: 业务记忆对象；仅用于注入 state.messages 前缀，不透传官方 `store`。
+        tools: 可选工具列表。
+        system_prompt: 可选系统提示。
+        middleware: 可选中间件列表。
+        response_format: 可选结构化响应配置。
+        state_schema: 可选状态 schema。
+        context_schema: 可选上下文 schema。
+        checkpointer: 可选短期记忆 checkpointer。
+        interrupt_before: 可选中断节点（before）。
+        interrupt_after: 可选中断节点（after）。
+        debug: 是否开启调试。
+        name: 可选 agent 名称。
+        cache: 可选缓存对象。
+        **kwargs: 其余透传 `langchain.agents.create_agent` 的参数。
+
+    Returns:
+        AgentGraph: LangChain create_agent 构建后的 CompiledStateGraph 实例。
+    """
+
+    resolved_middleware = list(middleware)
+    if store is not None and store.messages:
+        resolved_middleware.insert(0, _build_memory_inject_middleware(store))
+
+    resolved_llm = llm
+    if resolved_llm is None:
+        resolved_llm = create_chat_model(model=model, **(llm_kwargs or {}))
+
+    return langchain_create_agent(
+        model=resolved_llm,
+        tools=tools,
+        system_prompt=system_prompt,
+        middleware=tuple(resolved_middleware),
+        response_format=response_format,
+        state_schema=state_schema,
+        context_schema=context_schema,
+        checkpointer=checkpointer,
+        interrupt_before=interrupt_before,
+        interrupt_after=interrupt_after,
+        debug=debug,
+        name=name,
+        cache=cache,
+        **kwargs,
+    )
 
 def _resolve_extra_body(
         model_kwargs: dict[str, Any],
@@ -89,6 +225,7 @@ def create_chat_model(
     # 默认开启 stream_usage，优先获取模型返回的真实 token 消耗。
     # 若供应商未返回 usage，业务层会使用 tiktoken 估算兜底。
     kwargs.setdefault("stream_usage", True)
+
 
     return ChatOpenAI(
         model=model,

@@ -6,8 +6,8 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.requests import Request
 
 from app.core.codes import ResponseCode
-from app.core.exception_handlers import ExceptionHandlers
-from app.core.exceptions import ServiceException
+from app.core.exception.exception_handlers import ExceptionHandlers
+from app.core.exception.exceptions import ServiceException
 
 
 def _build_request(path: str) -> Request:
