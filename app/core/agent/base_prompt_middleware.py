@@ -23,7 +23,7 @@ class BasePromptMiddleware(AgentMiddleware):
     def __init__(
             self,
             *,
-            base_prompt_file: str = "assistant/base_prompt.md",
+            base_prompt_file: str = "_system/base_prompt.md",
             section_marker: str = "## 基础系统规则",
             skills_section_marker: str = "## 技能系统",
     ) -> None:
