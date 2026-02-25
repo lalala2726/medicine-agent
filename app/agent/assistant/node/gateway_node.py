@@ -29,7 +29,8 @@ def gateway_router(state: AgentState) -> dict[str, Any]:
         middleware=[BasePromptMiddleware()],
     )
     history_messages = list(state.get("history_messages") or [])
-    result = agent_invoke(agent, history_messages)
+    # 路由节点无需过多的上下文，只需要截取最近的20条消息
+    result = agent_invoke(agent, history_messages[:20])
     trace = record_agent_trace(
         payload=result.payload,
         input_messages=history_messages,
