@@ -11,6 +11,8 @@ from langchain_core.language_models import FakeListChatModel
 from langchain_core.messages import AIMessage, SystemMessage
 from loguru import logger
 
+import app.core.agent.base_prompt_middleware as base_prompt_module
+from app.core.agent.base_prompt_middleware import BasePromptMiddleware
 import app.core.skill.discovery.scope as scope_module
 from app.core.skill import (
     SkillMiddleware,
@@ -891,6 +893,61 @@ def test_wrap_model_call_injects_skills_system_prompt_without_paths() -> None:
     assert "load_skill_resource(\"<skill_name>\", \"<relative_path>\")" in system_text
     assert "list_skill_resources(\"<skill_name>\")" in system_text
     assert "resources/skills" not in system_text
+
+
+def test_base_and_skill_middlewares_keep_expected_order_and_idempotency(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """验证 BasePromptMiddleware 与 SkillMiddleware 组合时顺序正确且不重复注入。
+
+    测试目的：
+        确保中间件组合后保持 `角色 -> base -> skills`，并且重复执行不会产生重复段落。
+
+    预期结果：
+        首次注入后顺序正确；再次注入时 base/skills marker 均只出现一次。
+    """
+
+    monkeypatch.setattr(base_prompt_module, "load_prompt", lambda _path: "BASE RULES")
+    base_middleware = BasePromptMiddleware()
+    skill_middleware = SkillMiddleware(scope="supervisor")
+    request = ModelRequest(
+        model=object(),
+        messages=[],
+        system_message=SystemMessage(content="ROLE PROMPT"),
+        tools=[],
+        state={
+            "skills_metadata": [
+                {
+                    "name": "analysis",
+                    "description": "analysis desc",
+                }
+            ]
+        },
+        runtime=None,
+    )
+
+    def _run_chain(input_request: ModelRequest) -> ModelRequest:
+        captured: dict[str, ModelRequest] = {}
+
+        def final_handler(modified_request: ModelRequest) -> ModelResponse:
+            captured["request"] = modified_request
+            return ModelResponse(result=[AIMessage(content="ok")])
+
+        base_middleware.wrap_model_call(
+            input_request,
+            lambda req: skill_middleware.wrap_model_call(req, final_handler),
+        )
+        return captured["request"]
+
+    first_result = _run_chain(request)
+    first_text = first_result.system_message.text
+    assert first_text.index("ROLE PROMPT") < first_text.index("## 基础系统规则")
+    assert first_text.index("## 基础系统规则") < first_text.index("## 技能系统")
+
+    second_result = _run_chain(first_result)
+    second_text = second_result.system_message.text
+    assert second_text.count("## 基础系统规则") == 1
+    assert second_text.count("## 技能系统") == 1
 
 
 def test_runtime_state_preserves_skills_metadata_for_prompt_injection(

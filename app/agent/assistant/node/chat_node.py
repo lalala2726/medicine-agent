@@ -8,16 +8,16 @@ from app.agent.assistant.tools.base_tools import get_current_time
 from app.agent.assistant.model_switch import model_switch
 from app.utils.prompt_utils import load_prompt
 from app.agent.assistant.state import AgentState, ExecutionTraceState
+from app.core.agent.base_prompt_middleware import BasePromptMiddleware
 from app.core.agent.agent_event_bus import emit_answer_delta
 from app.core.agent.agent_runtime import agent_stream
 from app.core.agent.agent_tool_trace import record_agent_trace
 from app.core.langsmith import traceable
 from app.core.llm import create_agent
 from app.services.token_usage_service import append_trace_and_refresh_token_usage
-from core.skill import SkillMiddleware
+from app.core.skill import SkillMiddleware
 
-_BASE_PROMPT = load_prompt("assistant/base_prompt.md")
-_CHAT_SYSTEM_PROMPT = load_prompt("assistant/chat_system_prompt.md") + _BASE_PROMPT
+_CHAT_SYSTEM_PROMPT = load_prompt("assistant/chat_system_prompt.md")
 
 
 @traceable(name="Supervisor Chat Agent Node", run_type="chain")
@@ -33,6 +33,7 @@ def chat_agent(state: AgentState) -> dict[str, Any]:
         llm_kwargs={"temperature": 1.3},
         system_prompt=SystemMessage(content=_CHAT_SYSTEM_PROMPT),
         middleware=[
+            BasePromptMiddleware(),
             SkillMiddleware(scope="supervisor"),
         ]
     )

@@ -7,6 +7,7 @@ from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
 from app.utils.prompt_utils import load_prompt
+from app.core.agent.base_prompt_middleware import BasePromptMiddleware
 from app.core.agent.agent_tool_events import tool_call_status
 from app.core.agent.agent_runtime import agent_invoke
 from app.core.langsmith import traceable
@@ -170,8 +171,7 @@ async def get_analytics_product_return_rates(limit: int = 10) -> dict:
         return HttpResponse.parse_data(response)
 
 
-_BASE_PROMPT = load_prompt("assistant/base_prompt.md")
-_ANALYTICS_SYSTEM_PROMPT = load_prompt("assistant/analytics_system_prompt.md") + _BASE_PROMPT
+_ANALYTICS_SYSTEM_PROMPT = load_prompt("assistant/analytics_system_prompt.md")
 
 
 @tool(
@@ -200,6 +200,7 @@ def analytics_tool_agent(task_description: str) -> str:
             get_analytics_hot_products,
             get_analytics_product_return_rates,
         ],
+        middleware=[BasePromptMiddleware()],
     )
     input_messages = str(task_description or "").strip()
     result = agent_invoke(

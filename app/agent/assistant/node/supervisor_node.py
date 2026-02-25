@@ -12,6 +12,7 @@ from app.agent.assistant.tools.analytics_tool import analytics_tool_agent
 from app.agent.assistant.tools.base_tools import get_current_time
 from app.agent.assistant.tools.order_tool import order_tool_agent
 from app.agent.assistant.tools.product_tool import product_tool_agent
+from app.core.agent.base_prompt_middleware import BasePromptMiddleware
 from app.core.agent.agent_event_bus import emit_answer_delta
 from app.core.agent.agent_runtime import agent_stream
 from app.core.skill import SkillMiddleware
@@ -21,8 +22,7 @@ from app.core.langsmith import traceable
 from app.core.llm import create_agent
 from app.services.token_usage_service import append_trace_and_refresh_token_usage
 
-_BASE_PROMPT = load_prompt("assistant/base_prompt.md")
-_SUPERVISOR_PROMPT = load_prompt("assistant/supervisor_system_prompt.md") + _BASE_PROMPT
+_SUPERVISOR_PROMPT = load_prompt("assistant/supervisor_system_prompt.md")
 
 
 @traceable(name="Supervisor Agent Node", run_type="chain")
@@ -41,6 +41,7 @@ def supervisor_agent(state: AgentState) -> dict[str, Any]:
             analytics_tool_agent,
         ],
         middleware=[
+            BasePromptMiddleware(),
             SkillMiddleware(scope="supervisor"),
             build_tool_status_middleware(),
             ToolCallLimitMiddleware(thread_limit=20, run_limit=10),

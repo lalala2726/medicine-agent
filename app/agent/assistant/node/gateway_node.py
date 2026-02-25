@@ -7,6 +7,7 @@ from langchain_core.messages import SystemMessage
 
 from app.utils.prompt_utils import load_prompt
 from app.agent.assistant.state import AgentState, ExecutionTraceState, GatewayRoutingState
+from app.core.agent.base_prompt_middleware import BasePromptMiddleware
 from app.core.agent.agent_runtime import agent_invoke
 from app.core.agent.agent_tool_trace import record_agent_trace
 from app.core.langsmith import traceable
@@ -25,6 +26,7 @@ def gateway_router(state: AgentState) -> dict[str, Any]:
             "response_format": {"type": "json_object"},
         },
         system_prompt=SystemMessage(content=_GATEWAY_PROMPT),
+        middleware=[BasePromptMiddleware()],
     )
     history_messages = list(state.get("history_messages") or [])
     result = agent_invoke(agent, history_messages)

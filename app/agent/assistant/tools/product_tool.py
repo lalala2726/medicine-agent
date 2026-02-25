@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 
 from app.utils.prompt_utils import load_prompt
 from app.agent.assistant.tools.base_tools import _normalize_id_list, format_ids_to_string
+from app.core.agent.base_prompt_middleware import BasePromptMiddleware
 from app.core.agent.agent_tool_events import tool_call_status
 from app.core.agent.agent_runtime import agent_invoke
 from app.core.langsmith import traceable
@@ -169,8 +170,7 @@ async def get_drug_detail(product_id: list[str]) -> dict:
         return HttpResponse.parse_data(response)
 
 
-_BASE_PROMPT = load_prompt("assistant/base_prompt.md")
-_PRODUCT_SYSTEM_PROMPT = load_prompt("assistant/product_system_prompt.md") + _BASE_PROMPT
+_PRODUCT_SYSTEM_PROMPT = load_prompt("assistant/product_system_prompt.md")
 
 
 @tool(
@@ -192,6 +192,7 @@ def product_tool_agent(task_description: str) -> str:
         llm_kwargs={"temperature": 0.2},
         system_prompt=SystemMessage(content=_PRODUCT_SYSTEM_PROMPT),
         tools=[get_product_list, get_product_detail, get_drug_detail],
+        middleware=[BasePromptMiddleware()],
     )
     input_messages = str(task_description or "").strip()
     result = agent_invoke(
