@@ -6,14 +6,15 @@ from langchain_core.messages import SystemMessage
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
-from app.utils.prompt_utils import load_prompt
 from app.agent.assistant.tools.base_tools import _normalize_id_list, format_ids_to_string
-from app.core.agent.agent_tool_events import tool_call_status
 from app.core.agent.agent_runtime import agent_invoke
+from app.core.agent.agent_tool_events import tool_call_status
+from app.core.agent.base_prompt_middleware import BasePromptMiddleware
 from app.core.langsmith import traceable
 from app.core.llm import create_agent
 from app.schemas.http_response import HttpResponse
 from app.utils.http_client import HttpClient
+from app.utils.prompt_utils import load_prompt
 
 
 class MallOrderListRequest(BaseModel):
@@ -70,11 +71,11 @@ class OrderDetailRequest(BaseModel):
 @tool(
     args_schema=MallOrderListRequest,
     description=(
-        "获取订单列表，支持按订单号、状态、收货人信息等条件筛选。"
-        "参数传递规则：使用结构化字段（如 order_no、receiver_name），"
-        "不要把多个筛选条件拼成单字符串。"
-        "注意：若用户需要收货地址、物流详情等明细，请调用 get_orders_detail。"
-        "调用时机：用户需要浏览或搜索订单时。"
+            "获取订单列表，支持按订单号、状态、收货人信息等条件筛选。"
+            "参数传递规则：使用结构化字段（如 order_no、receiver_name），"
+            "不要把多个筛选条件拼成单字符串。"
+            "注意：若用户需要收货地址、物流详情等明细，请调用 get_orders_detail。"
+            "调用时机：用户需要浏览或搜索订单时。"
     ),
 )
 @tool_call_status(
@@ -84,14 +85,14 @@ class OrderDetailRequest(BaseModel):
     timely_message="订单列表正在持续处理中",
 )
 async def get_order_list(
-    page_num: int = 1,
-    page_size: int = 10,
-    order_no: Optional[str] = None,
-    pay_type: Optional[str] = None,
-    order_status: Optional[str] = None,
-    delivery_type: Optional[str] = None,
-    receiver_name: Optional[str] = None,
-    receiver_phone: Optional[str] = None,
+        page_num: int = 1,
+        page_size: int = 10,
+        order_no: Optional[str] = None,
+        pay_type: Optional[str] = None,
+        order_status: Optional[str] = None,
+        delivery_type: Optional[str] = None,
+        receiver_name: Optional[str] = None,
+        receiver_phone: Optional[str] = None,
 ) -> dict:
     """获取订单列表。"""
 
@@ -113,11 +114,11 @@ async def get_order_list(
 @tool(
     args_schema=OrderDetailRequest,
     description=(
-        "根据订单ID获取详细信息，包括收货地址、物流信息、商品明细等，支持批量查询。"
-        "参数传递规则：order_id 必须是字符串数组 List[str]，例如 "
-        "{\"order_id\": [\"O20260101\", \"O20260102\"]}；"
-        "不要传 'O20260101,O20260102'。"
-        "调用时机：用户询问订单明细，或订单列表信息不足时。"
+            "根据订单ID获取详细信息，包括收货地址、物流信息、商品明细等，支持批量查询。"
+            "参数传递规则：order_id 必须是字符串数组 List[str]，例如 "
+            "{\"order_id\": [\"O20260101\", \"O20260102\"]}；"
+            "不要传 'O20260101,O20260102'。"
+            "调用时机：用户询问订单明细，或订单列表信息不足时。"
     ),
 )
 @tool_call_status(
@@ -136,14 +137,13 @@ async def get_orders_detail(order_id: list[str]) -> dict:
         return HttpResponse.parse_data(response)
 
 
-_BASE_PROMPT = load_prompt("assistant_base_prompt")
-_ORDER_SYSTEM_PROMPT = load_prompt("assistant_order_system_prompt") + _BASE_PROMPT
+_ORDER_SYSTEM_PROMPT = load_prompt("assistant/order_system_prompt.md")
 
 
 @tool(
     description=(
-        "处理订单相关任务：订单列表、订单详情。"
-        "输入为自然语言任务描述，内部会自动调用订单工具并返回结果。"
+            "处理订单相关任务：订单列表、订单详情。"
+            "输入为自然语言任务描述，内部会自动调用订单工具并返回结果。"
     )
 )
 @tool_call_status(
@@ -159,6 +159,7 @@ def order_tool_agent(task_description: str) -> str:
         llm_kwargs={"temperature": 0.2},
         system_prompt=SystemMessage(content=_ORDER_SYSTEM_PROMPT),
         tools=[get_order_list, get_orders_detail],
+        middleware=[BasePromptMiddleware()],
     )
     result = agent_invoke(
         agent,

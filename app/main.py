@@ -9,7 +9,6 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import Response
 
 from app.api.main import api_router
-from app.core.security.cors import load_cors_config
 from app.core.exception.exception_handlers import ExceptionHandlers
 from app.core.exception.exceptions import ServiceException
 from app.core.security.auth_context import (
@@ -18,6 +17,7 @@ from app.core.security.auth_context import (
     set_authorization_header,
     set_current_user,
 )
+from app.core.security.cors import load_cors_config
 from app.services.auth_service import verify_authorization
 
 # 加载 .env 配置，确保本地开发环境变量生效

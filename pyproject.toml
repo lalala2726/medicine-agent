@@ -31,4 +31,5 @@ dependencies = [
     "pandas>=3.0.0",
     "pandas-stubs>=3.0.0.260204",
     "pymongo>=4.16.0",
+    "PyYAML>=6.0.3",
 ]

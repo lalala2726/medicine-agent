@@ -5,8 +5,8 @@ from typing import List
 
 from langchain_text_splitters import TokenTextSplitter
 
-from app.rag.chunking.base import ChunkStrategy, SplitChunk, SplitConfig, build_page_metadata
 from app.core.exception.exceptions import ServiceException
+from app.rag.chunking.base import ChunkStrategy, SplitChunk, SplitConfig, build_page_metadata
 from app.rag.file_loader.base import PageContent
 
 

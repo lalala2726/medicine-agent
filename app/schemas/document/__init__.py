@@ -1,10 +1,3 @@
-from .message import (
-    MessageCreate,
-    MessageDocument,
-    MessageRole,
-    MessageStatus,
-    TokenUsage,
-)
 from .conversation import (
     ConversationCreate,
     ConversationDocument,
@@ -17,6 +10,13 @@ from .conversation_summary import (
     ConversationSummarySetOnInsert,
     ConversationSummaryUpsertPayload,
     ConversationSummaryUpdateSet,
+)
+from .message import (
+    MessageCreate,
+    MessageDocument,
+    MessageRole,
+    MessageStatus,
+    TokenUsage,
 )
 from .message_trace import (
     ExecutionTraceItem,

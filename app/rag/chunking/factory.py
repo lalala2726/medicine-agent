@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from typing import Dict
 
+from app.core.exception.exceptions import ServiceException
 from app.rag.chunking.base import ChunkStrategy, ChunkStrategyType
 from app.rag.chunking.length_splitter import LengthChunker
 from app.rag.chunking.recursive_splitter import RecursiveChunker
 from app.rag.chunking.title_splitter import TitleChunker
 from app.rag.chunking.token_splitter import TokenChunker
-from app.core.exception.exceptions import ServiceException
 
 
 class ChunkerFactory:

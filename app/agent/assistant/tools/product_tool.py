@@ -6,14 +6,15 @@ from langchain_core.messages import SystemMessage
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
-from app.utils.prompt_utils import load_prompt
 from app.agent.assistant.tools.base_tools import _normalize_id_list, format_ids_to_string
-from app.core.agent.agent_tool_events import tool_call_status
 from app.core.agent.agent_runtime import agent_invoke
+from app.core.agent.agent_tool_events import tool_call_status
+from app.core.agent.base_prompt_middleware import BasePromptMiddleware
 from app.core.langsmith import traceable
 from app.core.llm import create_agent
 from app.schemas.http_response import HttpResponse
 from app.utils.http_client import HttpClient
+from app.utils.prompt_utils import load_prompt
 
 
 class MallProductListQueryRequest(BaseModel):
@@ -79,9 +80,9 @@ class DrugDetailRequest(BaseModel):
 @tool(
     args_schema=MallProductListQueryRequest,
     description=(
-        "查看商城商品列表，如果不传入任何参数，只传递分页信息的话，这边默认返回最新的前N条数据，"
-        "支持按名称、价格区间、分类等条件筛选。"
-        "调用时机：当用户关注于商城内的商品信息时。"
+            "查看商城商品列表，如果不传入任何参数，只传递分页信息的话，这边默认返回最新的前N条数据，"
+            "支持按名称、价格区间、分类等条件筛选。"
+            "调用时机：当用户关注于商城内的商品信息时。"
     ),
 )
 @tool_call_status(
@@ -91,14 +92,14 @@ class DrugDetailRequest(BaseModel):
     timely_message="商品列表正在持续处理中",
 )
 async def get_product_list(
-    page_num: int = 1,
-    page_size: int = 10,
-    id: Optional[int] = None,
-    name: Optional[str] = None,
-    category_id: Optional[int] = None,
-    status: Optional[int] = None,
-    min_price: Optional[float] = None,
-    max_price: Optional[float] = None,
+        page_num: int = 1,
+        page_size: int = 10,
+        id: Optional[int] = None,
+        name: Optional[str] = None,
+        category_id: Optional[int] = None,
+        status: Optional[int] = None,
+        min_price: Optional[float] = None,
+        max_price: Optional[float] = None,
 ) -> dict:
     """搜索商城商品列表。"""
 
@@ -120,11 +121,11 @@ async def get_product_list(
 @tool(
     args_schema=ProductInfoRequest,
     description=(
-        "根据商品ID获取详细信息，支持批量查询。"
-        "参数传递规则：product_id 必须是字符串数组 List[str]，例如 "
-        "{\"product_id\": [\"2001\", \"2003\"]}；"
-        "不要传逗号拼接字符串。"
-        "调用时机：用户明确询问某个或某些商品的详细信息时。"
+            "根据商品ID获取详细信息，支持批量查询。"
+            "参数传递规则：product_id 必须是字符串数组 List[str]，例如 "
+            "{\"product_id\": [\"2001\", \"2003\"]}；"
+            "不要传逗号拼接字符串。"
+            "调用时机：用户明确询问某个或某些商品的详细信息时。"
     ),
 )
 @tool_call_status(
@@ -146,11 +147,11 @@ async def get_product_detail(product_id: list[str]) -> dict:
 @tool(
     args_schema=DrugDetailRequest,
     description=(
-        "根据商品ID获取药品详细信息，包括说明书、适应症、用法用量等，支持批量查询。"
-        "参数传递规则：product_id 必须是字符串数组 List[str]，例如 "
-        "{\"product_id\": [\"2001\", \"2003\"]}；"
-        "不要传逗号拼接字符串。"
-        "调用时机：用户询问药品说明书、适应症、用法用量等信息时。"
+            "根据商品ID获取药品详细信息，包括说明书、适应症、用法用量等，支持批量查询。"
+            "参数传递规则：product_id 必须是字符串数组 List[str]，例如 "
+            "{\"product_id\": [\"2001\", \"2003\"]}；"
+            "不要传逗号拼接字符串。"
+            "调用时机：用户询问药品说明书、适应症、用法用量等信息时。"
     ),
 )
 @tool_call_status(
@@ -169,14 +170,13 @@ async def get_drug_detail(product_id: list[str]) -> dict:
         return HttpResponse.parse_data(response)
 
 
-_BASE_PROMPT = load_prompt("assistant_base_prompt")
-_PRODUCT_SYSTEM_PROMPT = load_prompt("assistant_product_system_prompt") + _BASE_PROMPT
+_PRODUCT_SYSTEM_PROMPT = load_prompt("assistant/product_system_prompt.md")
 
 
 @tool(
     description=(
-        "处理商品相关任务：商品列表、商品详情。"
-        "输入为自然语言任务描述，内部会自动调用商品工具并返回结果。"
+            "处理商品相关任务：商品列表、商品详情。"
+            "输入为自然语言任务描述，内部会自动调用商品工具并返回结果。"
     )
 )
 @traceable(name="Supervisor Product Tool Agent", run_type="chain")
@@ -192,6 +192,7 @@ def product_tool_agent(task_description: str) -> str:
         llm_kwargs={"temperature": 0.2},
         system_prompt=SystemMessage(content=_PRODUCT_SYSTEM_PROMPT),
         tools=[get_product_list, get_product_detail, get_drug_detail],
+        middleware=[BasePromptMiddleware()],
     )
     input_messages = str(task_description or "").strip()
     result = agent_invoke(

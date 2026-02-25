@@ -2,9 +2,9 @@ from pathlib import Path
 
 from loguru import logger
 
-from app.rag.chunking import ChunkStrategyType, SplitConfig, split_file
 from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException
+from app.rag.chunking import ChunkStrategyType, SplitConfig, split_file
 from app.rag.file_loader.base import (
     cleanup_temp_assets,
     create_temp_image_dir,

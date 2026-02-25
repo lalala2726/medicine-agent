@@ -4,18 +4,12 @@ import copy
 import json
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Literal, Mapping
+from typing import Any, Literal
 
-from langchain_core.messages import SystemMessage
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
-from app.utils.prompt_utils import load_prompt
 from app.core.agent.agent_tool_events import tool_call_status
-from app.core.agent.agent_runtime import agent_invoke
-from app.core.langsmith import traceable
-from app.core.llm import create_agent
-
 
 ChartType = Literal[
     "line",
@@ -126,8 +120,8 @@ def get_supported_chart_types() -> dict:
 @tool(
     args_schema=ChartSampleByNameRequest,
     description=(
-        "按图表名称获取单个图表模板示例及字段说明。"
-        "必须精确传入受支持图表名，返回示例、字段定义和输出格式。"
+            "按图表名称获取单个图表模板示例及字段说明。"
+            "必须精确传入受支持图表名，返回示例、字段定义和输出格式。"
     ),
 )
 @tool_call_status(
@@ -174,35 +168,3 @@ def get_chart_sample_by_name(chart_name: ChartType) -> dict:
         "output_format": output_format,
         "sample": copy.deepcopy(config_sample),
     }
-
-
-_BASE_PROMPT = load_prompt("assistant_base_prompt")
-_CHART_SYSTEM_PROMPT = load_prompt("assistant_chart_system_prompt") + _BASE_PROMPT
-
-
-@tool(
-    description=(
-        "处理图表模板相关任务：获取支持图表类型、按名称获取单个图表示例。"
-        "输入为自然语言任务描述，内部会自动调用图表模板工具并返回结果。"
-    )
-)
-@tool_call_status(
-    tool_name="正在调用图表子代理",
-    start_message="正在执行查询",
-    error_message="调用图表子代理失败",
-    timely_message="图表子代理正在持续处理中",
-)
-@traceable(name="Supervisor Chart Tool Agent", run_type="chain")
-def chart_tool_agent(task_description: str) -> str:
-    agent = create_agent(
-        model="qwen-flash",
-        llm_kwargs={"temperature": 0.2},
-        system_prompt=SystemMessage(content=_CHART_SYSTEM_PROMPT),
-        tools=[get_supported_chart_types, get_chart_sample_by_name],
-    )
-    input_messages = str(task_description or "").strip()
-    result = agent_invoke(
-        agent,
-        input_messages,
-    )
-    return result.content
