@@ -21,11 +21,11 @@ class BasePromptMiddleware(AgentMiddleware):
     """
 
     def __init__(
-        self,
-        *,
-        base_prompt_file: str = "assistant/base_prompt.md",
-        section_marker: str = "## 基础系统规则",
-        skills_section_marker: str = "## 技能系统",
+            self,
+            *,
+            base_prompt_file: str = "assistant/base_prompt.md",
+            section_marker: str = "## 基础系统规则",
+            skills_section_marker: str = "## 技能系统",
     ) -> None:
         """初始化基础提示词中间件。
 
@@ -73,9 +73,9 @@ class BasePromptMiddleware(AgentMiddleware):
         return request.override(system_message=SystemMessage(content=merged_text))
 
     def wrap_model_call(
-        self,
-        request: ModelRequest,
-        handler: Callable[[ModelRequest], ModelResponse],
+            self,
+            request: ModelRequest,
+            handler: Callable[[ModelRequest], ModelResponse],
     ) -> ModelResponse:
         """同步包装模型调用，注入基础提示词后继续执行。"""
 
@@ -83,12 +83,11 @@ class BasePromptMiddleware(AgentMiddleware):
         return handler(modified_request)
 
     async def awrap_model_call(
-        self,
-        request: ModelRequest,
-        handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
+            self,
+            request: ModelRequest,
+            handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
     ) -> ModelResponse:
         """异步包装模型调用，注入基础提示词后继续执行。"""
 
         modified_request = self._inject_base_prompt(request)
         return await handler(modified_request)
-

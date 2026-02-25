@@ -176,8 +176,8 @@ def _normalize_message_signature(message: Any) -> tuple[str, str]:
 
 
 def _split_generated_messages(
-    final_messages: list[Any],
-    input_messages: list[Any],
+        final_messages: list[Any],
+        input_messages: list[Any],
 ) -> list[Any]:
     """
     尝试剥离输入前缀，只保留本次 Agent 新增消息。
@@ -231,7 +231,7 @@ def _is_ai_message(message: Any) -> bool:
 
 
 def _aggregate_usage_from_ai_messages(
-    messages: list[Any],
+        messages: list[Any],
 ) -> tuple[dict[str, int] | None, bool]:
     """
     汇总 AI 消息 usage，并返回完整性标记。
@@ -348,10 +348,10 @@ def resolve_final_messages(payload: Any) -> list[Any]:
 
 
 def record_agent_trace(
-    *,
-    payload: Any,
-    input_messages: list[Any] | str,
-    fallback_text: str = "",
+        *,
+        payload: Any,
+        input_messages: list[Any] | str,
+        fallback_text: str = "",
 ) -> dict[str, Any]:
     """
     根据最终消息构建统一追踪结果。

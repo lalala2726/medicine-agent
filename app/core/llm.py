@@ -147,6 +147,7 @@ def create_agent(
         **kwargs,
     )
 
+
 def _resolve_extra_body(
         model_kwargs: dict[str, Any],
         *,
@@ -225,7 +226,6 @@ def create_chat_model(
     # 默认开启 stream_usage，优先获取模型返回的真实 token 消耗。
     # 若供应商未返回 usage，业务层会使用 tiktoken 估算兜底。
     kwargs.setdefault("stream_usage", True)
-
 
     return ChatOpenAI(
         model=model,

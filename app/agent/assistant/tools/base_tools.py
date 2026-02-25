@@ -10,6 +10,7 @@
 import datetime
 
 from langchain_core.tools import tool
+
 from app.core.agent.agent_tool_events import tool_call_status
 from app.schemas.http_response import HttpResponse
 from app.utils.http_client import HttpClient
@@ -32,7 +33,7 @@ def _normalize_id_list(ids: list[str], *, field_name: str) -> list[str]:
 
 @tool(
     description="获取当前登录用户的基本信息。"
-    "调用时机：用户询问「我是谁」「我的账户信息」，或需要用户ID进行后续操作时。"
+                "调用时机：用户询问「我是谁」「我的账户信息」，或需要用户ID进行后续操作时。"
 )
 @tool_call_status(
     tool_name="获取用户信息",

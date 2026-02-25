@@ -190,13 +190,13 @@ def _to_error_tool_message(*, error_message: str, tool_call_id: str) -> ToolMess
 
 
 def _finalize_result(
-    *,
-    tool_name: str,
-    tool_call_id: str,
-    tool_args: Any,
-    timely_message: str,
-    result: ToolMessage | Command | None,
-    log_enabled: bool,
+        *,
+        tool_name: str,
+        tool_call_id: str,
+        tool_args: Any,
+        timely_message: str,
+        result: ToolMessage | Command | None,
+        log_enabled: bool,
 ) -> ToolMessage | Command | None:
     """
     对工具返回结果做统一收尾处理（不根据返回内容推断失败）。
@@ -241,12 +241,12 @@ def _finalize_result(
 
 
 def _handle_failure(
-    *,
-    tool_name: str,
-    tool_call_id: str,
-    tool_args: Any,
-    error_message: str,
-    exc: Exception,
+        *,
+        tool_name: str,
+        tool_call_id: str,
+        tool_args: Any,
+        error_message: str,
+        exc: Exception,
 ) -> ToolMessage:
     """
     统一处理工具调用异常并生成错误 ToolMessage。
@@ -297,8 +297,8 @@ def build_tool_status_middleware():
 
     @wrap_tool_call
     async def _tool_status_middleware(
-        request: ToolCallRequest,
-        handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command | None]],
+            request: ToolCallRequest,
+            handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command | None]],
     ) -> ToolMessage | Command | None:
         """
         基于 LangChain `@wrap_tool_call` 的工具调用拦截器。

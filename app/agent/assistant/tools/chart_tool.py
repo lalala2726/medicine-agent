@@ -11,7 +11,6 @@ from pydantic import BaseModel, Field
 
 from app.core.agent.agent_tool_events import tool_call_status
 
-
 ChartType = Literal[
     "line",
     "area",
@@ -121,8 +120,8 @@ def get_supported_chart_types() -> dict:
 @tool(
     args_schema=ChartSampleByNameRequest,
     description=(
-        "按图表名称获取单个图表模板示例及字段说明。"
-        "必须精确传入受支持图表名，返回示例、字段定义和输出格式。"
+            "按图表名称获取单个图表模板示例及字段说明。"
+            "必须精确传入受支持图表名，返回示例、字段定义和输出格式。"
     ),
 )
 @tool_call_status(
@@ -169,6 +168,3 @@ def get_chart_sample_by_name(chart_name: ChartType) -> dict:
         "output_format": output_format,
         "sample": copy.deepcopy(config_sample),
     }
-
-
-

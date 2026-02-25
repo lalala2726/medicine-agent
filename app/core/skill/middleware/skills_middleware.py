@@ -153,9 +153,9 @@ class SkillMiddleware(AgentMiddleware):
         return self.before_agent(state, runtime)
 
     def wrap_model_call(
-        self,
-        request: ModelRequest,
-        handler: Callable[[ModelRequest], ModelResponse],
+            self,
+            request: ModelRequest,
+            handler: Callable[[ModelRequest], ModelResponse],
     ):
         """同步包装模型调用，注入技能提示词后继续执行。
 
@@ -171,9 +171,9 @@ class SkillMiddleware(AgentMiddleware):
         return handler(modified_request)
 
     async def awrap_model_call(
-        self,
-        request: ModelRequest,
-        handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
+            self,
+            request: ModelRequest,
+            handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
     ):
         """异步包装模型调用，注入技能提示词后继续执行。
 

@@ -5,14 +5,14 @@ from typing import Any
 
 from langchain_core.messages import SystemMessage
 
-from app.utils.prompt_utils import load_prompt
 from app.agent.assistant.state import AgentState, ExecutionTraceState, GatewayRoutingState
-from app.core.agent.base_prompt_middleware import BasePromptMiddleware
 from app.core.agent.agent_runtime import agent_invoke
 from app.core.agent.agent_tool_trace import record_agent_trace
+from app.core.agent.base_prompt_middleware import BasePromptMiddleware
 from app.core.langsmith import traceable
 from app.core.llm import create_agent
 from app.services.token_usage_service import append_trace_and_refresh_token_usage
+from app.utils.prompt_utils import load_prompt
 
 _GATEWAY_PROMPT = load_prompt("assistant/gateway_prompt.md")
 

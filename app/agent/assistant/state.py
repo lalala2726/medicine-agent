@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Literal, TypeAlias, TypedDict
+from typing import Any, TypeAlias, TypedDict
 
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.graph import MessagesState
@@ -101,7 +101,6 @@ class GatewayRoutingState(TypedDict):
 
 
 class AgentState(MessagesState, total=False):
-
     # Gateway 结构化路由结果。
     routing: GatewayRoutingState
 

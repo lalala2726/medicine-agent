@@ -3,8 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from loguru import logger
 import yaml
+from loguru import logger
 
 from app.core.skill.discovery.scope import _is_path_within_root, normalize_scope
 from app.core.skill.types.models import SkillExtraMetadata, SkillFileIndex, SkillMetadata

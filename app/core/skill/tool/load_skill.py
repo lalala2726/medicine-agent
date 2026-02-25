@@ -50,9 +50,9 @@ def _normalize_resource_path(resource_path: str) -> tuple[Path | None, str | Non
 
 
 def _resolve_resource_file(
-    *,
-    skill_dir: Path,
-    normalized_resource_path: Path,
+        *,
+        skill_dir: Path,
+        normalized_resource_path: Path,
 ) -> tuple[Path | None, str | None]:
     """解析并校验技能资源文件的绝对路径。
 
@@ -118,8 +118,8 @@ def _read_utf8_text_file(resource_file: Path) -> tuple[str | None, str | None]:
 
 
 def create_load_skill_tool(
-    scope: str | None,
-    get_skill_file_index: Callable[[], SkillFileIndex],
+        scope: str | None,
+        get_skill_file_index: Callable[[], SkillFileIndex],
 ):
     """创建 `load_skill` 工具函数。
 
@@ -140,8 +140,8 @@ def create_load_skill_tool(
 
     @tool(
         description=(
-            "按技能名称加载完整 SKILL.md 内容。"
-            "当任务命中某个技能并需要详细说明时调用。"
+                "按技能名称加载完整 SKILL.md 内容。"
+                "当任务命中某个技能并需要详细说明时调用。"
         )
     )
     def load_skill(skill_name: str) -> str:
@@ -181,8 +181,8 @@ def create_load_skill_tool(
 
 
 def create_load_skill_resource_tool(
-    scope: str | None,
-    get_skill_file_index: Callable[[], SkillFileIndex],
+        scope: str | None,
+        get_skill_file_index: Callable[[], SkillFileIndex],
 ):
     """创建 `load_skill_resource` 工具函数。
 
@@ -203,8 +203,8 @@ def create_load_skill_resource_tool(
 
     @tool(
         description=(
-            "读取技能目录内的资源文件（仅相对路径、最大 128KB、仅 UTF-8 文本）。"
-            "当技能说明提示去读取 references/scripts 等文件时调用。"
+                "读取技能目录内的资源文件（仅相对路径、最大 128KB、仅 UTF-8 文本）。"
+                "当技能说明提示去读取 references/scripts 等文件时调用。"
         )
     )
     def load_skill_resource(skill_name: str, resource_path: str) -> str:

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from pathlib import Path
 import importlib
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -12,8 +12,8 @@ from langchain_core.messages import AIMessage, SystemMessage
 from loguru import logger
 
 import app.core.agent.base_prompt_middleware as base_prompt_module
-from app.core.agent.base_prompt_middleware import BasePromptMiddleware
 import app.core.skill.discovery.scope as scope_module
+from app.core.agent.base_prompt_middleware import BasePromptMiddleware
 from app.core.skill import (
     SkillMiddleware,
     create_list_skill_resources_tool,
@@ -32,15 +32,15 @@ class _ToolFriendlyFakeListChatModel(FakeListChatModel):
 
 
 def _write_skill(
-    root: Path,
-    relative_dir: str,
-    description: str = "demo desc",
-    *,
-    skill_name: str = "Demo Skill",
-    license_name: str | None = None,
-    metadata: dict[str, Any] | None = None,
-    include_name: bool = True,
-    include_description: bool = True,
+        root: Path,
+        relative_dir: str,
+        description: str = "demo desc",
+        *,
+        skill_name: str = "Demo Skill",
+        license_name: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        include_name: bool = True,
+        include_description: bool = True,
 ) -> None:
     """构造测试用 `SKILL.md` 文件。
 
@@ -90,7 +90,7 @@ def _flatten_tree_paths(tree: list[dict[str, Any]]) -> list[str]:
 
 
 def test_discover_skills_only_reads_immediate_children_for_scope_supervisor(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+        monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """验证 scope=supervisor 只扫描直系子目录。
 
@@ -115,7 +115,7 @@ def test_discover_skills_only_reads_immediate_children_for_scope_supervisor(
 
 
 def test_discover_skills_only_reads_immediate_children_for_nested_scope(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+        monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """验证嵌套 scope 仍只扫描当前层级的直系子目录。
 
@@ -152,7 +152,7 @@ def test_discover_skills_raises_when_scope_depth_exceeds_three_levels() -> None:
 
 
 def test_discover_skills_uses_root_directory_when_scope_is_empty(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+        monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """验证空 scope 默认扫描技能根目录。
 
@@ -193,7 +193,7 @@ def test_before_agent_is_idempotent_when_skills_metadata_already_exists() -> Non
 
 
 def test_skill_middleware_defaults_to_root_scope_when_scope_missing(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+        monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """验证 `SkillMiddleware()` 默认使用根目录 scope。
 
@@ -218,7 +218,7 @@ def test_skill_middleware_defaults_to_root_scope_when_scope_missing(
 
 
 def test_before_agent_returns_metadata_without_path(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+        monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """验证预加载只返回元数据，不暴露路径/正文。
 
@@ -258,7 +258,7 @@ def test_before_agent_returns_metadata_without_path(
 
 
 def test_discover_skills_only_keeps_author_and_version_in_metadata(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+        monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """验证 metadata 仅保留强约束字段。
 
@@ -291,7 +291,7 @@ def test_discover_skills_only_keeps_author_and_version_in_metadata(
 
 
 def test_discover_skills_skips_missing_required_fields_and_logs_error(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+        monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """验证缺少必填字段时跳过并记录错误日志。
 
@@ -332,7 +332,7 @@ def test_discover_skills_skips_missing_required_fields_and_logs_error(
 
 
 def test_load_skill_returns_full_skill_content(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+        monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """验证 `load_skill` 可按名称返回全文。
 
@@ -357,7 +357,7 @@ def test_load_skill_returns_full_skill_content(
 
 
 def test_load_skill_returns_available_names_when_target_not_found(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+        monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """验证 `load_skill` 未命中时的提示信息。
 
@@ -381,7 +381,7 @@ def test_load_skill_returns_available_names_when_target_not_found(
 
 
 def test_load_skill_uses_frontmatter_name_not_directory_name(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+        monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """验证 `load_skill` 以 frontmatter.name 作为唯一键。
 
@@ -412,7 +412,7 @@ def test_load_skill_uses_frontmatter_name_not_directory_name(
 
 
 def test_load_skill_resource_reads_file_in_same_directory_when_only_filename_given(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+        monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """验证仅传文件名时读取 `SKILL.md` 同级文件。
 
@@ -440,7 +440,7 @@ def test_load_skill_resource_reads_file_in_same_directory_when_only_filename_giv
 
 
 def test_load_skill_resource_reads_nested_relative_file(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+        monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """验证可读取技能目录内的相对路径文件。
 
@@ -469,7 +469,7 @@ def test_load_skill_resource_reads_nested_relative_file(
 
 
 def test_load_skill_resource_rejects_absolute_path(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+        monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """验证拒绝绝对路径。
 
@@ -494,7 +494,7 @@ def test_load_skill_resource_rejects_absolute_path(
 
 
 def test_load_skill_resource_rejects_parent_directory_traversal(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+        monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """验证拒绝父目录穿越。
 
@@ -519,7 +519,7 @@ def test_load_skill_resource_rejects_parent_directory_traversal(
 
 
 def test_load_skill_resource_blocks_symlink_escape(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+        monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """验证符号链接越界会被阻断。
 
@@ -552,7 +552,7 @@ def test_load_skill_resource_blocks_symlink_escape(
 
 
 def test_load_skill_resource_rejects_large_file_over_128kb(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+        monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """验证超过 128KB 文件会被拒绝。
 
@@ -577,7 +577,7 @@ def test_load_skill_resource_rejects_large_file_over_128kb(
 
 
 def test_load_skill_resource_rejects_non_utf8_file(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+        monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """验证仅允许 UTF-8 文本文件。
 
@@ -602,7 +602,7 @@ def test_load_skill_resource_rejects_non_utf8_file(
 
 
 def test_load_skill_resource_returns_available_names_when_skill_not_found(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+        monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """验证技能名未命中时返回可用技能列表。
 
@@ -628,7 +628,7 @@ def test_load_skill_resource_returns_available_names_when_skill_not_found(
 
 
 def test_list_skill_resources_returns_tree_with_relative_paths(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+        monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """验证目录树工具返回结构化树形结果。
 
@@ -673,7 +673,7 @@ def test_list_skill_resources_returns_tree_with_relative_paths(
 
 
 def test_list_skill_resources_respects_max_depth_three(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+        monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """验证目录树工具的最大层级限制。
 
@@ -703,7 +703,7 @@ def test_list_skill_resources_respects_max_depth_three(
 
 
 def test_list_skill_resources_filters_hidden_entries(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+        monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """验证目录树工具默认过滤隐藏文件与隐藏目录。
 
@@ -733,7 +733,7 @@ def test_list_skill_resources_filters_hidden_entries(
 
 
 def test_list_skill_resources_skips_symlink_outside_skill_root(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+        monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """验证目录树工具会忽略软链目录，防止越界读取。
 
@@ -766,7 +766,7 @@ def test_list_skill_resources_skips_symlink_outside_skill_root(
 
 
 def test_list_skill_resources_returns_available_skills_when_not_found(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+        monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """验证目录树工具未命中时返回可用技能名。
 
@@ -791,7 +791,7 @@ def test_list_skill_resources_returns_available_skills_when_not_found(
 
 
 def test_before_agent_preloads_metadata_but_not_full_content(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+        monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """验证预加载不读取正文，工具调用时才读取。
 
@@ -896,7 +896,7 @@ def test_wrap_model_call_injects_skills_system_prompt_without_paths() -> None:
 
 
 def test_base_and_skill_middlewares_keep_expected_order_and_idempotency(
-    monkeypatch: pytest.MonkeyPatch,
+        monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """验证 BasePromptMiddleware 与 SkillMiddleware 组合时顺序正确且不重复注入。
 
@@ -951,7 +951,7 @@ def test_base_and_skill_middlewares_keep_expected_order_and_idempotency(
 
 
 def test_runtime_state_preserves_skills_metadata_for_prompt_injection(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+        monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """验证真实运行链路中 `skills_metadata` 不会被状态系统丢弃。
 

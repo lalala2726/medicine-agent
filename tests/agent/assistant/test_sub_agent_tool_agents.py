@@ -17,10 +17,10 @@ from app.agent.assistant.tools import analytics_tool, order_tool, product_tool
     ],
 )
 def test_sub_agent_tool_returns_tool_message_with_trace_artifact(
-    monkeypatch: pytest.MonkeyPatch,
-    module,
-    tool_obj,
-    response_text: str,
+        monkeypatch: pytest.MonkeyPatch,
+        module,
+        tool_obj,
+        response_text: str,
 ) -> None:
     fake_agent = object()
     monkeypatch.setattr(module, "create_agent_instance", lambda **_kwargs: fake_agent)
@@ -40,18 +40,18 @@ def test_sub_agent_tool_returns_tool_message_with_trace_artifact(
     trace = result.artifact.get("agent_trace")
     assert isinstance(trace, dict)
     for key in (
-        "text",
-        "model_name",
-        "usage",
-        "is_usage_complete",
-        "tool_calls",
-        "raw_content",
+            "text",
+            "model_name",
+            "usage",
+            "is_usage_complete",
+            "tool_calls",
+            "raw_content",
     ):
         assert key in trace
 
 
 def test_order_sub_agent_returns_fallback_message_when_result_empty(
-    monkeypatch: pytest.MonkeyPatch,
+        monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fake_agent = object()
     monkeypatch.setattr(order_tool, "create_agent_instance", lambda **_kwargs: fake_agent)

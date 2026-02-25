@@ -76,11 +76,11 @@ def _relative_path(path: Path, skill_root: Path) -> str:
 
 
 def _build_tree(
-    *,
-    skill_root: Path,
-    current_dir: Path,
-    current_depth: int,
-    max_depth: int,
+        *,
+        skill_root: Path,
+        current_dir: Path,
+        current_depth: int,
+        max_depth: int,
 ) -> list[SkillTreeNode]:
     """构建技能目录树。
 
@@ -150,10 +150,10 @@ def _build_tree(
 
 
 def _build_not_found_response(
-    *,
-    skill_name: str,
-    available_skills: list[str],
-    scope_label: str,
+        *,
+        skill_name: str,
+        available_skills: list[str],
+        scope_label: str,
 ) -> SkillTreeResponse:
     """构建技能未命中时的标准响应。
 
@@ -183,8 +183,8 @@ def _build_not_found_response(
 
 
 def create_list_skill_resources_tool(
-    scope: str | None,
-    get_skill_file_index: Callable[[], SkillFileIndex],
+        scope: str | None,
+        get_skill_file_index: Callable[[], SkillFileIndex],
 ):
     """创建 `list_skill_resources` 工具函数。
 
@@ -204,8 +204,8 @@ def create_list_skill_resources_tool(
 
     @tool(
         description=(
-            "按技能名称列出该技能目录的资源树（最多 3 层）。"
-            "当 resource_path 不确定或读取失败时，先调用此工具定位正确路径。"
+                "按技能名称列出该技能目录的资源树（最多 3 层）。"
+                "当 resource_path 不确定或读取失败时，先调用此工具定位正确路径。"
         )
     )
     def list_skill_resources(skill_name: str) -> dict[str, Any]:

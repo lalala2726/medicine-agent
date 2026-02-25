@@ -23,7 +23,8 @@ def _resolve_collection_name() -> str:
     """解析 conversation_summaries 集合名，支持环境变量覆盖。"""
 
     return (
-            (os.getenv("MONGODB_CONVERSATION_SUMMARIES_COLLECTION") or DEFAULT_CONVERSATION_SUMMARIES_COLLECTION).strip()
+            (os.getenv(
+                "MONGODB_CONVERSATION_SUMMARIES_COLLECTION") or DEFAULT_CONVERSATION_SUMMARIES_COLLECTION).strip()
             or DEFAULT_CONVERSATION_SUMMARIES_COLLECTION
     )
 

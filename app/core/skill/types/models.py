@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import NotRequired, TypeAlias, TypedDict
 from typing import Literal
+from typing import NotRequired, TypeAlias, TypedDict
 
 
 class SkillExtraMetadata(TypedDict):

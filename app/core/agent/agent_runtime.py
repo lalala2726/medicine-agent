@@ -113,8 +113,8 @@ class AgentInvokeResult:
 
 
 def agent_invoke(
-    agent_instance: Any,
-    history_messages: list[Any] | str,
+        agent_instance: Any,
+        history_messages: list[Any] | str,
 ) -> AgentInvokeResult:
     """
     执行 agent 的 invoke 调用（优先异步 ainvoke）。
@@ -150,9 +150,9 @@ def agent_invoke(
 
 
 def agent_stream(
-    agent_instance: Any,
-    history_messages: list[Any] | str,
-    on_model_delta: Callable[[str], None] | None = None,
+        agent_instance: Any,
+        history_messages: list[Any] | str,
+        on_model_delta: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
     """
     执行 agent 的 astream 调用。
@@ -175,8 +175,8 @@ def agent_stream(
         latest_state: dict[str, Any] = {}
 
         async for raw_event in agent_instance.astream(
-            {"messages": normalized_history_messages},
-            stream_mode=["messages", "values"],
+                {"messages": normalized_history_messages},
+                stream_mode=["messages", "values"],
         ):
             if not isinstance(raw_event, tuple) or len(raw_event) != 2:
                 continue

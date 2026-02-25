@@ -24,7 +24,7 @@ def _make_request(system_text: str) -> ModelRequest:
 
 
 def test_wrap_model_call_appends_base_section_when_no_skills(
-    monkeypatch: pytest.MonkeyPatch,
+        monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """验证无技能段时基础提示词追加到末尾。"""
 
@@ -47,7 +47,7 @@ def test_wrap_model_call_appends_base_section_when_no_skills(
 
 
 def test_wrap_model_call_is_idempotent_when_marker_exists(
-    monkeypatch: pytest.MonkeyPatch,
+        monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """验证已存在 marker 时不会重复追加基础提示词。"""
 
@@ -67,7 +67,7 @@ def test_wrap_model_call_is_idempotent_when_marker_exists(
 
 
 def test_wrap_model_call_inserts_base_before_skills_section(
-    monkeypatch: pytest.MonkeyPatch,
+        monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """验证存在技能段时基础提示词插入到技能段前。"""
 
@@ -88,7 +88,7 @@ def test_wrap_model_call_inserts_base_before_skills_section(
 
 
 def test_awrap_model_call_behaves_like_sync_version(
-    monkeypatch: pytest.MonkeyPatch,
+        monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """验证异步版本与同步版本注入行为一致。"""
 
@@ -105,4 +105,3 @@ def test_awrap_model_call_behaves_like_sync_version(
     system_text = captured["request"].system_message.text
     assert "## 基础系统规则" in system_text
     assert "通用规则内容" in system_text
-
