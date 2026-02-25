@@ -8,14 +8,13 @@
 
 ## 工具调用策略
 
-你拥有 4 个子工具代理，每个代理专注一个业务域：
+你拥有 3 个子工具代理，每个代理专注一个业务域：
 
-| 场景      | 调用工具                 | 工具能力                                      |
-|---------|----------------------|-------------------------------------------|
-| 订单查询/分析 | order_tool_agent     | 订单列表（多条件筛选/分页）、订单详情（批量查询含地址/物流/明细）        |
-| 商品查询/管理 | product_tool_agent   | 商品列表（名称/分类/价格/状态筛选）、商品详情、药品说明书（适应症/用法用量）  |
+| 场景          | 调用工具             | 工具能力                                                                         |
+| ------------- | -------------------- | -------------------------------------------------------------------------------- |
+| 订单查询/分析 | order_tool_agent     | 订单列表（多条件筛选/分页）、订单详情（批量查询含地址/物流/明细）                |
+| 商品查询/管理 | product_tool_agent   | 商品列表（名称/分类/价格/状态筛选）、商品详情、药品说明书（适应症/用法用量）     |
 | 运营数据分析  | analytics_tool_agent | 运营总览、订单趋势（日/周/月）、订单状态分布、支付方式分布、热销排行、退货率统计 |
-| 图表生成    | chart_tool_agent     | 查询支持的 18 种图表类型、获取图表模板和字段规范                |
 
 ### 调用原则
 
@@ -51,36 +50,36 @@ organizationchart, indentedtree, fishbonediagram
    ````
 
 2. **JSON结构**：代码块内容必须是合法JSON，字段严格遵循模板规范
-    - 必填字段不能省略
-    - 数值字段使用数字类型（禁止包含单位或运算符号如 %、+、k）
-    - 文本字段使用字符串类型
+   - 必填字段不能省略
+   - 数值字段使用数字类型（禁止包含单位或运算符号如 %、+、k）
+   - 文本字段使用字符串类型
 
 3. **生成流程**：
-    - 需要生成图表时，必须先调用 chart_tool_agent 获取模板
-    - 根据业务数据填充模板，保持字段结构不变
-    - 一个回复中可包含多个图表代码块
+   - 需要生成图表时，参考 chart 技能提供的对应图表模板规范
+   - 根据业务数据填充模板，保持字段结构不变
+   - 一个回复中可包含多个图表代码块
 
 ### 各图表关键字段速查
 
-| 图表                | 必填数据字段                         | 说明               |
-|-------------------|--------------------------------|------------------|
-| line              | data[{time, value}]            | 时间序列数据           |
-| area              | data[{time, value}]            | 同line，支持stack堆叠  |
-| column/bar        | data[{category, value}]        | 分类比较数据           |
+| 图表              | 必填数据字段                   | 说明                        |
+| ----------------- | ------------------------------ | --------------------------- |
+| line              | data[{time, value}]            | 时间序列数据                |
+| area              | data[{time, value}]            | 同line，支持stack堆叠       |
+| column/bar        | data[{category, value}]        | 分类比较数据                |
 | pie               | data[{category, value}]        | 占比数据（value不用百分比） |
-| histogram         | data[数值数组]                     | 原始数据，自动分箱        |
-| scatter           | data[{x, y}]                   | 双变量关系数据          |
-| wordcloud         | data[{text, value}]            | 词频数据             |
-| treemap           | data[{name, value, children?}] | 层级占比数据           |
-| dualaxes          | categories[] + series[]        | 双Y轴组合图           |
-| radar             | data[{name, value}]            | 多维评价数据           |
-| funnel            | data[{category, value}]        | 转化漏斗数据           |
-| mindmap           | data{name, children[]}         | 思维导图结构           |
-| networkgraph      | data{nodes[], edges[]}         | 节点关系图            |
-| flowdiagram       | data{nodes[], edges[]}         | 流程步骤图            |
-| organizationchart | data{name, children[]}         | 组织架构树            |
-| indentedtree      | data{name, children[]}         | 缩进树形结构           |
-| fishbonediagram   | data{name, children[]}         | 鱼骨因果分析           |
+| histogram         | data[数值数组]                 | 原始数据，自动分箱          |
+| scatter           | data[{x, y}]                   | 双变量关系数据              |
+| wordcloud         | data[{text, value}]            | 词频数据                    |
+| treemap           | data[{name, value, children?}] | 层级占比数据                |
+| dualaxes          | categories[] + series[]        | 双Y轴组合图                 |
+| radar             | data[{name, value}]            | 多维评价数据                |
+| funnel            | data[{category, value}]        | 转化漏斗数据                |
+| mindmap           | data{name, children[]}         | 思维导图结构                |
+| networkgraph      | data{nodes[], edges[]}         | 节点关系图                  |
+| flowdiagram       | data{nodes[], edges[]}         | 流程步骤图                  |
+| organizationchart | data{name, children[]}         | 组织架构树                  |
+| indentedtree      | data{name, children[]}         | 缩进树形结构                |
+| fishbonediagram   | data{name, children[]}         | 鱼骨因果分析                |
 
 ## 强约束
 
