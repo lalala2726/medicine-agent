@@ -10,6 +10,7 @@ from app.agent.assistant.node.supervisor_node import supervisor_agent
 from app.agent.assistant.tools.analytics_tool import analytics_tool_agent
 from app.agent.assistant.tools.order_tool import order_tool_agent
 from app.agent.assistant.tools.product_tool import product_tool_agent
+from app.agent.assistant.tools.user_tool import user_tool_agent
 
 __all__ = [
     "gateway_router",
@@ -17,6 +18,7 @@ __all__ = [
     "order_tool_agent",
     "product_tool_agent",
     "analytics_tool_agent",
+    "user_tool_agent",
 
     "chat_agent",
 ]

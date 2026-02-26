@@ -199,4 +199,5 @@ def product_tool_agent(task_description: str) -> str:
         agent,
         input_messages,
     )
-    return result.content
+    content = str(result.content or "").strip()
+    return content or "暂无数据"

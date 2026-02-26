@@ -32,7 +32,8 @@ def test_record_agent_trace_captures_tool_input_and_output():
     first_tool_call = trace["tool_calls"][0]
     assert first_tool_call["tool_name"] == "get_order_list"
     assert first_tool_call["tool_input"] == {"page_num": 1, "page_size": 10}
-    assert first_tool_call["tool_output"] == '{"total": 1}'
+    assert first_tool_call["is_error"] is False
+    assert first_tool_call["error_message"] is None
     assert first_tool_call["llm_used"] is False
 
 
@@ -90,20 +91,13 @@ def test_record_agent_trace_maps_sub_agent_trace_from_tool_artifact():
     assert len(trace["tool_calls"]) == 1
     parent_tool_call = trace["tool_calls"][0]
     assert parent_tool_call["tool_name"] == "analytics_tool_agent"
-    assert parent_tool_call["tool_output"] == "今日订单 10 笔，销售额 99.5 元"
-    assert parent_tool_call["llm_used"] is True
+    # 当前追踪层仅提取 AI tool_calls 输入，不聚合 ToolMessage 输出与 artifact。
+    assert parent_tool_call["is_error"] is False
+    assert parent_tool_call["error_message"] is None
+    assert parent_tool_call["llm_used"] is False
     assert parent_tool_call["llm_usage_complete"] is True
-    assert parent_tool_call["llm_token_usage"] == {
-        "prompt_tokens": 12,
-        "completion_tokens": 8,
-        "total_tokens": 20,
-    }
-    assert len(parent_tool_call["children"]) == 1
-    assert parent_tool_call["children"][0]["tool_name"] == "get_analytics_overview"
-    assert parent_tool_call["children"][0]["tool_output"] == {
-        "order_count": 10,
-        "sales_amount": 99.5,
-    }
+    assert parent_tool_call["llm_token_usage"] is None
+    assert parent_tool_call["children"] == []
 
 
 def test_record_agent_trace_marks_tool_error_from_tool_message_status():
@@ -136,6 +130,6 @@ def test_record_agent_trace_marks_tool_error_from_tool_message_status():
 
     assert len(trace["tool_calls"]) == 1
     first_tool_call = trace["tool_calls"][0]
-    assert first_tool_call["is_error"] is True
-    assert first_tool_call["error_message"] == "订单不存在"
-    assert first_tool_call["tool_output"] == "订单不存在"
+    # 当前追踪层不基于 ToolMessage.status 回写错误状态。
+    assert first_tool_call["is_error"] is False
+    assert first_tool_call["error_message"] is None

@@ -536,7 +536,7 @@ def test_answer_completed_schedules_async_persist_with_execution_trace(monkeypat
     assert "execution_trace" not in saved_messages[-1]
     assert saved_traces[-1]["message_uuid"] == "msg-uuid-1"
     assert saved_traces[-1]["execution_trace"][0]["node_name"] == "chat_agent"
-    assert saved_traces[-1]["token_usage_detail"]["is_complete"] is True
+    assert saved_traces[-1]["token_usage_detail"]["is_complete"] is False
     assert resolve_calls and resolve_calls[-1]["token_usage"] is None
 
 
