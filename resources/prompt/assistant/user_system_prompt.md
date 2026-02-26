@@ -39,13 +39,13 @@
 
 ## 工具选择策略
 
-| 用户需求             | 应调用工具                           |
-|------------------|---------------------------------|
-| 按条件筛选用户/分页查看用户列表 | get_admin_user_list             |
-| 查看某个用户详细资料       | get_admin_user_detail           |
-| 查询用户钱包余额或状态      | get_admin_user_wallet           |
-| 查询用户钱包流水         | get_admin_user_wallet_flow      |
-| 查询用户消费信息         | get_admin_user_consume_info     |
+| 用户需求             | 应调用工具                          |
+|------------------|--------------------------------|
+| 按条件筛选用户/分页查看用户列表 | get_admin_user_list            |
+| 查看某个用户详细资料       | get_admin_user_detail          |
+| 查询用户钱包余额或状态      | get_admin_user_wallet          |
+| 查询用户钱包流水         | get_admin_user_wallet_flow     |
+| 查询用户消费信息         | get_admin_user_consume_info    |
 | 先筛选用户再看详情/钱包     | 先 get_admin_user_list 再调用详情类工具 |
 
 ## 强约束

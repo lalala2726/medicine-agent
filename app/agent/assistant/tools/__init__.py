@@ -4,6 +4,10 @@
 对外统一暴露后台管理助手可调用的工具函数与工具集合 `ADMIN_TOOLS`。
 """
 
+from app.agent.assistant.tools.after_sale_tool import (
+    get_admin_after_sale_detail,
+    get_admin_after_sale_list,
+)
 from app.agent.assistant.tools.analytics_tool import (
     get_analytics_hot_products,
     get_analytics_order_status_distribution,
@@ -12,12 +16,7 @@ from app.agent.assistant.tools.analytics_tool import (
     get_analytics_payment_distribution,
     get_analytics_product_return_rates,
 )
-from app.agent.assistant.tools.after_sale_tool import (
-    get_admin_after_sale_detail,
-    get_admin_after_sale_list,
-)
 from app.agent.assistant.tools.base_tools import get_user_info
-from app.agent.assistant.tools.chart_tool import get_chart_sample_by_name, get_supported_chart_types
 from app.agent.assistant.tools.order_tool import (
     get_order_list,
     get_order_shipping,
@@ -55,8 +54,6 @@ ADMIN_TOOLS = [
     get_admin_user_wallet,
     get_admin_user_wallet_flow,
     get_admin_user_consume_info,
-    get_supported_chart_types,
-    get_chart_sample_by_name,
 ]
 
 __all__ = [
@@ -82,6 +79,4 @@ __all__ = [
     "get_admin_user_wallet",
     "get_admin_user_wallet_flow",
     "get_admin_user_consume_info",
-    "get_supported_chart_types",
-    "get_chart_sample_by_name",
 ]

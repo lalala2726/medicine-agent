@@ -36,7 +36,7 @@ def _install_http_mocks(monkeypatch: pytest.MonkeyPatch, *, parsed_result: dict)
 
 
 def test_get_admin_after_sale_list_maps_snake_case_to_backend_params(
-    monkeypatch: pytest.MonkeyPatch,
+        monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     expected = {"rows": [], "total": 0}
     calls = _install_http_mocks(monkeypatch, parsed_result=expected)
@@ -73,7 +73,7 @@ def test_get_admin_after_sale_list_maps_snake_case_to_backend_params(
 
 
 def test_get_admin_after_sale_detail_uses_expected_path(
-    monkeypatch: pytest.MonkeyPatch,
+        monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     expected = {"id": 30001}
     calls = _install_http_mocks(monkeypatch, parsed_result=expected)
@@ -85,7 +85,7 @@ def test_get_admin_after_sale_detail_uses_expected_path(
 
 
 def test_after_sale_tool_agent_builds_expected_tools_and_returns_agent_output(
-    monkeypatch: pytest.MonkeyPatch,
+        monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     captured: dict = {}
     fake_agent = object()

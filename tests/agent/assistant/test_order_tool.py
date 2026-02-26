@@ -36,7 +36,7 @@ def _install_http_mocks(monkeypatch: pytest.MonkeyPatch, *, parsed_result: dict)
 
 
 def test_get_order_list_maps_query_params_to_backend_params(
-    monkeypatch: pytest.MonkeyPatch,
+        monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     expected = {"rows": [], "total": 0}
     calls = _install_http_mocks(monkeypatch, parsed_result=expected)
@@ -75,7 +75,7 @@ def test_get_order_list_maps_query_params_to_backend_params(
 
 
 def test_get_orders_detail_formats_order_ids_into_path(
-    monkeypatch: pytest.MonkeyPatch,
+        monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     expected = {"rows": [{"id": "O202601010001"}]}
     calls = _install_http_mocks(monkeypatch, parsed_result=expected)
@@ -96,9 +96,9 @@ def test_get_orders_detail_formats_order_ids_into_path(
     ],
 )
 def test_order_timeline_and_shipping_use_expected_path(
-    monkeypatch: pytest.MonkeyPatch,
-    tool_obj,
-    expected_url: str,
+        monkeypatch: pytest.MonkeyPatch,
+        tool_obj,
+        expected_url: str,
 ) -> None:
     expected = {"ok": True}
     calls = _install_http_mocks(monkeypatch, parsed_result=expected)
@@ -110,7 +110,7 @@ def test_order_timeline_and_shipping_use_expected_path(
 
 
 def test_order_tool_agent_builds_expected_tools_and_returns_agent_output(
-    monkeypatch: pytest.MonkeyPatch,
+        monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     captured: dict = {}
     fake_agent = object()

@@ -43,8 +43,8 @@ class AdminAfterSaleIdRequest(BaseModel):
 @tool(
     args_schema=AdminAfterSaleListQueryRequest,
     description=(
-        "分页查询管理端售后申请列表，支持按售后类型、售后状态、订单号、用户 ID、申请原因筛选。"
-        "参数传递规则：使用结构化字段，不要把多个筛选条件拼成单字符串。"
+            "分页查询管理端售后申请列表，支持按售后类型、售后状态、订单号、用户 ID、申请原因筛选。"
+            "参数传递规则：使用结构化字段，不要把多个筛选条件拼成单字符串。"
     ),
 )
 @tool_call_status(
@@ -54,13 +54,13 @@ class AdminAfterSaleIdRequest(BaseModel):
     timely_message="售后列表正在持续处理中",
 )
 async def get_admin_after_sale_list(
-    page_num: int = 1,
-    page_size: int = 10,
-    after_sale_type: Optional[str] = None,
-    after_sale_status: Optional[str] = None,
-    order_no: Optional[str] = None,
-    user_id: Optional[int] = None,
-    apply_reason: Optional[str] = None,
+        page_num: int = 1,
+        page_size: int = 10,
+        after_sale_type: Optional[str] = None,
+        after_sale_status: Optional[str] = None,
+        order_no: Optional[str] = None,
+        user_id: Optional[int] = None,
+        apply_reason: Optional[str] = None,
 ) -> dict:
     """分页查询管理端售后申请列表。"""
 
@@ -81,8 +81,8 @@ async def get_admin_after_sale_list(
 @tool(
     args_schema=AdminAfterSaleIdRequest,
     description=(
-        "根据售后申请 ID 查询售后详情。"
-        "调用时机：需要查看某个售后申请的处理进度、原因、处理结果或关联订单信息时。"
+            "根据售后申请 ID 查询售后详情。"
+            "调用时机：需要查看某个售后申请的处理进度、原因、处理结果或关联订单信息时。"
     ),
 )
 @tool_call_status(
@@ -104,8 +104,8 @@ _AFTER_SALE_SYSTEM_PROMPT = load_prompt("assistant/after_sale_system_prompt.md")
 
 @tool(
     description=(
-        "处理管理端售后相关任务：售后列表、售后详情。"
-        "输入为自然语言任务描述，内部会自动调用售后域工具并返回结果。"
+            "处理管理端售后相关任务：售后列表、售后详情。"
+            "输入为自然语言任务描述，内部会自动调用售后域工具并返回结果。"
     )
 )
 @tool_call_status(

@@ -36,7 +36,7 @@ def _install_http_mocks(monkeypatch: pytest.MonkeyPatch, *, parsed_result: dict)
 
 
 def test_get_admin_user_list_maps_snake_case_to_backend_params(
-    monkeypatch: pytest.MonkeyPatch,
+        monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     expected = {"rows": [], "total": 0}
     calls = _install_http_mocks(monkeypatch, parsed_result=expected)
@@ -84,9 +84,9 @@ def test_get_admin_user_list_maps_snake_case_to_backend_params(
     ],
 )
 def test_user_detail_and_wallet_use_expected_path(
-    monkeypatch: pytest.MonkeyPatch,
-    tool_obj,
-    expected_url: str,
+        monkeypatch: pytest.MonkeyPatch,
+        tool_obj,
+        expected_url: str,
 ) -> None:
     expected = {"ok": True}
     calls = _install_http_mocks(monkeypatch, parsed_result=expected)
@@ -105,9 +105,9 @@ def test_user_detail_and_wallet_use_expected_path(
     ],
 )
 def test_wallet_flow_and_consume_info_use_expected_path_and_pagination(
-    monkeypatch: pytest.MonkeyPatch,
-    tool_obj,
-    expected_url: str,
+        monkeypatch: pytest.MonkeyPatch,
+        tool_obj,
+        expected_url: str,
 ) -> None:
     expected = {"rows": [], "total": 0}
     calls = _install_http_mocks(monkeypatch, parsed_result=expected)
@@ -127,7 +127,7 @@ def test_wallet_flow_and_consume_info_use_expected_path_and_pagination(
 
 
 def test_user_tool_agent_builds_expected_tools_and_returns_agent_output(
-    monkeypatch: pytest.MonkeyPatch,
+        monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     captured: dict = {}
     fake_agent = object()

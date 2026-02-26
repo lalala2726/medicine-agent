@@ -138,10 +138,10 @@
 
 当用户在订单场景下进一步询问以下信息时，需要**从订单结果中提取对应 ID，调用其他工具**：
 
-| 用户后续提问                   | 提取字段  | 下一步调用                    |
-| ------------------------------ | --------- | ----------------------------- |
-| "这些订单里的商品库存够不够？" | productId | product_tool_agent 查商品详情 |
-| "订单里面的药有什么注意事项？" | productId | product_tool_agent 查药品详情 |
-| "下单的用户详细资料看一下"     | userId    | user_tool_agent 查用户详情    |
-| "买家的消费记录和钱包"         | userId    | user_tool_agent 查消费+钱包   |
-| "这个订单有没有售后？"         | orderNo   | after_sale_tool_agent 查售后  |
+| 用户后续提问           | 提取字段      | 下一步调用                     |
+|------------------|-----------|---------------------------|
+| "这些订单里的商品库存够不够？" | productId | product_tool_agent 查商品详情  |
+| "订单里面的药有什么注意事项？" | productId | product_tool_agent 查药品详情  |
+| "下单的用户详细资料看一下"   | userId    | user_tool_agent 查用户详情     |
+| "买家的消费记录和钱包"     | userId    | user_tool_agent 查消费+钱包    |
+| "这个订单有没有售后？"     | orderNo   | after_sale_tool_agent 查售后 |

@@ -46,8 +46,8 @@ class AdminUserIdPageRequest(AdminUserIdRequest):
 @tool(
     args_schema=AdminUserListQueryRequest,
     description=(
-        "分页查询管理端用户列表，支持按用户 ID、用户名、昵称、角色、状态、创建人等条件筛选。"
-        "参数传递规则：使用结构化字段，不要把多个条件拼成单字符串。"
+            "分页查询管理端用户列表，支持按用户 ID、用户名、昵称、角色、状态、创建人等条件筛选。"
+            "参数传递规则：使用结构化字段，不要把多个条件拼成单字符串。"
     ),
 )
 @tool_call_status(
@@ -57,15 +57,15 @@ class AdminUserIdPageRequest(AdminUserIdRequest):
     timely_message="用户列表正在持续处理中",
 )
 async def get_admin_user_list(
-    page_num: int = 1,
-    page_size: int = 10,
-    id: Optional[int] = None,
-    username: Optional[str] = None,
-    nickname: Optional[str] = None,
-    avatar: Optional[str] = None,
-    roles: Optional[str] = None,
-    status: Optional[int] = None,
-    create_by: Optional[str] = None,
+        page_num: int = 1,
+        page_size: int = 10,
+        id: Optional[int] = None,
+        username: Optional[str] = None,
+        nickname: Optional[str] = None,
+        avatar: Optional[str] = None,
+        roles: Optional[str] = None,
+        status: Optional[int] = None,
+        create_by: Optional[str] = None,
 ) -> dict:
     """分页查询管理端用户列表。"""
 
@@ -88,8 +88,8 @@ async def get_admin_user_list(
 @tool(
     args_schema=AdminUserIdRequest,
     description=(
-        "根据用户 ID 查询用户详情。"
-        "调用时机：需要查看某个用户的完整资料、角色或账户基础信息时。"
+            "根据用户 ID 查询用户详情。"
+            "调用时机：需要查看某个用户的完整资料、角色或账户基础信息时。"
     ),
 )
 @tool_call_status(
@@ -109,8 +109,8 @@ async def get_admin_user_detail(user_id: int) -> dict:
 @tool(
     args_schema=AdminUserIdRequest,
     description=(
-        "根据用户 ID 查询钱包信息。"
-        "返回钱包余额、可用状态等信息。"
+            "根据用户 ID 查询钱包信息。"
+            "返回钱包余额、可用状态等信息。"
     ),
 )
 @tool_call_status(
@@ -130,8 +130,8 @@ async def get_admin_user_wallet(user_id: int) -> dict:
 @tool(
     args_schema=AdminUserIdPageRequest,
     description=(
-        "根据用户 ID 分页查询钱包流水。"
-        "支持 page_num/page_size 分页参数，page_size 最大 200。"
+            "根据用户 ID 分页查询钱包流水。"
+            "支持 page_num/page_size 分页参数，page_size 最大 200。"
     ),
 )
 @tool_call_status(
@@ -141,9 +141,9 @@ async def get_admin_user_wallet(user_id: int) -> dict:
     timely_message="用户钱包流水正在持续处理中",
 )
 async def get_admin_user_wallet_flow(
-    user_id: int,
-    page_num: int = 1,
-    page_size: int = 10,
+        user_id: int,
+        page_num: int = 1,
+        page_size: int = 10,
 ) -> dict:
     """根据用户 ID 分页查询钱包流水。"""
 
@@ -162,8 +162,8 @@ async def get_admin_user_wallet_flow(
 @tool(
     args_schema=AdminUserIdPageRequest,
     description=(
-        "根据用户 ID 分页查询消费信息。"
-        "支持 page_num/page_size 分页参数，page_size 最大 200。"
+            "根据用户 ID 分页查询消费信息。"
+            "支持 page_num/page_size 分页参数，page_size 最大 200。"
     ),
 )
 @tool_call_status(
@@ -173,9 +173,9 @@ async def get_admin_user_wallet_flow(
     timely_message="用户消费信息正在持续处理中",
 )
 async def get_admin_user_consume_info(
-    user_id: int,
-    page_num: int = 1,
-    page_size: int = 10,
+        user_id: int,
+        page_num: int = 1,
+        page_size: int = 10,
 ) -> dict:
     """根据用户 ID 分页查询消费信息。"""
 
@@ -196,8 +196,8 @@ _USER_SYSTEM_PROMPT = load_prompt("assistant/user_system_prompt.md")
 
 @tool(
     description=(
-        "处理管理端用户相关任务：用户列表、用户详情、用户钱包、钱包流水、消费信息。"
-        "输入为自然语言任务描述，内部会自动调用用户域工具并返回结果。"
+            "处理管理端用户相关任务：用户列表、用户详情、用户钱包、钱包流水、消费信息。"
+            "输入为自然语言任务描述，内部会自动调用用户域工具并返回结果。"
     )
 )
 @tool_call_status(
