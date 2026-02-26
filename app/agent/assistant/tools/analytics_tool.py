@@ -52,7 +52,6 @@ async def get_analytics_overview() -> str:
     async with HttpClient() as client:
         return await client.get(
             url="/agent/analytics/overview",
-            response_format="yaml",
             include_envelope=True,
         )
 
@@ -78,7 +77,6 @@ async def get_analytics_order_trend(period: Literal["DAY", "WEEK", "MONTH"] = "D
         return await client.get(
             url="/agent/analytics/order/trend",
             params={"period": period},
-            response_format="yaml",
             include_envelope=True,
         )
 
@@ -101,7 +99,6 @@ async def get_analytics_order_status_distribution() -> str:
     async with HttpClient() as client:
         return await client.get(
             url="/agent/analytics/order/status-distribution",
-            response_format="yaml",
             include_envelope=True,
         )
 
@@ -124,7 +121,6 @@ async def get_analytics_payment_distribution() -> str:
     async with HttpClient() as client:
         return await client.get(
             url="/agent/analytics/order/payment-distribution",
-            response_format="yaml",
             include_envelope=True,
         )
 
@@ -150,7 +146,6 @@ async def get_analytics_hot_products(limit: int = 10) -> str:
         return await client.get(
             url="/agent/analytics/product/hot",
             params={"limit": limit},
-            response_format="yaml",
             include_envelope=True,
         )
 
@@ -176,7 +171,6 @@ async def get_analytics_product_return_rates(limit: int = 10) -> str:
         return await client.get(
             url="/agent/analytics/product/return-rate",
             params={"limit": limit},
-            response_format="yaml",
             include_envelope=True,
         )
 

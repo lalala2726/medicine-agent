@@ -82,7 +82,6 @@ async def get_admin_user_list(
         return await client.get(
             url="/agent/admin/user/list",
             params=params,
-            response_format="yaml",
             include_envelope=True,
         )
 
@@ -106,7 +105,6 @@ async def get_admin_user_detail(user_id: int) -> str:
     async with HttpClient() as client:
         return await client.get(
             url=f"/agent/admin/user/{user_id}/detail",
-            response_format="yaml",
             include_envelope=True,
         )
 
@@ -130,7 +128,6 @@ async def get_admin_user_wallet(user_id: int) -> str:
     async with HttpClient() as client:
         return await client.get(
             url=f"/agent/admin/user/{user_id}/wallet",
-            response_format="yaml",
             include_envelope=True,
         )
 
@@ -163,7 +160,6 @@ async def get_admin_user_wallet_flow(
         return await client.get(
             url=f"/agent/admin/user/{user_id}/wallet_flow",
             params=params,
-            response_format="yaml",
             include_envelope=True,
         )
 
@@ -196,7 +192,6 @@ async def get_admin_user_consume_info(
         return await client.get(
             url=f"/agent/admin/user/{user_id}/consume_info",
             params=params,
-            response_format="yaml",
             include_envelope=True,
         )
 

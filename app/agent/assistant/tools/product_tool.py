@@ -115,7 +115,6 @@ async def get_product_list(
         return await client.get(
             url="/agent/product/list",
             params=params,
-            response_format="yaml",
             include_envelope=True,
         )
 
@@ -144,7 +143,6 @@ async def get_product_detail(product_id: list[str]) -> str:
     async with HttpClient() as client:
         return await client.get(
             url=f"/agent/product/{ids_str}",
-            response_format="yaml",
             include_envelope=True,
         )
 
@@ -173,7 +171,6 @@ async def get_drug_detail(product_id: list[str]) -> str:
     async with HttpClient() as client:
         return await client.get(
             url=f"/agent/product/drug/{ids_str}",
-            response_format="yaml",
             include_envelope=True,
         )
 
