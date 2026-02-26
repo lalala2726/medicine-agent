@@ -59,7 +59,7 @@ def test_get_order_list_maps_query_params_to_backend_params(
     assert result == expected
     assert calls == [
         {
-            "url": "/agent/order/list",
+            "url": "/agent/admin/order/list",
             "params": {
                 "pageNum": 2,
                 "pageSize": 20,
@@ -85,14 +85,14 @@ def test_get_orders_detail_formats_order_ids_into_path(
     )
 
     assert result == expected
-    assert calls == [{"url": "/agent/order/O202601010001,O202601010002", "params": None}]
+    assert calls == [{"url": "/agent/admin/order/O202601010001,O202601010002", "params": None}]
 
 
 @pytest.mark.parametrize(
     ("tool_obj", "expected_url"),
     [
-        (order_tool.get_order_timeline, "/agent/order/timeline/88"),
-        (order_tool.get_order_shipping, "/agent/order/shipping/88"),
+        (order_tool.get_order_timeline, "/agent/admin/order/timeline/88"),
+        (order_tool.get_order_shipping, "/agent/admin/order/shipping/88"),
     ],
 )
 def test_order_timeline_and_shipping_use_expected_path(

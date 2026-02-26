@@ -4,13 +4,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.agent.assistant.tools import analytics_tool, order_tool, product_tool
+from app.agent.assistant.tools import after_sale_tool, analytics_tool, order_tool, product_tool
 
 
 @pytest.mark.parametrize(
     ("module", "tool_obj", "response_text"),
     [
         (order_tool, order_tool.order_tool_agent, "订单子代理结果"),
+        (after_sale_tool, after_sale_tool.after_sale_tool_agent, "售后子代理结果"),
         (product_tool, product_tool.product_tool_agent, "商品子代理结果"),
         (analytics_tool, analytics_tool.analytics_tool_agent, "分析子代理结果"),
     ],

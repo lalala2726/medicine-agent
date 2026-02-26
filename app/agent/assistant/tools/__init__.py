@@ -12,6 +12,10 @@ from app.agent.assistant.tools.analytics_tool import (
     get_analytics_payment_distribution,
     get_analytics_product_return_rates,
 )
+from app.agent.assistant.tools.after_sale_tool import (
+    get_admin_after_sale_detail,
+    get_admin_after_sale_list,
+)
 from app.agent.assistant.tools.base_tools import get_user_info
 from app.agent.assistant.tools.chart_tool import get_chart_sample_by_name, get_supported_chart_types
 from app.agent.assistant.tools.order_tool import (
@@ -44,6 +48,8 @@ ADMIN_TOOLS = [
     get_analytics_payment_distribution,
     get_analytics_hot_products,
     get_analytics_product_return_rates,
+    get_admin_after_sale_list,
+    get_admin_after_sale_detail,
     get_admin_user_list,
     get_admin_user_detail,
     get_admin_user_wallet,
@@ -69,6 +75,8 @@ __all__ = [
     "get_analytics_payment_distribution",
     "get_analytics_hot_products",
     "get_analytics_product_return_rates",
+    "get_admin_after_sale_list",
+    "get_admin_after_sale_detail",
     "get_admin_user_list",
     "get_admin_user_detail",
     "get_admin_user_wallet",
