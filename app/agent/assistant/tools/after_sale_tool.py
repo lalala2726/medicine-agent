@@ -10,7 +10,6 @@ from app.core.agent.agent_runtime import agent_invoke
 from app.core.agent.agent_tool_events import tool_call_status
 from app.core.langsmith import traceable
 from app.core.llm import create_agent
-from app.schemas.http_response import HttpResponse
 from app.utils.http_client import HttpClient
 from app.utils.prompt_utils import load_prompt
 
@@ -60,7 +59,7 @@ async def get_admin_after_sale_list(
         order_no: Optional[str] = None,
         user_id: Optional[int] = None,
         apply_reason: Optional[str] = None,
-) -> dict:
+) -> str:
     """分页查询管理端售后申请列表。"""
 
     async with HttpClient() as client:
@@ -73,8 +72,12 @@ async def get_admin_after_sale_list(
             "userId": user_id,
             "applyReason": apply_reason,
         }
-        response = await client.get(url="/agent/admin/after-sale/list", params=params)
-        return HttpResponse.parse_data(response)
+        return await client.get(
+            url="/agent/admin/after-sale/list",
+            params=params,
+            response_format="yaml",
+            include_envelope=True,
+        )
 
 
 @tool(
@@ -90,12 +93,15 @@ async def get_admin_after_sale_list(
     error_message="查询售后详情失败",
     timely_message="售后详情正在持续处理中",
 )
-async def get_admin_after_sale_detail(after_sale_id: int) -> dict:
+async def get_admin_after_sale_detail(after_sale_id: int) -> str:
     """根据售后申请 ID 查询售后详情。"""
 
     async with HttpClient() as client:
-        response = await client.get(url=f"/agent/admin/after-sale/detail/{after_sale_id}")
-        return HttpResponse.parse_data(response)
+        return await client.get(
+            url=f"/agent/admin/after-sale/detail/{after_sale_id}",
+            response_format="yaml",
+            include_envelope=True,
+        )
 
 
 _AFTER_SALE_SYSTEM_PROMPT = load_prompt("assistant/after_sale_system_prompt.md")

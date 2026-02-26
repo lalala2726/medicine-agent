@@ -11,7 +11,6 @@ from app.core.agent.agent_runtime import agent_invoke
 from app.core.agent.agent_tool_events import tool_call_status
 from app.core.langsmith import traceable
 from app.core.llm import create_agent
-from app.schemas.http_response import HttpResponse
 from app.utils.http_client import HttpClient
 from app.utils.prompt_utils import load_prompt
 
@@ -99,7 +98,7 @@ async def get_product_list(
         status: Optional[int] = None,
         min_price: Optional[float] = None,
         max_price: Optional[float] = None,
-) -> dict:
+) -> str:
     """搜索商城商品列表。"""
 
     async with HttpClient() as client:
@@ -113,8 +112,12 @@ async def get_product_list(
             "minPrice": min_price,
             "maxPrice": max_price,
         }
-        response = await client.get(url="/agent/product/list", params=params)
-        return HttpResponse.parse_data(response)
+        return await client.get(
+            url="/agent/product/list",
+            params=params,
+            response_format="yaml",
+            include_envelope=True,
+        )
 
 
 @tool(
@@ -133,14 +136,17 @@ async def get_product_list(
     error_message="获取商品详情失败",
     timely_message="商品详情正在持续处理中",
 )
-async def get_product_detail(product_id: list[str]) -> dict:
+async def get_product_detail(product_id: list[str]) -> str:
     """根据商品ID获取详细信息，支持批量查询。"""
 
     normalized_ids = _normalize_id_list(product_id, field_name="product_id")
     ids_str = format_ids_to_string(normalized_ids)
     async with HttpClient() as client:
-        response = await client.get(url=f"/agent/product/{ids_str}")
-        return HttpResponse.parse_data(response)
+        return await client.get(
+            url=f"/agent/product/{ids_str}",
+            response_format="yaml",
+            include_envelope=True,
+        )
 
 
 @tool(
@@ -159,14 +165,17 @@ async def get_product_detail(product_id: list[str]) -> dict:
     error_message="获取药品详情失败",
     timely_message="药品详情正在持续处理中",
 )
-async def get_drug_detail(product_id: list[str]) -> dict:
+async def get_drug_detail(product_id: list[str]) -> str:
     """根据药品商品ID获取详细药品信息。"""
 
     normalized_ids = _normalize_id_list(product_id, field_name="product_id")
     ids_str = format_ids_to_string(normalized_ids)
     async with HttpClient() as client:
-        response = await client.get(url=f"/agent/product/drug/{ids_str}")
-        return HttpResponse.parse_data(response)
+        return await client.get(
+            url=f"/agent/product/drug/{ids_str}",
+            response_format="yaml",
+            include_envelope=True,
+        )
 
 
 _PRODUCT_SYSTEM_PROMPT = load_prompt("assistant/product_system_prompt.md")

@@ -10,7 +10,6 @@ from app.core.agent.agent_runtime import agent_invoke
 from app.core.agent.agent_tool_events import tool_call_status
 from app.core.langsmith import traceable
 from app.core.llm import create_agent
-from app.schemas.http_response import HttpResponse
 from app.utils.http_client import HttpClient
 from app.utils.prompt_utils import load_prompt
 
@@ -65,7 +64,7 @@ async def get_admin_user_list(
         roles: Optional[str] = None,
         status: Optional[int] = None,
         create_by: Optional[str] = None,
-) -> dict:
+) -> str:
     """分页查询管理端用户列表。"""
 
     async with HttpClient() as client:
@@ -80,8 +79,12 @@ async def get_admin_user_list(
             "status": status,
             "createBy": create_by,
         }
-        response = await client.get(url="/agent/admin/user/list", params=params)
-        return HttpResponse.parse_data(response)
+        return await client.get(
+            url="/agent/admin/user/list",
+            params=params,
+            response_format="yaml",
+            include_envelope=True,
+        )
 
 
 @tool(
@@ -97,12 +100,15 @@ async def get_admin_user_list(
     error_message="查询用户详情失败",
     timely_message="用户详情正在持续处理中",
 )
-async def get_admin_user_detail(user_id: int) -> dict:
+async def get_admin_user_detail(user_id: int) -> str:
     """根据用户 ID 查询用户详情。"""
 
     async with HttpClient() as client:
-        response = await client.get(url=f"/agent/admin/user/{user_id}/detail")
-        return HttpResponse.parse_data(response)
+        return await client.get(
+            url=f"/agent/admin/user/{user_id}/detail",
+            response_format="yaml",
+            include_envelope=True,
+        )
 
 
 @tool(
@@ -118,12 +124,15 @@ async def get_admin_user_detail(user_id: int) -> dict:
     error_message="查询用户钱包失败",
     timely_message="用户钱包正在持续处理中",
 )
-async def get_admin_user_wallet(user_id: int) -> dict:
+async def get_admin_user_wallet(user_id: int) -> str:
     """根据用户 ID 查询钱包信息。"""
 
     async with HttpClient() as client:
-        response = await client.get(url=f"/agent/admin/user/{user_id}/wallet")
-        return HttpResponse.parse_data(response)
+        return await client.get(
+            url=f"/agent/admin/user/{user_id}/wallet",
+            response_format="yaml",
+            include_envelope=True,
+        )
 
 
 @tool(
@@ -143,7 +152,7 @@ async def get_admin_user_wallet_flow(
         user_id: int,
         page_num: int = 1,
         page_size: int = 10,
-) -> dict:
+) -> str:
     """根据用户 ID 分页查询钱包流水。"""
 
     async with HttpClient() as client:
@@ -151,11 +160,12 @@ async def get_admin_user_wallet_flow(
             "pageNum": page_num,
             "pageSize": page_size,
         }
-        response = await client.get(
+        return await client.get(
             url=f"/agent/admin/user/{user_id}/wallet_flow",
             params=params,
+            response_format="yaml",
+            include_envelope=True,
         )
-        return HttpResponse.parse_data(response)
 
 
 @tool(
@@ -175,7 +185,7 @@ async def get_admin_user_consume_info(
         user_id: int,
         page_num: int = 1,
         page_size: int = 10,
-) -> dict:
+) -> str:
     """根据用户 ID 分页查询消费信息。"""
 
     async with HttpClient() as client:
@@ -183,11 +193,12 @@ async def get_admin_user_consume_info(
             "pageNum": page_num,
             "pageSize": page_size,
         }
-        response = await client.get(
+        return await client.get(
             url=f"/agent/admin/user/{user_id}/consume_info",
             params=params,
+            response_format="yaml",
+            include_envelope=True,
         )
-        return HttpResponse.parse_data(response)
 
 
 _USER_SYSTEM_PROMPT = load_prompt("assistant/user_system_prompt.md")

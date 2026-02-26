@@ -8,9 +8,8 @@ import pytest
 import app.agent.assistant.tools.user_tool as user_tool
 
 
-def _install_http_mocks(monkeypatch: pytest.MonkeyPatch, *, parsed_result: dict):
+def _install_http_mocks(monkeypatch: pytest.MonkeyPatch, *, parsed_result: str):
     calls: list[dict] = []
-    fake_response = object()
 
     class FakeHttpClient:
         def __init__(self, **_kwargs):
@@ -22,23 +21,18 @@ def _install_http_mocks(monkeypatch: pytest.MonkeyPatch, *, parsed_result: dict)
         async def __aexit__(self, *_args):
             return None
 
-        async def get(self, url: str, params=None):
-            calls.append({"url": url, "params": params})
-            return fake_response
-
-    def _fake_parse_data(response):
-        assert response is fake_response
-        return parsed_result
+        async def get(self, url: str, params=None, **kwargs):
+            calls.append({"url": url, "params": params, **kwargs})
+            return parsed_result
 
     monkeypatch.setattr(user_tool, "HttpClient", FakeHttpClient)
-    monkeypatch.setattr(user_tool.HttpResponse, "parse_data", _fake_parse_data)
     return calls
 
 
 def test_get_admin_user_list_maps_snake_case_to_backend_params(
         monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    expected = {"rows": [], "total": 0}
+    expected = "code: 200\nmessage: ok\ndata:\n  rows: []\n  total: 0\n"
     calls = _install_http_mocks(monkeypatch, parsed_result=expected)
 
     result = asyncio.run(
@@ -72,6 +66,8 @@ def test_get_admin_user_list_maps_snake_case_to_backend_params(
                 "status": 1,
                 "createBy": "system",
             },
+            "response_format": "yaml",
+            "include_envelope": True,
         }
     ]
 
@@ -88,13 +84,20 @@ def test_user_detail_and_wallet_use_expected_path(
         tool_obj,
         expected_url: str,
 ) -> None:
-    expected = {"ok": True}
+    expected = "code: 200\nmessage: ok\ndata:\n  ok: true\n"
     calls = _install_http_mocks(monkeypatch, parsed_result=expected)
 
     result = asyncio.run(tool_obj.ainvoke({"user_id": 88}))
 
     assert result == expected
-    assert calls == [{"url": expected_url, "params": None}]
+    assert calls == [
+        {
+            "url": expected_url,
+            "params": None,
+            "response_format": "yaml",
+            "include_envelope": True,
+        }
+    ]
 
 
 @pytest.mark.parametrize(
@@ -109,7 +112,7 @@ def test_wallet_flow_and_consume_info_use_expected_path_and_pagination(
         tool_obj,
         expected_url: str,
 ) -> None:
-    expected = {"rows": [], "total": 0}
+    expected = "code: 200\nmessage: ok\ndata:\n  rows: []\n  total: 0\n"
     calls = _install_http_mocks(monkeypatch, parsed_result=expected)
 
     result = asyncio.run(tool_obj.ainvoke({"user_id": 99, "page_num": 3, "page_size": 20}))
@@ -122,6 +125,8 @@ def test_wallet_flow_and_consume_info_use_expected_path_and_pagination(
                 "pageNum": 3,
                 "pageSize": 20,
             },
+            "response_format": "yaml",
+            "include_envelope": True,
         }
     ]
 
