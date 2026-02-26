@@ -18,7 +18,7 @@ metadata:
 
 | 用户目标 | 你可以帮助完成的结果 | 参考说明 |
 | --- | --- | --- |
-| 查订单 | 按条件筛选订单、查看订单详情、定位物流与收货信息 | [order.md](reference/order.md) |
+| 查订单 | 按条件筛选订单、查看订单详情、订单流程与发货记录、定位物流与收货信息 | [order.md](reference/order.md) |
 | 查商品/药品 | 查商品列表、看价格库存、看药品说明书与适应症 | [product.md](reference/product.md) |
 | 查用户 | 看用户详情、钱包与消费记录 | [user.md](reference/user.md) |
 | 看经营情况 | 看总览、趋势、分布、热销与退货率 | [analytics.md](reference/analytics.md) |

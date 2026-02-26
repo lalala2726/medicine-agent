@@ -22,7 +22,7 @@ metadata:
 
 ## 可用工具与职责映射
 
-- `order_tool_agent`：订单列表与订单详情（含地址、物流、明细）
+- `order_tool_agent`：订单列表、订单详情（含地址/物流/明细）、订单流程时间线、发货记录
 - `product_tool_agent`：商品列表、商品详情、药品详情
 - `user_tool_agent`：用户列表/详情、用户钱包、钱包流水、消费信息
 - `analytics_tool_agent`：运营总览、趋势、分布、排行、退货率
@@ -35,7 +35,7 @@ metadata:
 按请求内容归类并选择工具：
 
 - 运营总览、趋势、分布、热销、退货率 -> `analytics_tool_agent`
-- 订单筛选、订单详情、物流、收货信息 -> `order_tool_agent`
+- 订单筛选、订单详情、物流、收货信息、流程时间线、发货记录 -> `order_tool_agent`
 - 商品筛选、商品详情、药品说明 -> `product_tool_agent`
 - 用户筛选、用户详情、钱包与消费排查 -> `user_tool_agent`
 - 用户明确要图表，或结果适合可视化 -> 先取数，再根据 chart 技能提供的模板规范生成图表

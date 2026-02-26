@@ -14,7 +14,12 @@ from app.agent.assistant.tools.analytics_tool import (
 )
 from app.agent.assistant.tools.base_tools import get_user_info
 from app.agent.assistant.tools.chart_tool import get_chart_sample_by_name, get_supported_chart_types
-from app.agent.assistant.tools.order_tool import get_order_list, get_orders_detail
+from app.agent.assistant.tools.order_tool import (
+    get_order_list,
+    get_order_shipping,
+    get_order_timeline,
+    get_orders_detail,
+)
 from app.agent.assistant.tools.product_tool import get_drug_detail, get_product_detail, get_product_list
 from app.agent.assistant.tools.user_tool import (
     get_admin_user_consume_info,
@@ -30,6 +35,8 @@ ADMIN_TOOLS = [
     get_product_detail,
     get_order_list,
     get_orders_detail,
+    get_order_timeline,
+    get_order_shipping,
     get_drug_detail,
     get_analytics_overview,
     get_analytics_order_trend,
@@ -53,6 +60,8 @@ __all__ = [
     "get_product_detail",
     "get_order_list",
     "get_orders_detail",
+    "get_order_timeline",
+    "get_order_shipping",
     "get_drug_detail",
     "get_analytics_overview",
     "get_analytics_order_trend",
