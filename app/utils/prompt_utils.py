@@ -18,7 +18,7 @@ def _normalize_prompt_name(name: str) -> str:
         4. 仅允许 `.md` 后缀。
 
     参数：
-        name: 提示词名称或相对路径，例如 `assistant/base_prompt.md`、
+        name: 提示词名称或相对路径，例如 `_system/base_prompt.md`、
             `system/order.md`。
 
     返回：

@@ -6,12 +6,12 @@
 
 | 字段                    | 必填 | 类型     | 说明                    |
 |-----------------------|:--:|--------|-----------------------|
-| `data`                | ✅  | 对象     | 图表数据，包含 nodes 和 edges |
-| `data.nodes`          | ✅  | 数组对象   | 节点列表                  |
-| `data.nodes[].name`   | ✅  | 文本     | 步骤名称                  |
-| `data.edges`          | ✅  | 数组对象   | 边列表                   |
-| `data.edges[].source` | ✅  | 文本     | 起始节点名称                |
-| `data.edges[].target` | ✅  | 文本     | 目标节点名称                |
+| `data`                |    | 对象     | 图表数据，包含 nodes 和 edges |
+| `data.nodes`          |    | 数组对象   | 节点列表                  |
+| `data.nodes[].name`   |    | 文本     | 步骤名称                  |
+| `data.edges`          |    | 数组对象   | 边列表                   |
+| `data.edges[].source` |    | 文本     | 起始节点名称                |
+| `data.edges[].target` |    | 文本     | 目标节点名称                |
 | `title`               |    | 文本     | 图表标题                  |
 | `height`              |    | 数值（像素） | 图表高度                  |
 

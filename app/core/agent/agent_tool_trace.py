@@ -284,6 +284,7 @@ def _build_tool_call_traces(messages: list[Any]) -> list[dict[str, Any]]:
     Returns:
         list[dict[str, Any]]: 结构化工具调用追踪明细。
     """
+    # TODO(zhangchuang): 后续补充 ToolMessage 输出、status/error 与 artifact 子调用追踪映射。
 
     tool_calls: list[dict[str, Any]] = []
     for message in messages:

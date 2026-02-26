@@ -7,10 +7,12 @@ from langchain_core.messages import AIMessage, SystemMessage
 
 from app.agent.assistant.model_switch import model_switch
 from app.agent.assistant.state import AgentState, ExecutionTraceState
+from app.agent.assistant.tools.after_sale_tool import after_sale_tool_agent
 from app.agent.assistant.tools.analytics_tool import analytics_tool_agent
 from app.agent.assistant.tools.base_tools import get_current_time
 from app.agent.assistant.tools.order_tool import order_tool_agent
 from app.agent.assistant.tools.product_tool import product_tool_agent
+from app.agent.assistant.tools.user_tool import user_tool_agent
 from app.core.agent.agent_event_bus import emit_answer_delta
 from app.core.agent.agent_runtime import agent_stream
 from app.core.agent.agent_tool_events import build_tool_status_middleware
@@ -37,8 +39,10 @@ def supervisor_agent(state: AgentState) -> dict[str, Any]:
         tools=[
             get_current_time,
             order_tool_agent,
+            after_sale_tool_agent,
             product_tool_agent,
             analytics_tool_agent,
+            user_tool_agent,
         ],
         middleware=[
             BasePromptMiddleware(),

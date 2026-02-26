@@ -12,7 +12,6 @@ import datetime
 from langchain_core.tools import tool
 
 from app.core.agent.agent_tool_events import tool_call_status
-from app.schemas.http_response import HttpResponse
 from app.utils.http_client import HttpClient
 
 
@@ -41,12 +40,15 @@ def _normalize_id_list(ids: list[str], *, field_name: str) -> list[str]:
     error_message="获取用户信息失败",
     timely_message="用户信息正在持续处理中",
 )
-async def get_user_info() -> dict:
+async def get_user_info() -> str:
     """获取当前登录用户的基本信息。"""
 
     async with HttpClient() as client:
-        response = await client.get(url="/agent/info")
-        return HttpResponse.parse_data(response)
+        return await client.get(
+            url="/agent/info",
+            response_format="yaml",
+            include_envelope=True,
+        )
 
 
 @tool(

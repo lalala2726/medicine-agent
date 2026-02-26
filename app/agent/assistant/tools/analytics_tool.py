@@ -8,10 +8,8 @@ from pydantic import BaseModel, Field
 
 from app.core.agent.agent_runtime import agent_invoke
 from app.core.agent.agent_tool_events import tool_call_status
-from app.core.agent.base_prompt_middleware import BasePromptMiddleware
 from app.core.langsmith import traceable
 from app.core.llm import create_agent
-from app.schemas.http_response import HttpResponse
 from app.utils.http_client import HttpClient
 from app.utils.prompt_utils import load_prompt
 
@@ -48,12 +46,15 @@ class AnalyticsTopLimitRequest(BaseModel):
     error_message="获取运营总览失败",
     timely_message="运营总览正在持续处理中",
 )
-async def get_analytics_overview() -> dict:
+async def get_analytics_overview() -> str:
     """获取运营总览。"""
 
     async with HttpClient() as client:
-        response = await client.get(url="/agent/analytics/overview")
-        return HttpResponse.parse_data(response)
+        return await client.get(
+            url="/agent/analytics/overview",
+            response_format="yaml",
+            include_envelope=True,
+        )
 
 
 @tool(
@@ -70,15 +71,16 @@ async def get_analytics_overview() -> dict:
     error_message="获取订单趋势失败",
     timely_message="订单趋势正在持续处理中",
 )
-async def get_analytics_order_trend(period: Literal["DAY", "WEEK", "MONTH"] = "DAY") -> dict:
+async def get_analytics_order_trend(period: Literal["DAY", "WEEK", "MONTH"] = "DAY") -> str:
     """获取订单趋势。"""
 
     async with HttpClient() as client:
-        response = await client.get(
+        return await client.get(
             url="/agent/analytics/order/trend",
             params={"period": period},
+            response_format="yaml",
+            include_envelope=True,
         )
-        return HttpResponse.parse_data(response)
 
 
 @tool(
@@ -93,12 +95,15 @@ async def get_analytics_order_trend(period: Literal["DAY", "WEEK", "MONTH"] = "D
     error_message="获取订单状态分布失败",
     timely_message="订单状态分布正在持续处理中",
 )
-async def get_analytics_order_status_distribution() -> dict:
+async def get_analytics_order_status_distribution() -> str:
     """获取订单状态分布。"""
 
     async with HttpClient() as client:
-        response = await client.get(url="/agent/analytics/order/status-distribution")
-        return HttpResponse.parse_data(response)
+        return await client.get(
+            url="/agent/analytics/order/status-distribution",
+            response_format="yaml",
+            include_envelope=True,
+        )
 
 
 @tool(
@@ -113,12 +118,15 @@ async def get_analytics_order_status_distribution() -> dict:
     error_message="获取支付方式分布失败",
     timely_message="支付方式分布正在持续处理中",
 )
-async def get_analytics_payment_distribution() -> dict:
+async def get_analytics_payment_distribution() -> str:
     """获取支付方式分布。"""
 
     async with HttpClient() as client:
-        response = await client.get(url="/agent/analytics/order/payment-distribution")
-        return HttpResponse.parse_data(response)
+        return await client.get(
+            url="/agent/analytics/order/payment-distribution",
+            response_format="yaml",
+            include_envelope=True,
+        )
 
 
 @tool(
@@ -135,15 +143,16 @@ async def get_analytics_payment_distribution() -> dict:
     error_message="获取热销商品排行失败",
     timely_message="热销商品排行正在持续处理中",
 )
-async def get_analytics_hot_products(limit: int = 10) -> dict:
+async def get_analytics_hot_products(limit: int = 10) -> str:
     """获取热销商品排行榜。"""
 
     async with HttpClient() as client:
-        response = await client.get(
+        return await client.get(
             url="/agent/analytics/product/hot",
             params={"limit": limit},
+            response_format="yaml",
+            include_envelope=True,
         )
-        return HttpResponse.parse_data(response)
 
 
 @tool(
@@ -160,15 +169,16 @@ async def get_analytics_hot_products(limit: int = 10) -> dict:
     error_message="获取商品退货率失败",
     timely_message="商品退货率正在持续处理中",
 )
-async def get_analytics_product_return_rates(limit: int = 10) -> dict:
+async def get_analytics_product_return_rates(limit: int = 10) -> str:
     """获取商品退货率统计。"""
 
     async with HttpClient() as client:
-        response = await client.get(
+        return await client.get(
             url="/agent/analytics/product/return-rate",
             params={"limit": limit},
+            response_format="yaml",
+            include_envelope=True,
         )
-        return HttpResponse.parse_data(response)
 
 
 _ANALYTICS_SYSTEM_PROMPT = load_prompt("assistant/analytics_system_prompt.md")
@@ -200,11 +210,11 @@ def analytics_tool_agent(task_description: str) -> str:
             get_analytics_hot_products,
             get_analytics_product_return_rates,
         ],
-        middleware=[BasePromptMiddleware()],
     )
     input_messages = str(task_description or "").strip()
     result = agent_invoke(
         agent,
         input_messages,
     )
-    return result.content
+    content = str(result.content or "").strip()
+    return content or "暂无数据"

@@ -23,6 +23,8 @@ class TokenChunker(ChunkStrategy):
             splitter_kwargs["model_name"] = config.model_name
         elif config.encoding_name:
             splitter_kwargs["encoding_name"] = config.encoding_name
+        # TODO(zhangchuang): 离线环境下 tiktoken 可能首次下载编码文件失败，
+        # 需补充本地缓存预热或降级策略，避免网络依赖导致切片失败。
         splitter = TokenTextSplitter(**splitter_kwargs)
         pieces = splitter.split_text(page.text)
         base_metadata = build_page_metadata(page)

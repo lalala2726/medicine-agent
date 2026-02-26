@@ -131,7 +131,7 @@ def test_add_message_persists_token_usage_totals_for_assistant(monkeypatch):
 
 
 def test_add_message_ignores_token_usage_with_legacy_fields(monkeypatch):
-    """验证 token_usage 包含旧字段时会被忽略。"""
+    """验证 token_usage 含扩展字段时，仍会规范化并保存三元组。"""
 
     collection = _DummyCollection()
     monkeypatch.setattr(
@@ -154,7 +154,11 @@ def test_add_message_ignores_token_usage_with_legacy_fields(monkeypatch):
     )
 
     assert collection.last_inserted is not None
-    assert "token_usage" not in collection.last_inserted
+    assert collection.last_inserted["token_usage"] == {
+        "prompt_tokens": 5,
+        "completion_tokens": 3,
+        "total_tokens": 8,
+    }
 
 
 def test_add_message_user_ignores_token_usage(monkeypatch):

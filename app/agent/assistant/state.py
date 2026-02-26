@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from typing import Any, TypeAlias, TypedDict
 
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.graph import MessagesState
 
-ChatHistoryMessage: TypeAlias = HumanMessage | AIMessage
+ChatHistoryMessage: TypeAlias = HumanMessage | AIMessage | SystemMessage
 
 
 class TokenCounterState(TypedDict):
