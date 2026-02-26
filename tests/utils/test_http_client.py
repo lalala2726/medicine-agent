@@ -2,8 +2,10 @@ import asyncio
 
 import httpx
 import pytest
+import yaml
 
 import app.utils.http_client as http_client_module
+from app.core.exception.exceptions import ServiceException
 from app.utils.http_client import HttpClient
 
 
@@ -35,8 +37,16 @@ class _DummyLogger:
         self.error_logs.append(self._render(message, *args))
 
 
-def _build_response(method: str, url: str, status_code: int = 200, body: str = "ok") -> httpx.Response:
+def _build_response(
+        method: str,
+        url: str,
+        status_code: int = 200,
+        body: str = "ok",
+        json_body: dict | None = None,
+) -> httpx.Response:
     request = httpx.Request(method, url)
+    if json_body is not None:
+        return httpx.Response(status_code=status_code, request=request, json=json_body)
     return httpx.Response(status_code=status_code, request=request, text=body)
 
 
@@ -93,3 +103,141 @@ def test_http_client_logs_block_reason_when_auth_missing(monkeypatch):
 
     asyncio.run(client.close())
     assert any("HTTP request blocked before send:" in item for item in dummy_logger.warning_logs)
+
+
+def test_http_client_keeps_raw_response_as_default(monkeypatch):
+    client = HttpClient(base_url="http://example.com")
+
+    async def _fake_request(**kwargs):
+        return _build_response(kwargs["method"], str(kwargs["url"]), body="raw-body")
+
+    monkeypatch.setattr(client._client, "request", _fake_request)
+
+    result = asyncio.run(client.get("/raw", headers={"Authorization": "Bearer test"}))
+    asyncio.run(client.close())
+
+    assert isinstance(result, httpx.Response)
+    assert result.text == "raw-body"
+
+
+def test_http_client_returns_json_data_when_response_format_json(monkeypatch):
+    client = HttpClient(base_url="http://example.com")
+
+    async def _fake_request(**kwargs):
+        return _build_response(
+            kwargs["method"],
+            str(kwargs["url"]),
+            json_body={"code": 200, "message": "ok", "data": {"id": 1, "name": "alice"}},
+        )
+
+    monkeypatch.setattr(client._client, "request", _fake_request)
+
+    result = asyncio.run(
+        client.get(
+            "/json-data",
+            headers={"Authorization": "Bearer test"},
+            response_format="json",
+        )
+    )
+    asyncio.run(client.close())
+
+    assert result == {"id": 1, "name": "alice"}
+
+
+def test_http_client_returns_json_envelope_when_enabled(monkeypatch):
+    client = HttpClient(base_url="http://example.com")
+
+    async def _fake_request(**kwargs):
+        return _build_response(
+            kwargs["method"],
+            str(kwargs["url"]),
+            json_body={
+                "code": 200,
+                "message": "ok",
+                "data": {"rows": [1, 2]},
+                "timestamp": 1730000000000,
+            },
+        )
+
+    monkeypatch.setattr(client._client, "request", _fake_request)
+
+    result = asyncio.run(
+        client.get(
+            "/json-envelope",
+            headers={"Authorization": "Bearer test"},
+            response_format="json",
+            include_envelope=True,
+        )
+    )
+    asyncio.run(client.close())
+
+    assert result == {
+        "code": 200,
+        "message": "ok",
+        "data": {"rows": [1, 2]},
+        "timestamp": 1730000000000,
+    }
+
+
+def test_http_client_returns_yaml_envelope_with_timestamp(monkeypatch):
+    client = HttpClient(base_url="http://example.com")
+
+    async def _fake_request(**kwargs):
+        return _build_response(
+            kwargs["method"],
+            str(kwargs["url"]),
+            json_body={
+                "code": 200,
+                "message": "OK",
+                "data": {"rows": [{"id": 1}], "total": 1},
+                "timestamp": 1730000000000,
+            },
+        )
+
+    monkeypatch.setattr(client._client, "request", _fake_request)
+
+    result = asyncio.run(
+        client.get(
+            "/yaml-envelope",
+            headers={"Authorization": "Bearer test"},
+            response_format="yaml",
+            include_envelope=True,
+        )
+    )
+    asyncio.run(client.close())
+
+    assert isinstance(result, str)
+    parsed = yaml.safe_load(result)
+    assert parsed == {
+        "code": 200,
+        "message": "OK",
+        "data": {"rows": [{"id": 1}], "total": 1},
+        "timestamp": 1730000000000,
+    }
+
+
+def test_http_client_raises_service_exception_for_non_success_business_code(monkeypatch):
+    client = HttpClient(base_url="http://example.com")
+
+    async def _fake_request(**kwargs):
+        return _build_response(
+            kwargs["method"],
+            str(kwargs["url"]),
+            json_body={"code": 500, "message": "biz error", "data": None},
+        )
+
+    monkeypatch.setattr(client._client, "request", _fake_request)
+
+    with pytest.raises(ServiceException) as exc_info:
+        asyncio.run(
+            client.get(
+                "/biz-error",
+                headers={"Authorization": "Bearer test"},
+                response_format="yaml",
+                include_envelope=True,
+            )
+        )
+
+    asyncio.run(client.close())
+    assert exc_info.value.code == 500
+    assert exc_info.value.message == "biz error"
