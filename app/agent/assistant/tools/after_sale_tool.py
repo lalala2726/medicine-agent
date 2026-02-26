@@ -75,7 +75,6 @@ async def get_admin_after_sale_list(
         return await client.get(
             url="/agent/admin/after-sale/list",
             params=params,
-            response_format="yaml",
             include_envelope=True,
         )
 
@@ -99,7 +98,6 @@ async def get_admin_after_sale_detail(after_sale_id: int) -> str:
     async with HttpClient() as client:
         return await client.get(
             url=f"/agent/admin/after-sale/detail/{after_sale_id}",
-            response_format="yaml",
             include_envelope=True,
         )
 

@@ -114,7 +114,6 @@ async def get_order_list(
         return await client.get(
             url="/agent/admin/order/list",
             params=params,
-            response_format="yaml",
             include_envelope=True,
         )
 
@@ -143,7 +142,6 @@ async def get_orders_detail(order_id: list[str]) -> str:
     async with HttpClient() as client:
         return await client.get(
             url=f"/agent/admin/order/{ids_str}",
-            response_format="yaml",
             include_envelope=True,
         )
 
@@ -167,7 +165,6 @@ async def get_order_timeline(order_id: int) -> str:
     async with HttpClient() as client:
         return await client.get(
             url=f"/agent/admin/order/timeline/{order_id}",
-            response_format="yaml",
             include_envelope=True,
         )
 
@@ -191,7 +188,6 @@ async def get_order_shipping(order_id: int) -> str:
     async with HttpClient() as client:
         return await client.get(
             url=f"/agent/admin/order/shipping/{order_id}",
-            response_format="yaml",
             include_envelope=True,
         )
 
