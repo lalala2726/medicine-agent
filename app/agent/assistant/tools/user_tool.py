@@ -8,7 +8,6 @@ from pydantic import BaseModel, Field
 
 from app.core.agent.agent_runtime import agent_invoke
 from app.core.agent.agent_tool_events import tool_call_status
-from app.core.agent.base_prompt_middleware import BasePromptMiddleware
 from app.core.langsmith import traceable
 from app.core.llm import create_agent
 from app.schemas.http_response import HttpResponse
@@ -219,7 +218,6 @@ def user_tool_agent(task_description: str) -> str:
             get_admin_user_wallet_flow,
             get_admin_user_consume_info,
         ],
-        middleware=[BasePromptMiddleware()],
     )
     input_messages = str(task_description or "").strip()
     result = agent_invoke(
