@@ -12,6 +12,12 @@ from app.core.skill.prompt.templates import SKILLS_SYSTEM_PROMPT, build_skills_p
 from app.core.skill.tool.list_skill_resources import create_list_skill_resources_tool
 from app.core.skill.tool.load_skill import create_load_skill_resource_tool, create_load_skill_tool
 from app.core.skill.types.models import SkillFileIndex, SkillMetadata
+from app.utils.prompt_section_utils import (
+    contains_block,
+    find_section_span,
+    normalize_text,
+    split_template,
+)
 
 
 class SkillMiddlewareState(TypedDict, total=False):
@@ -52,7 +58,6 @@ class SkillMiddleware(AgentMiddleware):
 
         normalized_scope, _ = normalize_scope(scope)
         self.scope = normalized_scope
-        self._scope_marker = "## 技能系统"
         self._system_prompt_template = system_prompt_template
         self._skill_file_index: SkillFileIndex = {}
         self._load_skill_tool = create_load_skill_tool(
@@ -96,6 +101,21 @@ class SkillMiddleware(AgentMiddleware):
 
         返回：
             ModelRequest: 注入后（或原样）的模型请求对象。
+
+        工作原理：
+            1. 从 `request.state` 读取 `skills_metadata`，渲染出本次应注入的技能段；
+            2. 通过模板占位符 `{skills_list}` 拆出前后缀，并在现有 `system_text`
+               中定位已存在技能段；
+            3. 定位命中时：
+               - 若旧段与新段规范化后相同：不变更（幂等）；
+               - 若不同：执行“替换”而非追加，保证只有一份技能段；
+            4. 定位未命中时：
+               - 若按块边界已包含相同技能段：不追加；
+               - 否则在末尾追加技能段；
+            5. 通过 `request.override(system_message=...)` 返回更新后的请求。
+
+        设计目的：
+            去除对固定标题文案的耦合，避免模板标题改动导致重复注入。
         """
 
         # 元数据合法性由文件发现阶段统一校验，这里不重复做字段级校验。
@@ -103,19 +123,37 @@ class SkillMiddleware(AgentMiddleware):
         raw_metadata = state_dict.get("skills_metadata", [])
         skills_metadata = raw_metadata if isinstance(raw_metadata, list) else []
 
-        skills_section = self._build_skills_section(skills_metadata)
-        system_message = request.system_message
-        # 如果系统消息中已包含技能提示词，则不重复注入
-        if system_message is not None and self._scope_marker in system_message.text:
+        skills_section = normalize_text(self._build_skills_section(skills_metadata))
+        if not skills_section:
             return request
 
-        system_text = ""
-        if system_message is not None:
-            system_text = system_message.text
+        system_message = request.system_message
+        system_text = normalize_text(system_message.text) if system_message is not None else ""
 
-        merged_text = (
-            f"{system_text.rstrip()}\n\n{skills_section}" if system_text else skills_section
-        )
+        prefix, suffix = split_template(self._system_prompt_template)
+        skills_span = find_section_span(system_text, prefix, suffix)
+        if skills_span is not None:
+            start_index, end_index = skills_span
+            existing_section = system_text[start_index:end_index]
+            if normalize_text(existing_section) == skills_section:
+                return request
+
+            before_section = system_text[:start_index].rstrip()
+            after_section = system_text[end_index:].lstrip()
+            if before_section and after_section:
+                merged_text = f"{before_section}\n\n{skills_section}\n\n{after_section}"
+            elif before_section:
+                merged_text = f"{before_section}\n\n{skills_section}"
+            elif after_section:
+                merged_text = f"{skills_section}\n\n{after_section}"
+            else:
+                merged_text = skills_section
+            return request.override(system_message=SystemMessage(content=merged_text))
+
+        if contains_block(system_text, skills_section):
+            return request
+
+        merged_text = f"{system_text.rstrip()}\n\n{skills_section}" if system_text else skills_section
         return request.override(system_message=SystemMessage(content=merged_text))
 
     def before_agent(self, state: dict[str, Any], runtime: Any) -> dict[str, Any] | None:

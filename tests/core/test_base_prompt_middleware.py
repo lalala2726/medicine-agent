@@ -8,6 +8,7 @@ from langchain_core.messages import AIMessage, SystemMessage
 
 import app.core.agent.base_prompt_middleware as base_prompt_module
 from app.core.agent.base_prompt_middleware import BasePromptMiddleware
+from app.core.skill.prompt.templates import build_skills_prompt
 
 
 def _make_request(system_text: str) -> ModelRequest:
@@ -41,19 +42,18 @@ def test_wrap_model_call_appends_base_section_when_no_skills(
     system_text = captured["request"].system_message.text
 
     assert "角色提示词" in system_text
-    assert "## 基础系统规则" in system_text
     assert "通用规则内容" in system_text
-    assert system_text.index("角色提示词") < system_text.index("## 基础系统规则")
+    assert system_text.index("角色提示词") < system_text.index("通用规则内容")
 
 
-def test_wrap_model_call_is_idempotent_when_marker_exists(
+def test_wrap_model_call_is_idempotent_when_base_section_exists(
         monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """验证已存在 marker 时不会重复追加基础提示词。"""
+    """验证已存在基础提示词内容时不会重复追加。"""
 
     monkeypatch.setattr(base_prompt_module, "load_prompt", lambda _path: "通用规则内容")
     middleware = BasePromptMiddleware()
-    request = _make_request("角色提示词\n\n## 基础系统规则\n\n通用规则内容")
+    request = _make_request("角色提示词\n\n通用规则内容")
     captured: dict[str, ModelRequest] = {}
 
     def handler(modified_request: ModelRequest) -> ModelResponse:
@@ -63,7 +63,7 @@ def test_wrap_model_call_is_idempotent_when_marker_exists(
     middleware.wrap_model_call(request, handler)
     system_text = captured["request"].system_message.text
 
-    assert system_text.count("## 基础系统规则") == 1
+    assert system_text.count("通用规则内容") == 1
 
 
 def test_wrap_model_call_inserts_base_before_skills_section(
@@ -73,7 +73,8 @@ def test_wrap_model_call_inserts_base_before_skills_section(
 
     monkeypatch.setattr(base_prompt_module, "load_prompt", lambda _path: "通用规则内容")
     middleware = BasePromptMiddleware()
-    request = _make_request("角色提示词\n\n## 技能系统\n\n技能说明")
+    skills_section = build_skills_prompt([{"name": "analysis", "description": "analysis desc"}])
+    request = _make_request(f"角色提示词\n\n{skills_section}")
     captured: dict[str, ModelRequest] = {}
 
     def handler(modified_request: ModelRequest) -> ModelResponse:
@@ -83,8 +84,8 @@ def test_wrap_model_call_inserts_base_before_skills_section(
     middleware.wrap_model_call(request, handler)
     system_text = captured["request"].system_message.text
 
-    assert system_text.index("角色提示词") < system_text.index("## 基础系统规则")
-    assert system_text.index("## 基础系统规则") < system_text.index("## 技能系统")
+    assert system_text.index("角色提示词") < system_text.index("通用规则内容")
+    assert system_text.index("通用规则内容") < system_text.index("name: analysis")
 
 
 def test_awrap_model_call_behaves_like_sync_version(
@@ -103,5 +104,4 @@ def test_awrap_model_call_behaves_like_sync_version(
 
     asyncio.run(middleware.awrap_model_call(request, handler))
     system_text = captured["request"].system_message.text
-    assert "## 基础系统规则" in system_text
     assert "通用规则内容" in system_text

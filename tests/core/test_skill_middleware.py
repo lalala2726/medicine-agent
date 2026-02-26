@@ -904,7 +904,7 @@ def test_base_and_skill_middlewares_keep_expected_order_and_idempotency(
         确保中间件组合后保持 `角色 -> base -> skills`，并且重复执行不会产生重复段落。
 
     预期结果：
-        首次注入后顺序正确；再次注入时 base/skills marker 均只出现一次。
+        首次注入后顺序正确；再次注入时 base/skills 段均只出现一次。
     """
 
     monkeypatch.setattr(base_prompt_module, "load_prompt", lambda _path: "BASE RULES")
@@ -941,13 +941,80 @@ def test_base_and_skill_middlewares_keep_expected_order_and_idempotency(
 
     first_result = _run_chain(request)
     first_text = first_result.system_message.text
-    assert first_text.index("ROLE PROMPT") < first_text.index("## 基础系统规则")
-    assert first_text.index("## 基础系统规则") < first_text.index("## 技能系统")
+    assert first_text.index("ROLE PROMPT") < first_text.index("BASE RULES")
+    assert first_text.index("BASE RULES") < first_text.index("name: analysis")
 
     second_result = _run_chain(first_result)
     second_text = second_result.system_message.text
-    assert second_text.count("## 基础系统规则") == 1
-    assert second_text.count("## 技能系统") == 1
+    assert second_text.count("BASE RULES") == 1
+    assert second_text.count("调用流程（渐进式降级）") == 1
+
+
+def test_wrap_model_call_replaces_existing_skills_section_when_metadata_changes() -> None:
+    """验证技能元数据变化时替换已有技能段而不是追加。"""
+
+    middleware = SkillMiddleware(
+        scope="supervisor",
+        system_prompt_template="SKILL PREFIX\n\n{skills_list}\n\nSKILL SUFFIX",
+    )
+    first_request = ModelRequest(
+        model=object(),
+        messages=[],
+        system_message=SystemMessage(content="base prompt"),
+        tools=[],
+        state={
+            "skills_metadata": [
+                {
+                    "name": "analysis",
+                    "description": "old desc",
+                }
+            ]
+        },
+        runtime=None,
+    )
+    captured_first: dict[str, ModelRequest] = {}
+
+    def _first_handler(modified_request: ModelRequest) -> ModelResponse:
+        captured_first["request"] = modified_request
+        return ModelResponse(result=[AIMessage(content="ok")])
+
+    middleware.wrap_model_call(first_request, _first_handler)
+    first_text = captured_first["request"].system_message.text
+    assert "description: old desc" in first_text
+
+    second_request = ModelRequest(
+        model=object(),
+        messages=[],
+        system_message=SystemMessage(content=first_text),
+        tools=[],
+        state={
+            "skills_metadata": [
+                {
+                    "name": "analysis",
+                    "description": "new desc",
+                },
+                {
+                    "name": "report",
+                    "description": "report desc",
+                },
+            ]
+        },
+        runtime=None,
+    )
+    captured_second: dict[str, ModelRequest] = {}
+
+    def _second_handler(modified_request: ModelRequest) -> ModelResponse:
+        captured_second["request"] = modified_request
+        return ModelResponse(result=[AIMessage(content="ok")])
+
+    middleware.wrap_model_call(second_request, _second_handler)
+    second_text = captured_second["request"].system_message.text
+
+    assert second_text.count("SKILL PREFIX") == 1
+    assert second_text.count("SKILL SUFFIX") == 1
+    assert "description: old desc" not in second_text
+    assert "description: new desc" in second_text
+    assert "name: report" in second_text
 
 
 def test_runtime_state_preserves_skills_metadata_for_prompt_injection(
