@@ -5,9 +5,10 @@ import os
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Mapping, Optional
+from typing import Any, Literal, Mapping, Optional
 
 import httpx
+import yaml
 from dotenv import load_dotenv
 from loguru import logger
 
@@ -147,7 +148,9 @@ class HttpClient:
             data: Optional[Mapping[str, Any]] = None,
             content: Optional[bytes] = None,
             timeout: Optional[float] = None,
-    ) -> httpx.Response:
+            response_format: Literal["raw", "json", "yaml"] = "raw",
+            include_envelope: bool = False,
+    ) -> Any:
         """
         统一请求入口。
 
@@ -160,6 +163,10 @@ class HttpClient:
             data: 表单 body
             content: 原始字节 body
             timeout: 本次请求超时
+            response_format: 返回格式。`raw` 返回 `httpx.Response`，
+                `json` 返回 Python 对象，`yaml` 返回 YAML 字符串。
+            include_envelope: 当 `response_format` 为 `json/yaml` 时，
+                是否保留 `code/message/data/timestamp` 包裹结构。
         """
         log_enabled = self._is_log_enabled()
         start = time.monotonic()
@@ -238,7 +245,31 @@ class HttpClient:
                     snippet = f"{snippet}...(truncated)"
                 logger.warning("HTTP response body: {}", snippet)
 
-        return response
+        if response_format == "raw":
+            return response
+
+        if response_format not in {"json", "yaml"}:
+            raise ValueError(f"Unsupported response_format: {response_format}")
+
+        from app.schemas.http_response import HttpResponse
+
+        parsed_response = HttpResponse.from_response(response)
+        # 保持现有语义：非成功业务码抛异常。
+        parsed_data = parsed_response.data_or_raise()
+        payload: Any = parsed_data
+        if include_envelope:
+            payload = {
+                "code": parsed_response.code,
+                "message": parsed_response.message,
+                "data": parsed_data,
+            }
+            if parsed_response.timestamp is not None:
+                payload["timestamp"] = parsed_response.timestamp
+
+        if response_format == "json":
+            return payload
+
+        return yaml.safe_dump(payload, allow_unicode=True, sort_keys=False)
 
     async def get(
             self,
@@ -247,7 +278,9 @@ class HttpClient:
             headers: Optional[Mapping[str, str]] = None,
             params: Optional[Mapping[str, Any]] = None,
             timeout: Optional[float] = None,
-    ) -> httpx.Response:
+            response_format: Literal["raw", "json", "yaml"] = "raw",
+            include_envelope: bool = False,
+    ) -> Any:
         """发送 GET 请求。"""
         return await self.request(
             "GET",
@@ -255,6 +288,8 @@ class HttpClient:
             headers=headers,
             params=params,
             timeout=timeout,
+            response_format=response_format,
+            include_envelope=include_envelope,
         )
 
     async def post(
@@ -267,7 +302,9 @@ class HttpClient:
             data: Optional[Mapping[str, Any]] = None,
             content: Optional[bytes] = None,
             timeout: Optional[float] = None,
-    ) -> httpx.Response:
+            response_format: Literal["raw", "json", "yaml"] = "raw",
+            include_envelope: bool = False,
+    ) -> Any:
         """发送 POST 请求。"""
         return await self.request(
             "POST",
@@ -278,6 +315,8 @@ class HttpClient:
             data=data,
             content=content,
             timeout=timeout,
+            response_format=response_format,
+            include_envelope=include_envelope,
         )
 
     async def put(
@@ -290,7 +329,9 @@ class HttpClient:
             data: Optional[Mapping[str, Any]] = None,
             content: Optional[bytes] = None,
             timeout: Optional[float] = None,
-    ) -> httpx.Response:
+            response_format: Literal["raw", "json", "yaml"] = "raw",
+            include_envelope: bool = False,
+    ) -> Any:
         """发送 PUT 请求。"""
         return await self.request(
             "PUT",
@@ -301,6 +342,8 @@ class HttpClient:
             data=data,
             content=content,
             timeout=timeout,
+            response_format=response_format,
+            include_envelope=include_envelope,
         )
 
     async def delete(
@@ -313,7 +356,9 @@ class HttpClient:
             data: Optional[Mapping[str, Any]] = None,
             content: Optional[bytes] = None,
             timeout: Optional[float] = None,
-    ) -> httpx.Response:
+            response_format: Literal["raw", "json", "yaml"] = "raw",
+            include_envelope: bool = False,
+    ) -> Any:
         """发送 DELETE 请求。"""
         return await self.request(
             "DELETE",
@@ -324,4 +369,6 @@ class HttpClient:
             data=data,
             content=content,
             timeout=timeout,
+            response_format=response_format,
+            include_envelope=include_envelope,
         )

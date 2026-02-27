@@ -11,7 +11,6 @@ from app.core.agent.agent_runtime import agent_invoke
 from app.core.agent.agent_tool_events import tool_call_status
 from app.core.langsmith import traceable
 from app.core.llm import create_agent
-from app.schemas.http_response import HttpResponse
 from app.utils.http_client import HttpClient
 from app.utils.prompt_utils import load_prompt
 
@@ -98,7 +97,7 @@ async def get_order_list(
         delivery_type: Optional[str] = None,
         receiver_name: Optional[str] = None,
         receiver_phone: Optional[str] = None,
-) -> dict:
+) -> str:
     """获取订单列表。"""
 
     async with HttpClient() as client:
@@ -112,8 +111,11 @@ async def get_order_list(
             "receiverName": receiver_name,
             "receiverPhone": receiver_phone,
         }
-        response = await client.get(url="/agent/admin/order/list", params=params)
-        return HttpResponse.parse_data(response)
+        return await client.get(
+            url="/agent/admin/order/list",
+            params=params,
+            include_envelope=True,
+        )
 
 
 @tool(
@@ -132,14 +134,16 @@ async def get_order_list(
     error_message="获取订单详情失败",
     timely_message="订单详情正在持续处理中",
 )
-async def get_orders_detail(order_id: list[str]) -> dict:
+async def get_orders_detail(order_id: list[str]) -> str:
     """获取订单详情，支持批量查询。"""
 
     normalized_ids = _normalize_id_list(order_id, field_name="order_id")
     ids_str = format_ids_to_string(normalized_ids)
     async with HttpClient() as client:
-        response = await client.get(url=f"/agent/admin/order/{ids_str}")
-        return HttpResponse.parse_data(response)
+        return await client.get(
+            url=f"/agent/admin/order/{ids_str}",
+            include_envelope=True,
+        )
 
 
 @tool(
@@ -155,12 +159,14 @@ async def get_orders_detail(order_id: list[str]) -> dict:
     error_message="获取订单流程失败",
     timely_message="订单流程正在持续处理中",
 )
-async def get_order_timeline(order_id: int) -> dict:
+async def get_order_timeline(order_id: int) -> str:
     """根据订单 ID 查询订单流程（时间线）。"""
 
     async with HttpClient() as client:
-        response = await client.get(url=f"/agent/admin/order/timeline/{order_id}")
-        return HttpResponse.parse_data(response)
+        return await client.get(
+            url=f"/agent/admin/order/timeline/{order_id}",
+            include_envelope=True,
+        )
 
 
 @tool(
@@ -176,12 +182,14 @@ async def get_order_timeline(order_id: int) -> dict:
     error_message="获取发货记录失败",
     timely_message="发货记录正在持续处理中",
 )
-async def get_order_shipping(order_id: int) -> dict:
+async def get_order_shipping(order_id: int) -> str:
     """根据订单 ID 查询发货记录。"""
 
     async with HttpClient() as client:
-        response = await client.get(url=f"/agent/admin/order/shipping/{order_id}")
-        return HttpResponse.parse_data(response)
+        return await client.get(
+            url=f"/agent/admin/order/shipping/{order_id}",
+            include_envelope=True,
+        )
 
 
 _ORDER_SYSTEM_PROMPT = load_prompt("assistant/order_system_prompt.md")

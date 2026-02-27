@@ -8,9 +8,8 @@ import pytest
 import app.agent.assistant.tools.order_tool as order_tool
 
 
-def _install_http_mocks(monkeypatch: pytest.MonkeyPatch, *, parsed_result: dict):
+def _install_http_mocks(monkeypatch: pytest.MonkeyPatch, *, parsed_result: str):
     calls: list[dict] = []
-    fake_response = object()
 
     class FakeHttpClient:
         def __init__(self, **_kwargs):
@@ -22,23 +21,18 @@ def _install_http_mocks(monkeypatch: pytest.MonkeyPatch, *, parsed_result: dict)
         async def __aexit__(self, *_args):
             return None
 
-        async def get(self, url: str, params=None):
-            calls.append({"url": url, "params": params})
-            return fake_response
-
-    def _fake_parse_data(response):
-        assert response is fake_response
-        return parsed_result
+        async def get(self, url: str, params=None, **kwargs):
+            calls.append({"url": url, "params": params, **kwargs})
+            return parsed_result
 
     monkeypatch.setattr(order_tool, "HttpClient", FakeHttpClient)
-    monkeypatch.setattr(order_tool.HttpResponse, "parse_data", _fake_parse_data)
     return calls
 
 
 def test_get_order_list_maps_query_params_to_backend_params(
         monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    expected = {"rows": [], "total": 0}
+    expected = "code: 200\nmessage: ok\ndata:\n  rows: []\n  total: 0\n"
     calls = _install_http_mocks(monkeypatch, parsed_result=expected)
 
     result = asyncio.run(
@@ -70,6 +64,8 @@ def test_get_order_list_maps_query_params_to_backend_params(
                 "receiverName": "张三",
                 "receiverPhone": "13800138000",
             },
+            "response_format": "yaml",
+            "include_envelope": True,
         }
     ]
 
@@ -77,7 +73,7 @@ def test_get_order_list_maps_query_params_to_backend_params(
 def test_get_orders_detail_formats_order_ids_into_path(
         monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    expected = {"rows": [{"id": "O202601010001"}]}
+    expected = "code: 200\nmessage: ok\ndata:\n  rows:\n  - id: O202601010001\n"
     calls = _install_http_mocks(monkeypatch, parsed_result=expected)
 
     result = asyncio.run(
@@ -85,7 +81,14 @@ def test_get_orders_detail_formats_order_ids_into_path(
     )
 
     assert result == expected
-    assert calls == [{"url": "/agent/admin/order/O202601010001,O202601010002", "params": None}]
+    assert calls == [
+        {
+            "url": "/agent/admin/order/O202601010001,O202601010002",
+            "params": None,
+            "response_format": "yaml",
+            "include_envelope": True,
+        }
+    ]
 
 
 @pytest.mark.parametrize(
@@ -100,13 +103,20 @@ def test_order_timeline_and_shipping_use_expected_path(
         tool_obj,
         expected_url: str,
 ) -> None:
-    expected = {"ok": True}
+    expected = "code: 200\nmessage: ok\ndata:\n  ok: true\n"
     calls = _install_http_mocks(monkeypatch, parsed_result=expected)
 
     result = asyncio.run(tool_obj.ainvoke({"order_id": 88}))
 
     assert result == expected
-    assert calls == [{"url": expected_url, "params": None}]
+    assert calls == [
+        {
+            "url": expected_url,
+            "params": None,
+            "response_format": "yaml",
+            "include_envelope": True,
+        }
+    ]
 
 
 def test_order_tool_agent_builds_expected_tools_and_returns_agent_output(
