@@ -6,6 +6,7 @@ from langchain_core.messages import AIMessage, SystemMessage
 
 from app.agent.assistant.model_switch import model_switch
 from app.agent.assistant.state import AgentState, ExecutionTraceState
+from app.agent.assistant.tools import get_safe_user_info
 from app.agent.assistant.tools.base_tools import get_current_time
 from app.core.agent.agent_event_bus import emit_answer_delta
 from app.core.agent.agent_runtime import agent_stream
@@ -25,7 +26,8 @@ def chat_agent(state: AgentState) -> dict[str, Any]:
     model_name = model_switch(state)
     history_messages = list(state.get("history_messages") or [])
     tools = [
-        get_current_time
+        get_current_time,
+        get_safe_user_info
     ]
     agent = create_agent(
         model=model_name,

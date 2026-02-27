@@ -12,6 +12,7 @@ from app.schemas.base_request import PageRequest
 from app.schemas.document.conversation import ConversationListItem
 from app.schemas.response import ApiResponse, PageResponse
 from app.services.admin_assistant_service import (
+    assistant_message_tts_stream as assistant_message_tts_stream_service,
     assistant_chat,
     conversation_list as conversation_list_service,
     conversation_messages as conversation_messages_service,
@@ -65,6 +66,22 @@ class AssistantRequest(BaseModel):
             return None
         normalized = value.strip()
         return normalized or None
+
+
+class AssistantMessageTtsRequest(BaseModel):
+    """管理助手消息转语音请求参数。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    message_uuid: str = Field(..., min_length=1, description="消息 UUID")
+
+    @field_validator("message_uuid")
+    @classmethod
+    def validate_message_uuid(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("message_uuid 不能为空")
+        return normalized
 
 
 class ConversationListRequest(BaseModel):
@@ -152,6 +169,18 @@ async def assistant(request: AssistantRequest) -> StreamingResponse:
     return assistant_chat(
         question=request.question,
         conversation_uuid=request.conversation_uuid,
+    )
+
+
+@router.post("/message/tts/stream", summary="管理助手消息转语音（流式）")
+@pre_authorize(
+    lambda: has_role(RoleCode.SUPER_ADMIN) or has_permission("admin:assistant:access")
+)
+async def assistant_message_tts_stream(request: AssistantMessageTtsRequest) -> StreamingResponse:
+    """根据消息 UUID 生成语音并以 HTTP chunked 流式返回音频数据。"""
+
+    return assistant_message_tts_stream_service(
+        message_uuid=request.message_uuid,
     )
 
 

@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from typing import Awaitable, Callable
 
 from dotenv import load_dotenv
@@ -18,6 +19,7 @@ from app.core.security.auth_context import (
     set_current_user,
 )
 from app.core.security.cors import load_cors_config
+from app.core.speech import verify_volcengine_tts_connection_on_startup
 from app.services.auth_service import verify_authorization
 
 # 加载 .env 配置，确保本地开发环境变量生效
@@ -53,6 +55,13 @@ app.add_exception_handler(ServiceException, ExceptionHandlers.service_exception_
 app.add_exception_handler(StarletteHTTPException, ExceptionHandlers.http_exception_handler)
 app.add_exception_handler(PyMongoError, ExceptionHandlers.pymongo_exception_handler)
 app.add_exception_handler(Exception, ExceptionHandlers.unhandled_exception_handler)
+
+
+@asynccontextmanager
+async def lifespan():
+    await verify_volcengine_tts_connection_on_startup()
+    yield
+
 
 AUTH_BYPASS_PATHS = {
     "/docs",

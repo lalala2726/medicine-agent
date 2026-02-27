@@ -51,7 +51,7 @@ async def get_analytics_overview() -> dict:
     """获取运营总览。"""
 
     async with HttpClient() as client:
-        response = await client.get(url="/agent/analytics/overview")
+        response = await client.get(url="/agent/admin/analytics/overview")
         return HttpResponse.parse_data(response)
 
 
@@ -74,7 +74,7 @@ async def get_analytics_order_trend(period: Literal["DAY", "WEEK", "MONTH"] = "D
 
     async with HttpClient() as client:
         response = await client.get(
-            url="/agent/analytics/order/trend",
+            url="/agent/admin/analytics/order/trend",
             params={"period": period},
         )
         return HttpResponse.parse_data(response)
@@ -96,7 +96,7 @@ async def get_analytics_order_status_distribution() -> dict:
     """获取订单状态分布。"""
 
     async with HttpClient() as client:
-        response = await client.get(url="/agent/analytics/order/status-distribution")
+        response = await client.get(url="/agent/admin/analytics/order/status-distribution")
         return HttpResponse.parse_data(response)
 
 
@@ -116,7 +116,7 @@ async def get_analytics_payment_distribution() -> dict:
     """获取支付方式分布。"""
 
     async with HttpClient() as client:
-        response = await client.get(url="/agent/analytics/order/payment-distribution")
+        response = await client.get(url="/agent/admin/analytics/order/payment-distribution")
         return HttpResponse.parse_data(response)
 
 
@@ -139,7 +139,7 @@ async def get_analytics_hot_products(limit: int = 10) -> dict:
 
     async with HttpClient() as client:
         response = await client.get(
-            url="/agent/analytics/product/hot",
+            url="/agent/admin/analytics/product/hot",
             params={"limit": limit},
         )
         return HttpResponse.parse_data(response)
@@ -164,7 +164,7 @@ async def get_analytics_product_return_rates(limit: int = 10) -> dict:
 
     async with HttpClient() as client:
         response = await client.get(
-            url="/agent/analytics/product/return-rate",
+            url="/agent/admin/analytics/product/return-rate",
             params={"limit": limit},
         )
         return HttpResponse.parse_data(response)

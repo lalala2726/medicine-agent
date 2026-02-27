@@ -51,6 +51,21 @@ def _build_streaming_response(text: str) -> StreamingResponse:
     return StreamingResponse(_stream(), media_type="text/event-stream")
 
 
+def _build_audio_streaming_response() -> StreamingResponse:
+    async def _stream():
+        yield b"chunk-a"
+        yield b"chunk-b"
+
+    return StreamingResponse(
+        _stream(),
+        media_type="audio/mpeg",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 def _auth_headers() -> dict[str, str]:
     return {"Authorization": "Bearer test-token"}
 
@@ -618,4 +633,139 @@ def test_update_conversation_title_forbidden_without_role_or_permission(monkeypa
     body = response.json()
     assert body["code"] == 403
     assert body["message"] == "无权限访问此接口"
+    assert called["value"] is False
+
+
+def test_assistant_message_tts_stream_route_delegates_to_service(monkeypatch):
+    captured: dict = {}
+    _mock_auth(monkeypatch)
+
+    def _fake_tts_stream(
+            *,
+            message_uuid: str,
+    ):
+        captured["message_uuid"] = message_uuid
+        return _build_audio_streaming_response()
+
+    monkeypatch.setattr(
+        assistant_module,
+        "assistant_message_tts_stream_service",
+        _fake_tts_stream,
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/admin/assistant/message/tts/stream",
+        headers=_auth_headers(),
+        json={
+            "message_uuid": "  msg-1  ",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("audio/mpeg")
+    assert response.headers["cache-control"] == "no-cache"
+    assert response.headers["x-accel-buffering"] == "no"
+    assert response.content == b"chunk-achunk-b"
+    assert captured == {
+        "message_uuid": "msg-1",
+    }
+
+
+def test_assistant_message_tts_stream_route_rejects_blank_message_uuid(monkeypatch):
+    called = {"value": False}
+    _mock_auth(monkeypatch)
+
+    def _fake_tts_stream(
+            *,
+            message_uuid: str,
+    ):
+        called["value"] = True
+        return _build_audio_streaming_response()
+
+    monkeypatch.setattr(
+        assistant_module,
+        "assistant_message_tts_stream_service",
+        _fake_tts_stream,
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/admin/assistant/message/tts/stream",
+        headers=_auth_headers(),
+        json={
+            "message_uuid": "   ",
+        },
+    )
+
+    assert response.status_code == 400
+    body = response.json()
+    assert body["code"] == 400
+    assert body["message"] == "Validation Failed"
+    assert called["value"] is False
+
+
+def test_assistant_message_tts_stream_route_forbidden_without_permission(monkeypatch):
+    called = {"value": False}
+    _mock_auth(monkeypatch, roles=[], permissions=[])
+
+    def _fake_tts_stream(
+            *,
+            message_uuid: str,
+    ):
+        called["value"] = True
+        return _build_audio_streaming_response()
+
+    monkeypatch.setattr(
+        assistant_module,
+        "assistant_message_tts_stream_service",
+        _fake_tts_stream,
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/admin/assistant/message/tts/stream",
+        headers=_auth_headers(),
+        json={"message_uuid": "msg-1"},
+    )
+
+    assert response.status_code == 403
+    body = response.json()
+    assert body["code"] == 403
+    assert body["message"] == "无权限访问此接口"
+    assert called["value"] is False
+
+
+def test_assistant_message_tts_stream_route_rejects_extra_fields(monkeypatch):
+    called = {"value": False}
+    _mock_auth(monkeypatch)
+
+    def _fake_tts_stream(*, message_uuid: str):
+        called["value"] = True
+        return _build_audio_streaming_response()
+
+    monkeypatch.setattr(
+        assistant_module,
+        "assistant_message_tts_stream_service",
+        _fake_tts_stream,
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/admin/assistant/message/tts/stream",
+        headers=_auth_headers(),
+        json={
+            "message_uuid": "msg-1",
+            "voice_type": "not-allowed",
+        },
+    )
+
+    assert response.status_code == 400
+    body = response.json()
+    assert body["code"] == 400
+    assert body["message"] == "Validation Failed"
+    assert any(
+        item["field"] == "voice_type" and item["type"] == "extra_forbidden"
+        for item in body["errors"]
+    )
     assert called["value"] is False

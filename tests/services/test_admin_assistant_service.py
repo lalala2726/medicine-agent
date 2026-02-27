@@ -10,6 +10,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from app.core.agent.agent_orchestrator import AssistantStreamConfig
 from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException
+from app.core.speech.tts_client import MessageTtsStream
 from app.schemas.base_request import PageRequest
 from app.schemas.document.conversation import ConversationDocument, ConversationListItem, ConversationType
 from app.schemas.document.message import MessageRole, MessageStatus
@@ -25,6 +26,37 @@ class _DummyGraph:
     def invoke(self, _state: dict, config: dict | None = None) -> dict:
         self.captured_config = config
         return self.final_state
+
+
+def test_assistant_message_tts_stream_returns_chunked_audio_with_expected_headers(monkeypatch):
+    captured: dict = {}
+    monkeypatch.setattr(service_module, "get_user_id", lambda: 101)
+
+    async def _audio_stream():
+        yield b"chunk-a"
+        yield b"chunk-b"
+
+    monkeypatch.setattr(
+        service_module,
+        "build_message_tts_stream",
+        lambda **kwargs: (
+            captured.update(kwargs),
+            MessageTtsStream(audio_stream=_audio_stream(), media_type="audio/mpeg"),
+        )[-1],
+    )
+
+    response = service_module.assistant_message_tts_stream(
+        message_uuid="msg-1",
+    )
+
+    assert isinstance(response, StreamingResponse)
+    assert response.media_type == "audio/mpeg"
+    assert response.headers["cache-control"] == "no-cache"
+    assert response.headers["x-accel-buffering"] == "no"
+    assert captured == {
+        "message_uuid": "msg-1",
+        "user_id": 101,
+    }
 
 
 def test_invoke_admin_workflow_passes_langsmith_config(monkeypatch):

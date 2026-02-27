@@ -113,7 +113,7 @@ async def get_product_list(
             "minPrice": min_price,
             "maxPrice": max_price,
         }
-        response = await client.get(url="/agent/product/list", params=params)
+        response = await client.get(url="/agent/admin/product/list", params=params)
         return HttpResponse.parse_data(response)
 
 
@@ -139,7 +139,7 @@ async def get_product_detail(product_id: list[str]) -> dict:
     normalized_ids = _normalize_id_list(product_id, field_name="product_id")
     ids_str = format_ids_to_string(normalized_ids)
     async with HttpClient() as client:
-        response = await client.get(url=f"/agent/product/{ids_str}")
+        response = await client.get(url=f"/agent/admin/product/{ids_str}")
         return HttpResponse.parse_data(response)
 
 
@@ -165,7 +165,7 @@ async def get_drug_detail(product_id: list[str]) -> dict:
     normalized_ids = _normalize_id_list(product_id, field_name="product_id")
     ids_str = format_ids_to_string(normalized_ids)
     async with HttpClient() as client:
-        response = await client.get(url=f"/agent/product/drug/{ids_str}")
+        response = await client.get(url=f"/agent/admin/product/drug/{ids_str}")
         return HttpResponse.parse_data(response)
 
 

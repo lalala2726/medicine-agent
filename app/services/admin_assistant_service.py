@@ -20,6 +20,7 @@ from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException
 from app.core.langsmith import build_langsmith_runnable_config
 from app.core.llm import create_chat_model
+from app.core.speech import build_message_tts_stream
 from app.core.security.auth_context import get_user_id
 from app.schemas.admin_assistant_history import ConversationMessageResponse
 from app.schemas.base_request import PageRequest
@@ -546,6 +547,34 @@ def assistant_chat(*, question: str, conversation_uuid: str | None = None) -> St
         initial_emitted_events=context.initial_emitted_events,
     )
     return create_streaming_response(question, stream_config)
+
+
+def assistant_message_tts_stream(
+        *,
+        message_uuid: str,
+) -> StreamingResponse:
+    """
+    管理助手消息转语音（HTTP chunked audio stream）。
+
+    说明：
+    - 先基于 `message_uuid` 做消息存在性、会话归属、消息角色校验；
+    - 校验通过后建立上游 Volcengine 双向 TTS websocket；
+    - 下游以音频字节流（chunked）持续返回给前端。
+    """
+
+    current_user_id = get_user_id()
+    tts_stream = build_message_tts_stream(
+        message_uuid=message_uuid,
+        user_id=current_user_id,
+    )
+    return StreamingResponse(
+        tts_stream.audio_stream,
+        media_type=tts_stream.media_type,
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 def load_history(
