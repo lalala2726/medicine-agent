@@ -27,7 +27,7 @@ class MessageType(str, Enum):
 class AssistantResponse(BaseModel):
     """AI助手SSE响应参数"""
 
-    content: Content = Field(..., description="内容")
+    content: Content = Field(default_factory=Content, description="内容")
     type: MessageType = Field(default=MessageType.ANSWER, description="类型")
     meta: dict[str, Any] | None = Field(
         default=None,

@@ -51,6 +51,59 @@ def _build_streaming_response(text: str) -> StreamingResponse:
     return StreamingResponse(_stream(), media_type="text/event-stream")
 
 
+def _build_notice_then_answer_streaming_response(
+        *,
+        notice_meta: dict[str, str],
+        answer_text: str,
+        notice_content: dict[str, str] | None = None,
+) -> StreamingResponse:
+    async def _stream():
+        notice_payload = {
+            "type": "notice",
+            "is_end": False,
+            "timestamp": 1,
+            "meta": notice_meta,
+        }
+        if notice_content is not None:
+            notice_payload["content"] = notice_content
+        yield (
+                "data: "
+                + json.dumps(
+            notice_payload,
+            ensure_ascii=False,
+        )
+                + "\n\n"
+        )
+        yield (
+                "data: "
+                + json.dumps(
+            {
+                "content": {"text": answer_text},
+                "type": "answer",
+                "is_end": False,
+                "timestamp": 2,
+            },
+            ensure_ascii=False,
+        )
+                + "\n\n"
+        )
+        yield (
+                "data: "
+                + json.dumps(
+            {
+                "content": {"text": ""},
+                "type": "answer",
+                "is_end": True,
+                "timestamp": 3,
+            },
+            ensure_ascii=False,
+        )
+                + "\n\n"
+        )
+
+    return StreamingResponse(_stream(), media_type="text/event-stream")
+
+
 def _build_audio_streaming_response() -> StreamingResponse:
     async def _stream():
         yield b"chunk-a"
@@ -143,6 +196,80 @@ def test_assistant_request_defaults_conversation_uuid_to_none(monkeypatch):
     assert response.status_code == 200
     assert captured["question"] == "hi"
     assert captured["conversation_uuid"] is None
+
+
+def test_assistant_route_new_conversation_stream_first_notice_contains_conversation_and_message_uuid(monkeypatch):
+    captured: dict = {}
+    _mock_auth(monkeypatch)
+
+    def _fake_assistant_chat(*, question: str, conversation_uuid: str | None = None):
+        captured["question"] = question
+        captured["conversation_uuid"] = conversation_uuid
+        return _build_notice_then_answer_streaming_response(
+            notice_meta={
+                "conversation_uuid": "conv-new-1",
+                "message_uuid": "msg-new-1",
+            },
+            answer_text="首个分片",
+            notice_content={"state": "created", "message": "会话创建成功"},
+        )
+
+    monkeypatch.setattr(assistant_module, "assistant_chat", _fake_assistant_chat)
+    client = TestClient(app)
+
+    response = client.post(
+        "/admin/assistant/chat",
+        headers=_auth_headers(),
+        json={"question": "新会话"},
+    )
+
+    assert response.status_code == 200
+    payloads = _extract_payloads(response.text)
+    assert payloads[0]["type"] == "notice"
+    assert payloads[0]["content"]["state"] == "created"
+    assert payloads[0]["meta"] == {
+        "conversation_uuid": "conv-new-1",
+        "message_uuid": "msg-new-1",
+    }
+    assert payloads[1]["type"] == "answer"
+    assert payloads[1]["content"]["text"] == "首个分片"
+    assert captured["question"] == "新会话"
+    assert captured["conversation_uuid"] is None
+
+
+def test_assistant_route_existing_conversation_stream_first_notice_contains_only_message_uuid(monkeypatch):
+    captured: dict = {}
+    _mock_auth(monkeypatch)
+
+    def _fake_assistant_chat(*, question: str, conversation_uuid: str | None = None):
+        captured["question"] = question
+        captured["conversation_uuid"] = conversation_uuid
+        return _build_notice_then_answer_streaming_response(
+            notice_meta={"message_uuid": "msg-old-1"},
+            answer_text="旧会话分片",
+        )
+
+    monkeypatch.setattr(assistant_module, "assistant_chat", _fake_assistant_chat)
+    client = TestClient(app)
+
+    response = client.post(
+        "/admin/assistant/chat",
+        headers=_auth_headers(),
+        json={"question": "旧会话", "conversation_uuid": "conv-1"},
+    )
+
+    assert response.status_code == 200
+    payloads = _extract_payloads(response.text)
+    assert payloads[0]["type"] == "notice"
+    assert "content" not in payloads[0]
+    assert payloads[0]["meta"] == {"message_uuid": "msg-old-1"}
+    assert "conversation_uuid" not in payloads[0]["meta"]
+    assert payloads[1]["type"] == "answer"
+    assert payloads[1]["content"]["text"] == "旧会话分片"
+    assert captured == {
+        "question": "旧会话",
+        "conversation_uuid": "conv-1",
+    }
 
 
 def test_assistant_request_normalizes_question_and_conversation_uuid(monkeypatch):

@@ -47,6 +47,7 @@ STREAM_OUTPUT_NODES = {
     "chat_agent",
     "supervisor_agent",
 }
+EMPTY_ASSISTANT_ANSWER_FALLBACK = "服务暂时不可用，请稍后重试。"
 
 
 @dataclass(frozen=True)
@@ -57,6 +58,7 @@ class ConversationContext:
     Attributes:
         conversation_uuid: 会话 UUID。
         conversation_id: Mongo 会话 ID（ObjectId 字符串）。
+        assistant_message_uuid: 本轮 AI 回复消息 UUID（在流开始前预生成）。
         history_messages: 会话历史消息（按时间正序）。
         initial_emitted_events: 流开始前要注入的 SSE 事件。
         is_new_conversation: 是否为本次请求创建的新会话。
@@ -64,6 +66,7 @@ class ConversationContext:
 
     conversation_uuid: str
     conversation_id: str
+    assistant_message_uuid: str
     history_messages: list[ChatHistoryMessage]
     initial_emitted_events: tuple[AssistantResponse, ...]
     is_new_conversation: bool
@@ -149,12 +152,13 @@ def _map_exception(exc: Exception) -> str:
 
     if isinstance(exc, ServiceException):
         return f"处理失败: {exc.message}"
-    return "服务暂时不可用，请稍后重试。"
+    return EMPTY_ASSISTANT_ANSWER_FALLBACK
 
 
 def _build_conversation_created_event(
         *,
         conversation_uuid: str,
+        message_uuid: str,
 ) -> AssistantResponse:
     """
     构造“会话创建成功”的前置 SSE 事件。
@@ -170,6 +174,25 @@ def _build_conversation_created_event(
         type=MessageType.NOTICE,
         meta={
             "conversation_uuid": conversation_uuid,
+            "message_uuid": message_uuid,
+        },
+    )
+
+
+def _build_message_prepared_event(
+        *,
+        message_uuid: str,
+) -> AssistantResponse:
+    """
+    构造“消息已创建”的前置 SSE 事件。
+
+    该事件用于旧会话场景，前端可在任何 answer token 之前先拿到本轮 AI 消息 UUID。
+    """
+
+    return AssistantResponse(
+        type=MessageType.NOTICE,
+        meta={
+            "message_uuid": message_uuid,
         },
     )
 
@@ -300,6 +323,7 @@ def _persist_user_message(
 def _persist_assistant_message(
         *,
         conversation_id: str,
+        message_uuid: str,
         answer_text: str,
         execution_trace: list[ExecutionTraceState] | None,
         token_usage: TokenUsageState | dict[str, Any] | None,
@@ -322,7 +346,6 @@ def _persist_assistant_message(
         token_usage,
         execution_trace,
     )
-    message_uuid = str(uuid.uuid4())
     add_message(
         conversation_id=conversation_id,
         role="ai",
@@ -345,7 +368,7 @@ def _persist_assistant_message(
         )
 
 
-def _build_assistant_message_callback(*, conversation_id: str):
+def _build_assistant_message_callback(*, conversation_id: str, assistant_message_uuid: str):
     """
     构建“流结束后写入 AI 消息”的异步回调。
 
@@ -366,18 +389,21 @@ def _build_assistant_message_callback(*, conversation_id: str):
             resolved_has_error = token_usage
 
         normalized_answer = str(answer_text or "").strip()
+        resolved_status = MessageStatus.ERROR if resolved_has_error else MessageStatus.SUCCESS
         if not normalized_answer:
-            return
+            normalized_answer = EMPTY_ASSISTANT_ANSWER_FALLBACK
+            resolved_status = MessageStatus.ERROR
 
         _schedule_background_task(
             task_name="persist_assistant_message",
             func=_persist_assistant_message,
             kwargs={
                 "conversation_id": conversation_id,
+                "message_uuid": assistant_message_uuid,
                 "answer_text": normalized_answer,
                 "execution_trace": execution_trace,
                 "token_usage": resolved_token_usage,
-                "status": MessageStatus.ERROR if resolved_has_error else MessageStatus.SUCCESS,
+                "status": resolved_status,
             },
         )
 
@@ -388,6 +414,7 @@ def _prepare_new_conversation(
         *,
         question: str,
         user_id: int,
+        assistant_message_uuid: str,
 ) -> ConversationContext:
     """
     准备新会话上下文。
@@ -418,10 +445,12 @@ def _prepare_new_conversation(
     return ConversationContext(
         conversation_uuid=conversation_uuid,
         conversation_id=conversation_id,
+        assistant_message_uuid=assistant_message_uuid,
         history_messages=[HumanMessage(content=question)],
         initial_emitted_events=(
             _build_conversation_created_event(
                 conversation_uuid=conversation_uuid,
+                message_uuid=assistant_message_uuid,
             ),
         ),
         is_new_conversation=True,
@@ -433,6 +462,7 @@ def _prepare_existing_conversation(
         conversation_uuid: str,
         user_id: int,
         question: str,
+        assistant_message_uuid: str,
 ) -> ConversationContext:
     """
     准备已存在会话上下文。
@@ -443,7 +473,7 @@ def _prepare_existing_conversation(
         question: 当前用户问题文本，会追加到历史末尾供模型推理。
 
     Returns:
-        ConversationContext: 已存在会话上下文（不含会话创建事件），
+        ConversationContext: 已存在会话上下文（含消息预创建事件），
             其中 `history_messages` 末尾包含本轮用户问题。
 
     Raises:
@@ -463,8 +493,13 @@ def _prepare_existing_conversation(
     return ConversationContext(
         conversation_uuid=conversation_uuid,
         conversation_id=conversation_id,
+        assistant_message_uuid=assistant_message_uuid,
         history_messages=history_messages,
-        initial_emitted_events=(),
+        initial_emitted_events=(
+            _build_message_prepared_event(
+                message_uuid=assistant_message_uuid,
+            ),
+        ),
         is_new_conversation=False,
     )
 
@@ -474,6 +509,7 @@ def _prepare_conversation_context(
         question: str,
         user_id: int,
         conversation_uuid: str | None,
+        assistant_message_uuid: str,
 ) -> ConversationContext:
     """
     统一准备会话上下文（新建/加载分支）。
@@ -494,11 +530,13 @@ def _prepare_conversation_context(
         return _prepare_new_conversation(
             question=question,
             user_id=user_id,
+            assistant_message_uuid=assistant_message_uuid,
         )
     return _prepare_existing_conversation(
         conversation_uuid=conversation_uuid,
         user_id=user_id,
         question=question,
+        assistant_message_uuid=assistant_message_uuid,
     )
 
 
@@ -507,18 +545,22 @@ def assistant_chat(*, question: str, conversation_uuid: str | None = None) -> St
     管理助手聊天入口（SSE 流式返回）。
 
     行为说明：
-    1. 首次消息（未传 `conversation_uuid`）会创建会话并先推送“会话创建成功”事件；
-    2. 用户提问会后台写入消息表；
-    3. AI 回复会在流结束后后台写入消息表；
-    4. 标题生成与保存在后台并行执行，不阻塞当前流式响应。
-    5. 会话准备逻辑由 `_prepare_conversation_context` 统一处理。
+    1. 每次请求都会先预生成本轮 AI `message_uuid`；
+    2. 首次消息（未传 `conversation_uuid`）会创建会话并先推送“会话创建成功”事件；
+    3. 旧会话会先推送“消息已创建”事件，确保前端先拿到本轮 `message_uuid`；
+    4. 用户提问会后台写入消息表；
+    5. AI 回复会在流结束后后台写入消息表（空输出也会落库 error 兜底文案）；
+    6. 标题生成与保存在后台并行执行，不阻塞当前流式响应。
+    7. 会话准备逻辑由 `_prepare_conversation_context` 统一处理。
     """
 
     current_user_id = get_user_id()
+    assistant_message_uuid = str(uuid.uuid4())
     context = _prepare_conversation_context(
         question=question,
         user_id=current_user_id,
         conversation_uuid=conversation_uuid,
+        assistant_message_uuid=assistant_message_uuid,
     )
 
     _schedule_background_task(
@@ -543,6 +585,7 @@ def assistant_chat(*, question: str, conversation_uuid: str | None = None) -> St
         map_exception=_map_exception,
         on_answer_completed=_build_assistant_message_callback(
             conversation_id=context.conversation_id,
+            assistant_message_uuid=context.assistant_message_uuid,
         ),
         initial_emitted_events=context.initial_emitted_events,
     )
