@@ -97,7 +97,7 @@ class Message:
     """
     火山双向语音 WebSocket 二进制帧模型。
 
-    仅实现当前 TTS 流式场景所需字段与读写逻辑。
+    实现当前 STT/TTS 流式场景所需字段与读写逻辑。
     """
 
     version: VersionBits = VersionBits.Version1

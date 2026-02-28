@@ -11,7 +11,7 @@ from loguru import logger
 
 from app.core.speech.stt.client import SttStartRequest, VolcengineSttClient
 from app.core.speech.stt.config import VolcengineSttConfig
-from app.core.speech.volcengine_tts_protocol import MsgType, SttServerMessage
+from app.core.speech.volcengine_speech_protocol import MsgType, SttServerMessage
 from app.schemas.auth import AuthUser
 
 # 前端单个音频二进制包大小上限（bytes）。
@@ -70,7 +70,7 @@ class AdminAssistantSttSession:
         self._upstream_error: str | None = None
         self._close_sent = False
 
-    async def run(self) -> SttSessionCloseResult:
+    async def run(self) -> SttSessionCloseResult | None:
         """
         驱动 STT 会话主循环。
 

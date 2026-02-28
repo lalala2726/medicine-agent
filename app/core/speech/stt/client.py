@@ -16,7 +16,7 @@ from app.core.speech.stt.config import (
     build_volcengine_stt_headers,
     resolve_volcengine_stt_config,
 )
-from app.core.speech.volcengine_tts_protocol import (
+from app.core.speech.volcengine_speech_protocol import (
     CompressionBits,
     MsgType,
     MsgTypeFlagBits,

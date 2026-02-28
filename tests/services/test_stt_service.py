@@ -8,7 +8,7 @@ import app.services.speech_stt_service as speech_stt_service_module
 from app.core.exception.exceptions import ServiceException
 from app.core.speech.stt.config import VolcengineSttConfig
 from app.core.speech.stt.session import AdminAssistantSttSession
-from app.core.speech.volcengine_tts_protocol import (
+from app.core.speech.volcengine_speech_protocol import (
     CompressionBits,
     MsgType,
     SerializationBits,

@@ -1,6 +1,6 @@
 import struct
 
-from app.core.speech.volcengine_tts_protocol import EventType, Message, MsgType
+from app.core.speech.volcengine_speech_protocol import EventType, Message, MsgType
 
 
 def _build_server_event_frame(event: int, payload: bytes = b"{}") -> bytes:

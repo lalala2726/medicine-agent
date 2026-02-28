@@ -19,7 +19,7 @@ from app.core.speech.tts.config import (
     resolve_volcengine_tts_config,
 )
 from app.core.speech.tts.text_sanitizer import TtsTextSanitizer
-from app.core.speech.volcengine_tts_protocol import (
+from app.core.speech.volcengine_speech_protocol import (
     EventType,
     MsgType,
     finish_connection,

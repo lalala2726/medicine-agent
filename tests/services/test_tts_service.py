@@ -6,7 +6,7 @@ import pytest
 from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException
 from app.core.speech.tts.config import VolcengineTtsConfig
-from app.core.speech.volcengine_tts_protocol import EventType, Message, MsgType
+from app.core.speech.volcengine_speech_protocol import EventType, Message, MsgType
 from app.schemas.document.message import MessageRole
 import app.core.speech.tts.client as service_module
 

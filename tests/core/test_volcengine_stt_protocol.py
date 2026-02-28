@@ -2,7 +2,7 @@ import gzip
 import json
 import struct
 
-from app.core.speech.volcengine_tts_protocol import (
+from app.core.speech.volcengine_speech_protocol import (
     CompressionBits,
     MsgType,
     SerializationBits,
