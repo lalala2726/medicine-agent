@@ -10,13 +10,10 @@
 import datetime
 
 from langchain_core.tools import tool
-from pydantic import BaseModel
 
+from app.agent.assistant.tools.schemas.base import UserInfo
 from app.core.agent.agent_tool_events import tool_call_status
 from app.core.security import get_current_user
-from app.schemas.auth import AuthUser
-from app.schemas.http_response import HttpResponse
-from app.utils.http_client import HttpClient
 
 
 def format_ids_to_string(ids: list[str]) -> str:
@@ -32,21 +29,6 @@ def _normalize_id_list(ids: list[str], *, field_name: str) -> list[str]:
     if not normalized:
         raise ValueError(f"{field_name} 必须为非空字符串数组（List[str]），例如 [\"A1\",\"A2\"]")
     return normalized
-
-
-class UserInfo(BaseModel):
-    """安全的用户信息模型，仅包含可暴露给 Agent 的非敏感字段。"""
-
-    username: str | None = None
-    nickname: str | None = None
-
-    @classmethod
-    def from_auth_user(cls, auth_user: AuthUser) -> "UserInfo":
-        """从 AuthUser 创建 UserInfo，过滤敏感信息。"""
-        return cls(
-            username=auth_user.username,
-            nickname=auth_user.nickname,
-        )
 
 
 @tool(

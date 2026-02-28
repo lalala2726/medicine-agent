@@ -4,8 +4,11 @@ from typing import Literal
 
 from langchain_core.messages import SystemMessage
 from langchain_core.tools import tool
-from pydantic import BaseModel, Field
 
+from app.agent.assistant.tools.schemas.analytics import (
+    AnalyticsOrderTrendRequest,
+    AnalyticsTopLimitRequest,
+)
 from app.core.agent.agent_runtime import agent_invoke
 from app.core.agent.agent_tool_events import tool_call_status
 from app.core.langsmith import traceable
@@ -13,26 +16,6 @@ from app.core.llm import create_agent
 from app.schemas.http_response import HttpResponse
 from app.utils.http_client import HttpClient
 from app.utils.prompt_utils import load_prompt
-
-
-class AnalyticsOrderTrendRequest(BaseModel):
-    """订单趋势查询请求。"""
-
-    period: Literal["DAY", "WEEK", "MONTH"] = Field(
-        default="DAY",
-        description="时间周期，支持 DAY(日)、WEEK(周)、MONTH(月)",
-    )
-
-
-class AnalyticsTopLimitRequest(BaseModel):
-    """排行榜/统计 TopN 查询请求。"""
-
-    limit: int = Field(
-        default=10,
-        ge=1,
-        le=200,
-        description="返回数量限制，默认10，范围1-200",
-    )
 
 
 @tool(
