@@ -1,7 +1,10 @@
 import json
+import importlib
 
+import pytest
 from fastapi.responses import StreamingResponse
 from fastapi.testclient import TestClient
+from redis.exceptions import RedisError
 
 import app.main as main_module
 from app.api.routes import admin_assistant as assistant_module
@@ -12,6 +15,8 @@ from app.main import app
 from app.schemas.admin_assistant_history import ConversationMessageResponse, ThoughtNodeResponse
 from app.schemas.auth import AuthUser
 from app.schemas.document.conversation import ConversationListItem
+
+rate_limit_module = importlib.import_module("app.core.security.rate_limit")
 
 
 def _extract_payloads(response_text: str) -> list[dict]:
@@ -145,6 +150,66 @@ def _mock_auth(
         "verify_authorization",
         _fake_fetch_current_user,
     )
+
+
+def _mock_verify_authorization_counter(
+        monkeypatch,
+        *,
+        raise_on_call: bool = False,
+) -> dict[str, int]:
+    called = {"count": 0}
+
+    async def _fake_verify_authorization() -> AuthUser:
+        called["count"] += 1
+        if raise_on_call:
+            raise AssertionError("verify_authorization should not be called")
+        return AuthUser(
+            id=1,
+            username="tester",
+            roles=[RoleCode.SUPER_ADMIN.value],
+            permissions=[],
+        )
+
+    monkeypatch.setattr(
+        main_module,
+        "verify_authorization",
+        _fake_verify_authorization,
+    )
+    return called
+
+
+def _mock_rate_limit_result(
+        monkeypatch,
+        *,
+        allowed: bool,
+        retry_after_seconds: int = 0,
+        limit: int = 10,
+        remaining: int = 9,
+        reset_seconds: int = 60,
+        exc: Exception | None = None,
+) -> None:
+    if exc is not None:
+        def _raise_error(*, scope: str, subject_key: str, rules):
+            raise exc
+
+        monkeypatch.setattr(rate_limit_module, "_evaluate_rate_limit", _raise_error)
+        return
+
+    def _fake_evaluate_rate_limit(*, scope: str, subject_key: str, rules):
+        return rate_limit_module.RateLimitCheckResult(
+            allowed=allowed,
+            retry_after_seconds=retry_after_seconds,
+            limit=limit,
+            remaining=remaining,
+            reset_seconds=reset_seconds,
+        )
+
+    monkeypatch.setattr(rate_limit_module, "_evaluate_rate_limit", _fake_evaluate_rate_limit)
+
+
+@pytest.fixture(autouse=True)
+def _default_rate_limit_allow(monkeypatch):
+    _mock_rate_limit_result(monkeypatch, allowed=True)
 
 
 def test_assistant_route_delegates_to_service(monkeypatch):
@@ -896,3 +961,270 @@ def test_assistant_message_tts_stream_route_rejects_extra_fields(monkeypatch):
         for item in body["errors"]
     )
     assert called["value"] is False
+
+
+def test_rate_limit_test_route_allows_anonymous_without_auth_header(monkeypatch):
+    called = _mock_verify_authorization_counter(monkeypatch, raise_on_call=True)
+    client = TestClient(app)
+
+    response = client.get("/admin/assistant/rate-limit/test")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["code"] == 200
+    assert body["message"] == "限流测试通过"
+    assert body["data"] == {"status": "ok"}
+    assert called["count"] == 0
+
+
+def test_rate_limit_test_route_does_not_call_verify_authorization_even_with_auth_header(monkeypatch):
+    called = _mock_verify_authorization_counter(monkeypatch, raise_on_call=True)
+    client = TestClient(app)
+
+    response = client.get(
+        "/admin/assistant/rate-limit/test",
+        headers=_auth_headers(),
+    )
+
+    assert response.status_code == 200
+    assert called["count"] == 0
+
+
+def test_rate_limit_test_route_rate_limit_headers_still_present_for_anonymous(monkeypatch):
+    called = _mock_verify_authorization_counter(monkeypatch, raise_on_call=True)
+    _mock_rate_limit_result(
+        monkeypatch,
+        allowed=True,
+        retry_after_seconds=0,
+        limit=10,
+        remaining=9,
+        reset_seconds=37,
+    )
+    client = TestClient(app)
+
+    response = client.get("/admin/assistant/rate-limit/test")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["code"] == 200
+    assert body["message"] == "限流测试通过"
+    assert body["data"] == {"status": "ok"}
+    assert response.headers["x-ratelimit-limit"] == "10"
+    assert response.headers["x-ratelimit-remaining"] == "9"
+    assert response.headers["x-ratelimit-reset"] == "37"
+    assert response.headers["retry-after"] == "0"
+    assert called["count"] == 0
+
+
+def test_rate_limit_test_route_returns_429_for_anonymous_when_limited(monkeypatch):
+    called = _mock_verify_authorization_counter(monkeypatch, raise_on_call=True)
+    _mock_rate_limit_result(
+        monkeypatch,
+        allowed=False,
+        retry_after_seconds=13,
+        limit=10,
+        remaining=0,
+        reset_seconds=13,
+    )
+    client = TestClient(app)
+
+    response = client.get("/admin/assistant/rate-limit/test")
+
+    assert response.status_code == ResponseCode.TOO_MANY_REQUESTS.code
+    assert response.headers["retry-after"] == "13"
+    assert response.headers["x-ratelimit-limit"] == "10"
+    assert response.headers["x-ratelimit-remaining"] == "0"
+    body = response.json()
+    assert body["code"] == ResponseCode.TOO_MANY_REQUESTS.code
+    assert body["message"] == "访问 /admin/assistant/rate-limit/test 过于频繁，请在 13 秒后再试"
+    assert called["count"] == 0
+    assert "data" not in body
+
+
+def test_assistant_rate_limit_test_route_returns_503_when_redis_unavailable(monkeypatch):
+    called = _mock_verify_authorization_counter(monkeypatch, raise_on_call=True)
+    _mock_rate_limit_result(monkeypatch, allowed=True, exc=RedisError("redis down"))
+    client = TestClient(app)
+
+    response = client.get("/admin/assistant/rate-limit/test")
+
+    assert response.status_code == ResponseCode.SERVICE_UNAVAILABLE.code
+    assert response.headers["retry-after"] == "1"
+    body = response.json()
+    assert body["code"] == ResponseCode.SERVICE_UNAVAILABLE.code
+    assert body["message"] == "限流服务不可用，请稍后再试"
+    assert called["count"] == 0
+    assert "data" not in body
+
+
+def test_non_anonymous_route_still_requires_authentication():
+    client = TestClient(app)
+
+    response = client.post(
+        "/admin/assistant/chat",
+        json={"question": "未认证访问"},
+    )
+
+    assert response.status_code == ResponseCode.UNAUTHORIZED.code
+
+
+def test_assistant_chat_route_sets_rate_limit_headers_on_success(monkeypatch):
+    _mock_auth(monkeypatch)
+    _mock_rate_limit_result(
+        monkeypatch,
+        allowed=True,
+        retry_after_seconds=0,
+        limit=10,
+        remaining=8,
+        reset_seconds=42,
+    )
+
+    def _fake_assistant_chat(*, question: str, conversation_uuid: str | None = None):
+        return _build_streaming_response("ok")
+
+    monkeypatch.setattr(assistant_module, "assistant_chat", _fake_assistant_chat)
+    client = TestClient(app)
+
+    response = client.post(
+        "/admin/assistant/chat",
+        headers=_auth_headers(),
+        json={"question": "头信息测试"},
+    )
+
+    assert response.status_code == 200
+    assert response.headers["x-ratelimit-limit"] == "10"
+    assert response.headers["x-ratelimit-remaining"] == "8"
+    assert response.headers["x-ratelimit-reset"] == "42"
+    assert response.headers["retry-after"] == "0"
+
+
+def test_assistant_chat_route_returns_429_when_rate_limited(monkeypatch):
+    _mock_auth(monkeypatch)
+    _mock_rate_limit_result(
+        monkeypatch,
+        allowed=False,
+        retry_after_seconds=17,
+        limit=10,
+        remaining=0,
+        reset_seconds=17,
+    )
+    called = {"value": False}
+
+    def _fake_assistant_chat(*, question: str, conversation_uuid: str | None = None):
+        called["value"] = True
+        return _build_streaming_response("should-not-run")
+
+    monkeypatch.setattr(assistant_module, "assistant_chat", _fake_assistant_chat)
+    client = TestClient(app)
+
+    response = client.post(
+        "/admin/assistant/chat",
+        headers=_auth_headers(),
+        json={"question": "触发限流"},
+    )
+
+    assert response.status_code == ResponseCode.TOO_MANY_REQUESTS.code
+    assert response.headers["retry-after"] == "17"
+    assert response.headers["x-ratelimit-limit"] == "10"
+    assert response.headers["x-ratelimit-remaining"] == "0"
+    body = response.json()
+    assert body["code"] == ResponseCode.TOO_MANY_REQUESTS.code
+    assert body["message"] == "访问 /admin/assistant/chat 过于频繁，请在 17 秒后再试"
+    assert called["value"] is False
+    assert "data" not in body
+
+
+def test_assistant_tts_route_returns_429_when_rate_limited(monkeypatch):
+    _mock_auth(monkeypatch)
+    _mock_rate_limit_result(
+        monkeypatch,
+        allowed=False,
+        retry_after_seconds=9,
+        limit=5,
+        remaining=0,
+        reset_seconds=9,
+    )
+    called = {"value": False}
+
+    def _fake_tts_stream(*, message_uuid: str):
+        called["value"] = True
+        return _build_audio_streaming_response()
+
+    monkeypatch.setattr(
+        assistant_module,
+        "assistant_message_tts_stream_service",
+        _fake_tts_stream,
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/admin/assistant/message/tts/stream",
+        headers=_auth_headers(),
+        json={"message_uuid": "msg-1"},
+    )
+
+    assert response.status_code == ResponseCode.TOO_MANY_REQUESTS.code
+    assert response.headers["retry-after"] == "9"
+    body = response.json()
+    assert body["code"] == ResponseCode.TOO_MANY_REQUESTS.code
+    assert body["message"] == "访问 /admin/assistant/message/tts/stream 过于频繁，请在 9 秒后再试"
+    assert called["value"] is False
+    assert "data" not in body
+
+
+def test_assistant_chat_route_returns_503_when_redis_unavailable(monkeypatch):
+    _mock_auth(monkeypatch)
+    _mock_rate_limit_result(monkeypatch, allowed=True, exc=RedisError("redis down"))
+    called = {"value": False}
+
+    def _fake_assistant_chat(*, question: str, conversation_uuid: str | None = None):
+        called["value"] = True
+        return _build_streaming_response("should-not-run")
+
+    monkeypatch.setattr(assistant_module, "assistant_chat", _fake_assistant_chat)
+    client = TestClient(app)
+
+    response = client.post(
+        "/admin/assistant/chat",
+        headers=_auth_headers(),
+        json={"question": "redis 故障"},
+    )
+
+    assert response.status_code == ResponseCode.SERVICE_UNAVAILABLE.code
+    assert response.headers["retry-after"] == "1"
+    body = response.json()
+    assert body["code"] == ResponseCode.SERVICE_UNAVAILABLE.code
+    assert body["message"] == "限流服务不可用，请稍后再试"
+    assert called["value"] is False
+    assert "data" not in body
+
+
+def test_assistant_tts_route_returns_503_when_redis_unavailable(monkeypatch):
+    _mock_auth(monkeypatch)
+    _mock_rate_limit_result(monkeypatch, allowed=True, exc=RedisError("redis down"))
+    called = {"value": False}
+
+    def _fake_tts_stream(*, message_uuid: str):
+        called["value"] = True
+        return _build_audio_streaming_response()
+
+    monkeypatch.setattr(
+        assistant_module,
+        "assistant_message_tts_stream_service",
+        _fake_tts_stream,
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/admin/assistant/message/tts/stream",
+        headers=_auth_headers(),
+        json={"message_uuid": "msg-1"},
+    )
+
+    assert response.status_code == ResponseCode.SERVICE_UNAVAILABLE.code
+    assert response.headers["retry-after"] == "1"
+    body = response.json()
+    assert body["code"] == ResponseCode.SERVICE_UNAVAILABLE.code
+    assert body["message"] == "限流服务不可用，请稍后再试"
+    assert called["value"] is False
+    assert "data" not in body

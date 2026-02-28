@@ -48,6 +48,9 @@
   `MONGODB_STARTUP_PING_ENABLED` (default false, set true to fail fast
   on startup when MongoDB is unreachable/unauthorized).
 - Redis configuration (optional): `REDIS_URL`, `REDIS_HOST`, `REDIS_PORT`, `REDIS_DB`, `REDIS_PASSWORD`, `REDIS_SSL`.
+- Rate limit configuration (optional): `RATE_LIMIT_KEY_PREFIX` (defaults to `rate_limit`),
+  `RATE_LIMIT_TRUST_X_FORWARDED_FOR` (default false; when true, fallback to `X-Forwarded-For`
+  only if `request.client.host` is unavailable).
 - RQ configuration (optional): `RQ_QUEUE_NAME`, `RQ_DEFAULT_TIMEOUT`.
 - HTTP client configuration (optional): `HTTP_BASE_URL` (defaults to `http://localhost:8080`).
 - HTTP client logging (optional): `HTTP_CLIENT_LOG_ENABLED` (default false, set true to log request/response details).

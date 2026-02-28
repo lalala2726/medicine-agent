@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Any, Literal, Mapping, Optional
 
 import httpx
-import yaml
 from dotenv import load_dotenv
 from loguru import logger
 
@@ -148,7 +147,7 @@ class HttpClient:
             data: Optional[Mapping[str, Any]] = None,
             content: Optional[bytes] = None,
             timeout: Optional[float] = None,
-            response_format: Literal["raw", "json", "yaml"] = "raw",
+            response_format: Literal["raw", "json"] = "raw",
             include_envelope: bool = False,
     ) -> Any:
         """
@@ -164,8 +163,8 @@ class HttpClient:
             content: 原始字节 body
             timeout: 本次请求超时
             response_format: 返回格式。`raw` 返回 `httpx.Response`，
-                `json` 返回 Python 对象，`yaml` 返回 YAML 字符串。
-            include_envelope: 当 `response_format` 为 `json/yaml` 时，
+                `json` 返回 Python 对象。
+            include_envelope: 当 `response_format` 为 `json` 时，
                 是否保留 `code/message/data/timestamp` 包裹结构。
         """
         log_enabled = self._is_log_enabled()
@@ -248,7 +247,7 @@ class HttpClient:
         if response_format == "raw":
             return response
 
-        if response_format not in {"json", "yaml"}:
+        if response_format != "json":
             raise ValueError(f"Unsupported response_format: {response_format}")
 
         from app.schemas.http_response import HttpResponse
@@ -266,10 +265,7 @@ class HttpClient:
             if parsed_response.timestamp is not None:
                 payload["timestamp"] = parsed_response.timestamp
 
-        if response_format == "json":
-            return payload
-
-        return yaml.safe_dump(payload, allow_unicode=True, sort_keys=False)
+        return payload
 
     async def get(
             self,
@@ -278,7 +274,7 @@ class HttpClient:
             headers: Optional[Mapping[str, str]] = None,
             params: Optional[Mapping[str, Any]] = None,
             timeout: Optional[float] = None,
-            response_format: Literal["raw", "json", "yaml"] = "raw",
+            response_format: Literal["raw", "json"] = "raw",
             include_envelope: bool = False,
     ) -> Any:
         """发送 GET 请求。"""
@@ -302,7 +298,7 @@ class HttpClient:
             data: Optional[Mapping[str, Any]] = None,
             content: Optional[bytes] = None,
             timeout: Optional[float] = None,
-            response_format: Literal["raw", "json", "yaml"] = "raw",
+            response_format: Literal["raw", "json"] = "raw",
             include_envelope: bool = False,
     ) -> Any:
         """发送 POST 请求。"""
@@ -329,7 +325,7 @@ class HttpClient:
             data: Optional[Mapping[str, Any]] = None,
             content: Optional[bytes] = None,
             timeout: Optional[float] = None,
-            response_format: Literal["raw", "json", "yaml"] = "raw",
+            response_format: Literal["raw", "json"] = "raw",
             include_envelope: bool = False,
     ) -> Any:
         """发送 PUT 请求。"""
@@ -356,7 +352,7 @@ class HttpClient:
             data: Optional[Mapping[str, Any]] = None,
             content: Optional[bytes] = None,
             timeout: Optional[float] = None,
-            response_format: Literal["raw", "json", "yaml"] = "raw",
+            response_format: Literal["raw", "json"] = "raw",
             include_envelope: bool = False,
     ) -> Any:
         """发送 DELETE 请求。"""

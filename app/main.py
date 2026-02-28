@@ -18,6 +18,7 @@ from app.core.security.auth_context import (
     set_authorization_header,
     set_current_user,
 )
+from app.core.security.anonymous_access import is_anonymous_request
 from app.core.security.cors import load_cors_config
 from app.core.speech import verify_volcengine_tts_connection_on_startup
 from app.services.auth_service import verify_authorization
@@ -32,7 +33,8 @@ OPENAPI_DESCRIPTION = """
 
 ## 认证说明
 
-除 `/docs`、`/redoc`、`/openapi.json` 外，其他接口均需要认证。
+除 `/docs`、`/redoc`、`/openapi.json` 以及显式标注 `allow_anonymous` 的接口外，
+其他接口均需要认证。
 
 请由药品服务端提供访问令牌，并在请求头中携带：
 
@@ -79,6 +81,8 @@ def _should_skip_authorization(request: Request) -> bool:
     if path in AUTH_BYPASS_PATHS:
         return True
     if path.startswith("/docs/") or path.startswith("/redoc/"):
+        return True
+    if is_anonymous_request(request):
         return True
     return False
 

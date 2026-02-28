@@ -1,4 +1,5 @@
 import time
+from collections.abc import Mapping
 
 from fastapi import Request
 from fastapi.exceptions import RequestValidationError
@@ -179,9 +180,17 @@ class ExceptionHandlers:
             content = ApiResponse.error(response_code, message=exc.message, data=exc.data).model_dump()
         else:
             content = ApiResponse(code=exc.code, message=exc.message, data=exc.data).model_dump()
+        headers = getattr(exc, "headers", None)
+        resolved_headers: dict[str, str] | None = None
+        if isinstance(headers, Mapping):
+            resolved_headers = {
+                str(key): str(value)
+                for key, value in headers.items()
+            }
         return JSONResponse(
             status_code=ExceptionHandlers._resolve_http_status(exc.code),
             content=content,
+            headers=resolved_headers,
         )
 
     @staticmethod

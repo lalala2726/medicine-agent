@@ -69,6 +69,20 @@ def test_service_exception_handler_known_code():
     assert body["data"] == {"a": 1}
 
 
+def test_service_exception_handler_passes_exception_headers():
+    exc = ServiceException(message="limited", code=ResponseCode.TOO_MANY_REQUESTS)
+    exc.headers = {
+        "Retry-After": "12",
+        "X-RateLimit-Limit": "10",
+    }
+
+    response = anyio.run(ExceptionHandlers.service_exception_handler, None, exc)
+
+    assert response.status_code == ResponseCode.TOO_MANY_REQUESTS
+    assert response.headers["retry-after"] == "12"
+    assert response.headers["x-ratelimit-limit"] == "10"
+
+
 def test_service_exception_handler_unknown_code():
     exc = ServiceException(message="custom", code=422)
 

@@ -66,7 +66,6 @@ def test_get_admin_user_list_maps_snake_case_to_backend_params(
                 "status": 1,
                 "createBy": "system",
             },
-            "response_format": "yaml",
             "include_envelope": True,
         }
     ]
@@ -94,7 +93,6 @@ def test_user_detail_and_wallet_use_expected_path(
         {
             "url": expected_url,
             "params": None,
-            "response_format": "yaml",
             "include_envelope": True,
         }
     ]
@@ -125,7 +123,6 @@ def test_wallet_flow_and_consume_info_use_expected_path_and_pagination(
                 "pageNum": 3,
                 "pageSize": 20,
             },
-            "response_format": "yaml",
             "include_envelope": True,
         }
     ]
