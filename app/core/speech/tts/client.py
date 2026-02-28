@@ -35,9 +35,12 @@ from app.services.conversation_service import get_admin_conversation_by_id
 from app.services.message_tts_usage_service import add_message_tts_usage
 from app.services.message_service import get_message_by_uuid
 
+# WebSocket 单帧最大载荷（bytes）。
 MAX_WS_MESSAGE_SIZE = 10 * 1024 * 1024
+# 文本被截断时的固定前缀模板。
 DEFAULT_TTS_TRUNCATION_PREFIX_TEMPLATE = "文本太多了，这边只读取前{max_chars}个字符。"
 
+# 不同编码对应的 HTTP 媒体类型映射表。
 _AUDIO_MEDIA_TYPE_BY_ENCODING = {
     "mp3": "audio/mpeg",
     "wav": "audio/wav",
@@ -48,7 +51,13 @@ _AUDIO_MEDIA_TYPE_BY_ENCODING = {
 
 @dataclass(frozen=True)
 class MessageTtsStream:
-    """消息转语音的流式输出封装。"""
+    """
+    消息转语音的流式输出封装。
+
+    Attributes:
+        audio_stream: 音频字节异步迭代器。
+        media_type: 音频 MIME 类型。
+    """
 
     audio_stream: AsyncIterator[bytes]
     media_type: str
@@ -56,7 +65,19 @@ class MessageTtsStream:
 
 @dataclass(frozen=True)
 class PreparedTtsTextDetail:
-    """TTS 文本预处理结果。"""
+    """
+    TTS 文本预处理结果。
+
+    Attributes:
+        raw_text: 原始文本。
+        sanitized_text: 清洗后的文本。
+        sent_text: 最终发送给上游 TTS 的文本。
+        source_text_chars: 原始文本字符数。
+        sanitized_text_chars: 清洗后字符数。
+        billable_chars: 按发送文本计费字符数。
+        max_text_chars: 最大可发送字符数限制。
+        is_truncated: 是否发生截断。
+    """
 
     raw_text: str
     sanitized_text: str
@@ -70,7 +91,16 @@ class PreparedTtsTextDetail:
 
 @dataclass(frozen=True)
 class TtsMessageContext:
-    """消息转语音的已校验消息上下文。"""
+    """
+    消息转语音的已校验消息上下文。
+
+    Attributes:
+        message_uuid: 消息 UUID。
+        conversation_id: 会话 ID。
+        conversation_uuid: 会话 UUID。
+        user_id: 用户 ID。
+        raw_text: 原始消息文本。
+    """
 
     message_uuid: str
     conversation_id: str
@@ -81,7 +111,22 @@ class TtsMessageContext:
 
 @dataclass(frozen=True)
 class TtsUsageContext:
-    """TTS 成功计量落库所需上下文。"""
+    """
+    TTS 成功计量落库所需上下文。
+
+    Attributes:
+        usage_uuid: 本次调用明细 UUID。
+        message_uuid: 消息 UUID。
+        conversation_id: 会话 ID。
+        conversation_uuid: 会话 UUID。
+        user_id: 用户 ID。
+        sent_text: 实际送入 TTS 的文本。
+        source_text_chars: 原始字符数。
+        sanitized_text_chars: 清洗后字符数。
+        billable_chars: 计费字符数。
+        max_text_chars: 最大字符限制。
+        is_truncated: 是否发生截断。
+    """
 
     usage_uuid: str
     message_uuid: str
@@ -97,7 +142,15 @@ class TtsUsageContext:
 
 
 def resolve_audio_media_type(encoding: str) -> str:
-    """根据音频编码推导 HTTP `Content-Type`。"""
+    """
+    根据音频编码推导 HTTP `Content-Type`。
+
+    Args:
+        encoding: 音频编码名称（如 mp3/wav/pcm/ogg）。
+
+    Returns:
+        str: 对应的媒体类型；未知编码返回 `application/octet-stream`。
+    """
 
     normalized = encoding.strip().lower()
     if not normalized:
@@ -117,6 +170,16 @@ def prepare_tts_text(
     1. 先做白名单清洗，仅保留可播报文本；
     2. 清洗后为空则拒绝转语音；
     3. 超过 `max_text_chars` 时，截取前 N 个字符并添加固定提示前缀。
+
+    Args:
+        raw_text: 原始消息文本。
+        max_text_chars: 允许送入 TTS 的最大字符数。
+
+    Returns:
+        PreparedTtsTextDetail: 预处理细节与最终发送文本。
+
+    Raises:
+        ServiceException: 清洗后文本为空时抛出。
     """
 
     sanitized_text = TtsTextSanitizer.sanitize_text(raw_text)
@@ -163,7 +226,18 @@ def prepare_tts_text(
 
 
 def _normalize_message_uuid(message_uuid: str) -> str:
-    """标准化并校验消息 UUID。"""
+    """
+    标准化并校验消息 UUID。
+
+    Args:
+        message_uuid: 原始消息 UUID。
+
+    Returns:
+        str: 去空白后的消息 UUID。
+
+    Raises:
+        ServiceException: 为空字符串时抛出。
+    """
 
     normalized = message_uuid.strip()
     if normalized:
@@ -187,6 +261,16 @@ def _load_message_context_for_tts(
     2. 消息所属会话属于当前用户，且为管理端会话；
     3. 仅允许 `role=ai`；
     4. 文本内容非空。
+
+    Args:
+        message_uuid: 消息 UUID。
+        user_id: 当前用户 ID。
+
+    Returns:
+        TtsMessageContext: 校验通过后的消息上下文。
+
+    Raises:
+        ServiceException: 消息不存在、无权限或文本不符合要求时抛出。
     """
 
     message = get_message_by_uuid(message_uuid)
@@ -240,6 +324,13 @@ def build_message_tts_stream(
     - 在返回流之前会先完成消息与权限校验；
     - 音色、编码、采样率全部由服务端环境变量控制；
     - 返回的异步迭代器会边接收上游音频边向下游输出分片。
+
+    Args:
+        message_uuid: 目标消息 UUID。
+        user_id: 当前请求用户 ID。
+
+    Returns:
+        MessageTtsStream: 包含音频流与媒体类型的封装对象。
     """
 
     normalized_message_uuid = _normalize_message_uuid(message_uuid)
@@ -275,7 +366,15 @@ def build_message_tts_stream(
 
 
 def _build_start_session_payload(*, config: VolcengineTtsConfig) -> bytes:
-    """构造 `StartSession` 事件请求体。"""
+    """
+    构造 `StartSession` 事件请求体。
+
+    Args:
+        config: TTS 配置对象。
+
+    Returns:
+        bytes: JSON 编码后的请求载荷。
+    """
 
     payload = {
         "event": EventType.StartSession,
@@ -301,7 +400,16 @@ def _build_start_session_payload(*, config: VolcengineTtsConfig) -> bytes:
 
 
 def _build_task_request_payload(*, config: VolcengineTtsConfig, text: str) -> bytes:
-    """构造 `TaskRequest` 事件请求体。"""
+    """
+    构造 `TaskRequest` 事件请求体。
+
+    Args:
+        config: TTS 配置对象。
+        text: 待合成文本。
+
+    Returns:
+        bytes: JSON 编码后的请求载荷。
+    """
 
     payload = {
         "event": EventType.TaskRequest,
@@ -320,7 +428,15 @@ def _build_task_request_payload(*, config: VolcengineTtsConfig, text: str) -> by
 
 
 def _decode_payload(payload: bytes) -> str:
-    """将二进制载荷安全解码为文本，仅用于日志输出。"""
+    """
+    将二进制载荷安全解码为文本，仅用于日志输出。
+
+    Args:
+        payload: 原始二进制载荷。
+
+    Returns:
+        str: UTF-8 解码结果；解码失败时为空字符串。
+    """
 
     try:
         return payload.decode("utf-8")
@@ -333,6 +449,12 @@ def _extract_log_id(websocket: object) -> str:
     提取握手响应中的 `x-tt-logid`，便于启动日志追踪。
 
     不同 `websockets` 版本的响应对象结构略有差异，因此这里做防御式读取。
+
+    Args:
+        websocket: websockets 客户端对象。
+
+    Returns:
+        str: `x-tt-logid`；提取失败时为空字符串。
     """
 
     try:
@@ -359,17 +481,20 @@ async def verify_volcengine_tts_connection_on_startup() -> None:
     2. 配置不完整时打印提示并跳过；
     3. 配置完整时执行 websocket 握手与 `StartConnection/FinishConnection`；
     4. 失败时默认仅告警；若 `VOLCENGINE_TTS_STARTUP_FAIL_FAST=true` 则中断启动。
+
+    Returns:
+        None
     """
 
     if not is_volcengine_tts_startup_connect_enabled():
-        logger.info("Volcengine TTS startup connect is disabled.")
+        logger.info("文本转语音启动探活已禁用。")
         return
 
     try:
         config = resolve_volcengine_tts_config()
     except ServiceException as exc:
         logger.warning(
-            "Skip Volcengine TTS startup connect due to incomplete config: {message}",
+            "文本转语音启动探活配置不完整，跳过连接: {message}",
             message=exc.message,
         )
         if is_volcengine_tts_startup_fail_fast_enabled():
@@ -382,7 +507,7 @@ async def verify_volcengine_tts_connection_on_startup() -> None:
     started_at = time.monotonic()
 
     logger.info(
-        "Volcengine TTS startup connect begin endpoint={endpoint} connect_id={connect_id} resource_id={resource_id} voice_type={voice_type} encoding={encoding} sample_rate={sample_rate}",
+        "文本转语音启动探活开始 endpoint={endpoint} connect_id={connect_id} resource_id={resource_id} voice_type={voice_type} encoding={encoding} sample_rate={sample_rate}",
         endpoint=config.endpoint,
         connect_id=connect_id,
         resource_id=config.resource_id,
@@ -399,7 +524,7 @@ async def verify_volcengine_tts_connection_on_startup() -> None:
         )
         log_id = _extract_log_id(websocket)
         logger.info(
-            "Volcengine TTS websocket connected connect_id={connect_id} log_id={log_id}",
+            "文本转语音已连接远程服务 connect_id={connect_id} log_id={log_id}",
             connect_id=connect_id,
             log_id=log_id or "-",
         )
@@ -413,7 +538,7 @@ async def verify_volcengine_tts_connection_on_startup() -> None:
 
         elapsed_ms = int((time.monotonic() - started_at) * 1000)
         logger.info(
-            "Volcengine TTS startup handshake success connect_id={connect_id} elapsed_ms={elapsed_ms}",
+            "文本转语音连接成功 connect_id={connect_id} elapsed_ms={elapsed_ms}",
             connect_id=connect_id,
             elapsed_ms=elapsed_ms,
         )
@@ -425,12 +550,12 @@ async def verify_volcengine_tts_connection_on_startup() -> None:
             event_type=EventType.ConnectionFinished,
         )
         logger.info(
-            "Volcengine TTS startup connect closed connect_id={connect_id}",
+            "文本转语音启动探活连接已关闭 connect_id={connect_id}",
             connect_id=connect_id,
         )
     except Exception as exc:
         logger.opt(exception=exc).warning(
-            "Volcengine TTS startup connect failed connect_id={connect_id}",
+            "文本转语音启动探活失败 connect_id={connect_id}",
             connect_id=connect_id,
         )
         if is_volcengine_tts_startup_fail_fast_enabled():
@@ -457,7 +582,22 @@ def _persist_tts_usage_on_success(
         audio_bytes: int,
         duration_ms: int,
 ) -> None:
-    """持久化成功 TTS 调用明细，失败仅记录告警日志。"""
+    """
+    持久化成功 TTS 调用明细，失败仅记录告警日志。
+
+    Args:
+        usage_context: 调用上下文与计费信息。
+        config: TTS 配置对象。
+        connect_id: 上游连接 ID。
+        session_id: 上游会话 ID。
+        provider_log_id: 上游日志 ID。
+        audio_chunk_count: 音频分片数量。
+        audio_bytes: 音频总字节数。
+        duration_ms: 本次调用耗时（毫秒）。
+
+    Returns:
+        None
+    """
 
     try:
         add_message_tts_usage(
@@ -506,6 +646,13 @@ async def _stream_tts_audio(
     4. 持续读取 `AudioOnlyServer` 直到 `SessionFinished`
     5. 成功结束后写入 `message_tts_usages`
     6. FinishConnection 并关闭 websocket
+
+    Args:
+        usage_context: 调用上下文与计费信息。
+        config: TTS 配置对象。
+
+    Yields:
+        bytes: 上游返回的音频二进制分片。
     """
 
     websocket = None

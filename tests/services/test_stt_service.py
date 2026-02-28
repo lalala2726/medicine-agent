@@ -15,7 +15,7 @@ from app.core.speech.volcengine_tts_protocol import (
     SttServerMessage,
 )
 from app.schemas.auth import AuthUser
-from app.services.speech_stt_service import assistant_message_stt_stream
+from app.services.speech_stt_service import speech_stt_stream_service
 
 
 class _FakeFrontendWebSocket:
@@ -209,7 +209,7 @@ def test_speech_stt_service_closes_when_stt_config_invalid(monkeypatch: pytest.M
     websocket = _FakeFrontendWebSocket(messages=[])
 
     def _raise_config_error() -> VolcengineSttConfig:
-        raise ServiceException(message="VOLCENGINE_STT_APP_ID is not set")
+        raise ServiceException(message="VOLCENGINE_APP_ID is not set")
 
     monkeypatch.setattr(
         speech_stt_service_module,
@@ -218,7 +218,7 @@ def test_speech_stt_service_closes_when_stt_config_invalid(monkeypatch: pytest.M
     )
 
     asyncio.run(
-        assistant_message_stt_stream(
+        speech_stt_stream_service(
             websocket=websocket,  # type: ignore[arg-type]
             user=_build_user(),
         )

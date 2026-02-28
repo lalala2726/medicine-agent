@@ -1271,7 +1271,7 @@ def test_assistant_stt_websocket_rejects_without_authorization(monkeypatch):
 
     monkeypatch.setattr(
         speech_stt_module,
-        "assistant_message_stt_stream",
+        "speech_stt_stream_service",
         _fake_stt_service,
     )
 
@@ -1295,7 +1295,7 @@ def test_assistant_stt_websocket_rejects_without_permission(monkeypatch):
 
     monkeypatch.setattr(
         speech_stt_module,
-        "assistant_message_stt_stream",
+        "speech_stt_stream_service",
         _fake_stt_service,
     )
 
@@ -1323,7 +1323,7 @@ def test_assistant_stt_websocket_route_delegates_to_service(monkeypatch):
 
     monkeypatch.setattr(
         speech_stt_module,
-        "assistant_message_stt_stream",
+        "speech_stt_stream_service",
         _fake_stt_service,
     )
 
@@ -1353,7 +1353,7 @@ def test_assistant_stt_websocket_supports_token_query_key(monkeypatch):
 
     monkeypatch.setattr(
         speech_stt_module,
-        "assistant_message_stt_stream",
+        "speech_stt_stream_service",
         _fake_stt_service,
     )
 
@@ -1385,7 +1385,7 @@ def test_assistant_stt_websocket_route_can_return_timeout_event(monkeypatch):
 
     monkeypatch.setattr(
         speech_stt_module,
-        "assistant_message_stt_stream",
+        "speech_stt_stream_service",
         _fake_stt_service,
     )
 
@@ -1409,7 +1409,7 @@ def test_assistant_stt_websocket_route_can_return_protocol_error_event(monkeypat
 
     monkeypatch.setattr(
         speech_stt_module,
-        "assistant_message_stt_stream",
+        "speech_stt_stream_service",
         _fake_stt_service,
     )
 
@@ -1443,7 +1443,7 @@ def test_assistant_stt_websocket_query_token_forwarded_as_bearer(monkeypatch):
 
     monkeypatch.setattr(
         speech_stt_module,
-        "assistant_message_stt_stream",
+        "speech_stt_stream_service",
         _fake_stt_service,
     )
 

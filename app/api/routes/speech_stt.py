@@ -10,7 +10,7 @@ from app.core.security.auth_context import (
 )
 from app.core.security.pre_authorize import RoleCode
 from app.schemas.auth import AuthUser
-from app.services.speech_stt_service import assistant_message_stt_stream
+from app.services.speech_stt_service import speech_stt_stream_service
 from app.services.auth_service import verify_authorization
 
 router = APIRouter(prefix="/ws/speech/stt", tags=["语音识别"])
@@ -62,7 +62,7 @@ async def speech_stt_stream(websocket: WebSocket) -> None:
             await websocket.close(code=1008, reason="forbidden")
             return
 
-        await assistant_message_stt_stream(
+        await speech_stt_stream_service(
             websocket=websocket,
             user=current_user,
         )

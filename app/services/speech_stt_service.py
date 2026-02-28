@@ -9,7 +9,7 @@ from app.core.speech.stt.session import AdminAssistantSttSession, SttSessionErro
 from app.schemas.auth import AuthUser
 
 
-async def assistant_message_stt_stream(
+async def speech_stt_stream_service(
         *,
         websocket: WebSocket,
         user: AuthUser,
@@ -69,4 +69,4 @@ async def assistant_message_stt_stream(
             pass
 
 
-__all__ = ["assistant_message_stt_stream"]
+__all__ = ["speech_stt_stream_service"]

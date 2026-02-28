@@ -14,7 +14,9 @@ from app.core.speech.stt.config import VolcengineSttConfig
 from app.core.speech.volcengine_tts_protocol import MsgType, SttServerMessage
 from app.schemas.auth import AuthUser
 
+# 前端单个音频二进制包大小上限（bytes）。
 MAX_FRONTEND_AUDIO_CHUNK_SIZE = 512 * 1024
+# 收到 finish 后等待上游最终结果的最大时长（秒）。
 FINISH_WAIT_MAX_SECONDS = 8
 
 
@@ -24,7 +26,12 @@ class SttSessionError(RuntimeError):
 
 @dataclass(frozen=True)
 class SttSessionCloseResult:
-    """STT 会话结束状态。"""
+    """
+    STT 会话结束状态。
+
+    Attributes:
+        reason: 会话结束原因（如 `client_finish` / `timeout` / `upstream_end`）。
+    """
 
     reason: str
 
@@ -40,6 +47,16 @@ class AdminAssistantSttSession:
             config: VolcengineSttConfig,
             stt_client_factory: Any = VolcengineSttClient,
     ) -> None:
+        """
+        初始化前后端 STT 桥接会话。
+
+        Args:
+            websocket: 下游前端 WebSocket 连接。
+            user: 当前认证用户信息。
+            config: STT 配置对象。
+            stt_client_factory: 上游 STT 客户端工厂，默认 `VolcengineSttClient`。
+        """
+
         self._websocket = websocket
         self._user = user
         self._config = config
@@ -54,6 +71,13 @@ class AdminAssistantSttSession:
         self._close_sent = False
 
     async def run(self) -> SttSessionCloseResult:
+        """
+        驱动 STT 会话主循环。
+
+        Returns:
+            SttSessionCloseResult: 会话结束原因。
+        """
+
         await self._websocket.accept()
         try:
             while True:
@@ -85,6 +109,16 @@ class AdminAssistantSttSession:
             await self._cleanup()
 
     async def _handle_frontend_text(self, text_payload: str) -> bool:
+        """
+        处理前端文本控制指令（start/finish）。
+
+        Args:
+            text_payload: 文本帧内容（JSON）。
+
+        Returns:
+            bool: `True` 表示会话应立即结束。
+        """
+
         payload = self._parse_json_payload(text_payload)
         message_type = payload.get("type")
 
@@ -114,6 +148,16 @@ class AdminAssistantSttSession:
         raise SttSessionError(f"不支持的消息类型: {message_type!r}")
 
     async def _handle_frontend_audio(self, audio_payload: bytes) -> None:
+        """
+        处理前端音频二进制分包。
+
+        Args:
+            audio_payload: 音频字节。
+
+        Returns:
+            None
+        """
+
         if not self._started:
             raise SttSessionError("请先发送 start")
         if self._finish_requested:
@@ -123,6 +167,16 @@ class AdminAssistantSttSession:
         await self._stt_client.send_audio_chunk(audio_payload, is_last=False)
 
     async def _start_stt_stream(self, payload: dict[str, Any]) -> None:
+        """
+        启动上游 STT 识别流并回发 started 事件。
+
+        Args:
+            payload: 前端 `start` 控制包 JSON。
+
+        Returns:
+            None
+        """
+
         request = self._build_start_request(payload.get("request"))
         await self._stt_client.connect()
         await self._stt_client.send_full_client_request(
@@ -141,6 +195,13 @@ class AdminAssistantSttSession:
         )
 
     async def _forward_upstream_messages(self) -> None:
+        """
+        后台任务：持续消费上游消息并转发给前端。
+
+        Returns:
+            None
+        """
+
         try:
             while True:
                 message = await self._stt_client.receive_server_message()
@@ -156,6 +217,16 @@ class AdminAssistantSttSession:
             self._upstream_ended.set()
 
     async def _forward_single_upstream_message(self, message: SttServerMessage) -> None:
+        """
+        转发单条上游消息到前端协议。
+
+        Args:
+            message: 上游解析后的 STT 消息。
+
+        Returns:
+            None
+        """
+
         if message.message_type == MsgType.Error:
             payload = message.payload_json if isinstance(message.payload_json, dict) else {}
             message_text = str(payload.get("message") or payload.get("error") or "语音识别服务异常")
@@ -185,6 +256,13 @@ class AdminAssistantSttSession:
         )
 
     async def _handle_upstream_completion(self) -> None:
+        """
+        处理上游识别结束事件并完成前端收口。
+
+        Returns:
+            None
+        """
+
         if self._upstream_task is not None:
             task = self._upstream_task
             self._upstream_task = None
@@ -207,6 +285,16 @@ class AdminAssistantSttSession:
         await self._close_websocket(code=1000)
 
     async def _wait_upstream_until_done(self) -> None:
+        """
+        在 finish 后等待上游最终包。
+
+        Returns:
+            None
+
+        Raises:
+            SttSessionError: 等待超时或上游返回错误。
+        """
+
         timeout = self._remaining_timeout_seconds()
         if timeout is None:
             timeout = FINISH_WAIT_MAX_SECONDS
@@ -226,6 +314,13 @@ class AdminAssistantSttSession:
             raise SttSessionError(self._upstream_error)
 
     async def _handle_timeout(self) -> None:
+        """
+        处理会话超时并主动关闭连接。
+
+        Returns:
+            None
+        """
+
         if self._started and not self._finish_requested:
             try:
                 await self._stt_client.send_audio_chunk(b"", is_last=True)
@@ -240,6 +335,16 @@ class AdminAssistantSttSession:
         await self._close_websocket(code=1000)
 
     async def _wait_for_frontend_or_upstream(self, timeout: float | None) -> dict[str, Any]:
+        """
+        等待前端消息或上游任务完成（谁先到先处理）。
+
+        Args:
+            timeout: 本轮等待超时时间（秒）；`None` 表示不设上限。
+
+        Returns:
+            dict[str, Any]: 描述就绪事件的结构化结果。
+        """
+
         frontend_task = asyncio.create_task(self._websocket.receive())
         wait_tasks: set[asyncio.Task[Any]] = {frontend_task}
         upstream_task = self._upstream_task
@@ -276,6 +381,13 @@ class AdminAssistantSttSession:
         return {"type": "frontend", "message": message}
 
     async def _cleanup(self) -> None:
+        """
+        会话结束后清理任务与连接资源。
+
+        Returns:
+            None
+        """
+
         upstream_task = self._upstream_task
         self._upstream_task = None
         if upstream_task is not None and not upstream_task.done():
@@ -289,6 +401,13 @@ class AdminAssistantSttSession:
         await self._stt_client.close()
 
     def _remaining_timeout_seconds(self) -> float | None:
+        """
+        计算当前距离会话超时还剩余的秒数。
+
+        Returns:
+            float | None: 剩余秒数；未启动会话时返回 `None`。
+        """
+
         if not self._started:
             return None
         if self._deadline_at is None:
@@ -296,9 +415,29 @@ class AdminAssistantSttSession:
         return max(self._deadline_at - time.monotonic(), 0.0)
 
     async def _send_json(self, payload: dict[str, Any]) -> None:
+        """
+        向前端发送 JSON 事件。
+
+        Args:
+            payload: 事件载荷。
+
+        Returns:
+            None
+        """
+
         await self._websocket.send_json(payload)
 
     async def _close_websocket(self, *, code: int) -> None:
+        """
+        幂等关闭前端 WebSocket。
+
+        Args:
+            code: 关闭状态码。
+
+        Returns:
+            None
+        """
+
         if self._close_sent:
             return
         self._close_sent = True
@@ -309,6 +448,19 @@ class AdminAssistantSttSession:
 
     @staticmethod
     def _parse_json_payload(text_payload: str) -> dict[str, Any]:
+        """
+        解析并校验文本控制消息 JSON。
+
+        Args:
+            text_payload: 前端文本帧内容。
+
+        Returns:
+            dict[str, Any]: 解析后的 JSON 对象。
+
+        Raises:
+            SttSessionError: 非法 JSON 或非 object 结构。
+        """
+
         try:
             parsed = json.loads(text_payload)
         except json.JSONDecodeError as exc:
@@ -319,6 +471,19 @@ class AdminAssistantSttSession:
 
     @staticmethod
     def _build_start_request(request_payload: Any) -> SttStartRequest:
+        """
+        把前端 start.request 载荷转换为 `SttStartRequest`。
+
+        Args:
+            request_payload: 前端请求参数对象。
+
+        Returns:
+            SttStartRequest: 规范化后的上游请求参数。
+
+        Raises:
+            SttSessionError: 字段类型或取值不符合要求。
+        """
+
         if request_payload is None:
             request_payload = {}
         if not isinstance(request_payload, dict):

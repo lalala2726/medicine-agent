@@ -6,19 +6,40 @@ from dataclasses import dataclass
 
 from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException
-from app.core.speech.env_utils import resolve_required_env
+from app.core.speech.env_utils import (
+    parse_positive_int,
+    resolve_volcengine_shared_auth,
+)
 
+# 火山双向 TTS 默认接入地址。
 DEFAULT_VOLCENGINE_TTS_ENDPOINT = "wss://openspeech.bytedance.com/api/v3/tts/bidirection"
+# 默认输出编码。
 DEFAULT_VOLCENGINE_TTS_ENCODING = "mp3"
+# 默认输出采样率（Hz）。
 DEFAULT_VOLCENGINE_TTS_SAMPLE_RATE = 24000
+# 单次请求送入 TTS 的最大字符数默认值。
 DEFAULT_VOLCENGINE_TTS_MAX_TEXT_CHARS = 300
+# 默认开启启动期连通性探活。
 DEFAULT_VOLCENGINE_TTS_STARTUP_CONNECT_ENABLED = True
+# 默认探活失败不阻断服务启动。
 DEFAULT_VOLCENGINE_TTS_STARTUP_FAIL_FAST = False
 
 
 @dataclass(frozen=True)
 class VolcengineTtsConfig:
-    """火山双向 TTS 运行时配置。"""
+    """
+    火山双向 TTS 运行时配置。
+
+    Attributes:
+        endpoint: 上游 TTS WebSocket 地址。
+        app_id: 火山应用 ID（与 STT 共用）。
+        access_token: 火山访问令牌（与 STT 共用）。
+        resource_id: TTS 资源 ID。
+        voice_type: 默认音色类型。
+        encoding: 输出编码格式。
+        sample_rate: 输出采样率。
+        max_text_chars: 文本截断上限。
+    """
 
     endpoint: str
     app_id: str
@@ -44,28 +65,17 @@ def infer_resource_id(voice_type: str) -> str:
     return "volc.service_type.10029"
 
 
-def _parse_positive_int(*, value: str | None, name: str, default: int) -> int:
-    """解析正整数配置；空值返回默认值。"""
-
-    if value is None or value.strip() == "":
-        return default
-    try:
-        resolved = int(value)
-    except ValueError as exc:
-        raise ServiceException(
-            code=ResponseCode.INTERNAL_ERROR,
-            message=f"{name} must be an integer",
-        ) from exc
-    if resolved <= 0:
-        raise ServiceException(
-            code=ResponseCode.INTERNAL_ERROR,
-            message=f"{name} must be greater than 0",
-        )
-    return resolved
-
-
 def _parse_bool(*, value: str | None, default: bool) -> bool:
-    """解析布尔环境变量。"""
+    """
+    解析布尔环境变量。
+
+    Args:
+        value: 原始字符串值，可为 `None`。
+        default: 无值或空值时的回退值。
+
+    Returns:
+        bool: 解析后的布尔值。
+    """
 
     if value is None:
         return default
@@ -83,10 +93,15 @@ def resolve_volcengine_tts_config() -> VolcengineTtsConfig:
     - 前端仅传 `message_uuid`，音色/编码/采样率全部由服务端配置控制；
     - `VOLCENGINE_TTS_RESOURCE_ID` 为空时，根据音色自动推导；
     - 文本最大字符数由 `VOLCENGINE_TTS_MAX_TEXT_CHARS` 控制。
+
+    Returns:
+        VolcengineTtsConfig: 可直接用于 TTS 建连与请求发送的配置对象。
+
+    Raises:
+        ServiceException: 必填项缺失或配置值非法时抛出。
     """
 
-    app_id = resolve_required_env("VOLCENGINE_TTS_APP_ID")
-    access_token = resolve_required_env("VOLCENGINE_TTS_ACCESS_TOKEN")
+    app_id, access_token = resolve_volcengine_shared_auth()
     endpoint = (os.getenv("VOLCENGINE_TTS_ENDPOINT") or DEFAULT_VOLCENGINE_TTS_ENDPOINT).strip()
     if not endpoint:
         endpoint = DEFAULT_VOLCENGINE_TTS_ENDPOINT
@@ -105,12 +120,12 @@ def resolve_volcengine_tts_config() -> VolcengineTtsConfig:
     if not resolved_encoding:
         resolved_encoding = DEFAULT_VOLCENGINE_TTS_ENCODING
 
-    resolved_sample_rate = _parse_positive_int(
+    resolved_sample_rate = parse_positive_int(
         value=os.getenv("VOLCENGINE_TTS_SAMPLE_RATE"),
         name="VOLCENGINE_TTS_SAMPLE_RATE",
         default=DEFAULT_VOLCENGINE_TTS_SAMPLE_RATE,
     )
-    resolved_max_text_chars = _parse_positive_int(
+    resolved_max_text_chars = parse_positive_int(
         value=os.getenv("VOLCENGINE_TTS_MAX_TEXT_CHARS"),
         name="VOLCENGINE_TTS_MAX_TEXT_CHARS",
         default=DEFAULT_VOLCENGINE_TTS_MAX_TEXT_CHARS,
@@ -132,7 +147,12 @@ def resolve_volcengine_tts_config() -> VolcengineTtsConfig:
 
 
 def is_volcengine_tts_startup_connect_enabled() -> bool:
-    """是否在服务启动阶段执行 TTS 连接探活。"""
+    """
+    判断是否在服务启动阶段执行 TTS 连接探活。
+
+    Returns:
+        bool: `True` 表示启用启动探活。
+    """
 
     return _parse_bool(
         value=os.getenv("VOLCENGINE_TTS_STARTUP_CONNECT_ENABLED"),
@@ -141,7 +161,12 @@ def is_volcengine_tts_startup_connect_enabled() -> bool:
 
 
 def is_volcengine_tts_startup_fail_fast_enabled() -> bool:
-    """启动探活失败时是否中断服务启动。"""
+    """
+    判断启动探活失败时是否中断服务启动。
+
+    Returns:
+        bool: `True` 表示探活失败即抛错阻断启动。
+    """
 
     return _parse_bool(
         value=os.getenv("VOLCENGINE_TTS_STARTUP_FAIL_FAST"),
@@ -154,7 +179,16 @@ def build_volcengine_tts_headers(
         *,
         connect_id: str | None = None,
 ) -> dict[str, str]:
-    """构造连接火山双向 TTS 所需的 WebSocket 请求头。"""
+    """
+    构造连接火山双向 TTS 所需的 WebSocket 请求头。
+
+    Args:
+        config: TTS 配置对象。
+        connect_id: 业务连接标识；为空时自动生成 UUID。
+
+    Returns:
+        dict[str, str]: 可直接传给 websocket 客户端的请求头。
+    """
 
     resolved_connect_id = (connect_id or str(uuid.uuid4())).strip()
     if not resolved_connect_id:

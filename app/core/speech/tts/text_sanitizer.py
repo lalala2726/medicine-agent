@@ -8,15 +8,24 @@ import string
 class TtsTextSanitizer:
     """TTS 文本清洗工具，专用于把复杂回答转为可播报文本。"""
 
+    # Markdown 代码块匹配（含多行）。
     _MARKDOWN_CODE_BLOCK_PATTERN = re.compile(r"```[\s\S]*?```")
+    # Markdown 行内代码匹配。
     _INLINE_CODE_PATTERN = re.compile(r"`[^`\n]*`")
+    # URL 匹配（http/https/www）。
     _URL_PATTERN = re.compile(r"(https?://[^\s)\]}>]+|www\.[^\s)\]}>]+)", re.IGNORECASE)
+    # HTML 标签匹配。
     _HTML_TAG_PATTERN = re.compile(r"<[^>]+>")
+    # Markdown 图片语法匹配。
     _MARKDOWN_IMAGE_PATTERN = re.compile(r"!\[[^\]]*]\([^)\n]*\)")
+    # Markdown 链接语法匹配。
     _MARKDOWN_LINK_PATTERN = re.compile(r"\[[^\]]*]\([^)\n]*\)")
+    # 连续空白归一化匹配。
     _WHITESPACE_PATTERN = re.compile(r"\s+")
 
+    # 允许播报的 ASCII 标点（排除 markdown 控制字符）。
     _ASCII_PUNCTUATION = set(string.punctuation) - {"#", "*", "-", "_"}
+    # 允许播报的常用中文标点。
     _CHINESE_PUNCTUATION = set("，。！？；：、")
 
     @classmethod
@@ -33,6 +42,12 @@ class TtsTextSanitizer:
         6. 删除 JSON/结构化片段；
         7. 白名单过滤；
         8. 归一化空白。
+
+        Args:
+            raw_text: 原始待播报文本。
+
+        Returns:
+            str: 清洗后的可播报文本；为空时返回空字符串。
         """
 
         if not raw_text:
@@ -52,7 +67,15 @@ class TtsTextSanitizer:
 
     @classmethod
     def is_whitelist_char(cls, ch: str) -> bool:
-        """判断字符是否在白名单中。"""
+        """
+        判断字符是否在白名单中。
+
+        Args:
+            ch: 待判断的单字符。
+
+        Returns:
+            bool: `True` 表示字符可保留。
+        """
 
         if not ch:
             return False
@@ -74,6 +97,12 @@ class TtsTextSanitizer:
         - 通过 `{}`、`[]` 扫描候选片段；
         - 对候选片段进行结构化判定（JSON 解析 + 启发式规则）；
         - 将命中的区间整段移除。
+
+        Args:
+            text: 待处理文本。
+
+        Returns:
+            str: 去除结构化片段后的文本。
         """
 
         intervals: list[tuple[int, int]] = []
@@ -120,7 +149,15 @@ class TtsTextSanitizer:
 
     @staticmethod
     def _looks_like_structured_segment(segment: str) -> bool:
-        """判定片段是否疑似 JSON 或结构化数据。"""
+        """
+        判定片段是否疑似 JSON 或结构化数据。
+
+        Args:
+            segment: 文本片段。
+
+        Returns:
+            bool: `True` 表示应按结构化片段移除。
+        """
 
         s = segment.strip()
         if len(s) < 2:

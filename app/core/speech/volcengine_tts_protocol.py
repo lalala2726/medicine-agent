@@ -32,19 +32,27 @@ class MsgTypeFlagBits(IntEnum):
 
 
 class VersionBits(IntEnum):
+    """协议版本位定义。"""
+
     Version1 = 1
 
 
 class HeaderSizeBits(IntEnum):
+    """协议头长度（单位：4字节）。"""
+
     HeaderSize4 = 1
 
 
 class SerializationBits(IntEnum):
+    """载荷序列化方式。"""
+
     Raw = 0
     JSON = 0b0001
 
 
 class CompressionBits(IntEnum):
+    """载荷压缩方式。"""
+
     None_ = 0
     Gzip = 0b0001
 
@@ -109,7 +117,15 @@ class Message:
 
     @classmethod
     def from_bytes(cls, data: bytes) -> "Message":
-        """把二进制帧反序列化为 `Message` 对象。"""
+        """
+        把二进制帧反序列化为 `Message` 对象。
+
+        Args:
+            data: 原始协议二进制帧。
+
+        Returns:
+            Message: 解析后的消息对象。
+        """
 
         if len(data) < 3:
             raise ValueError(f"Invalid frame length: {len(data)}")
@@ -120,7 +136,12 @@ class Message:
         return msg
 
     def marshal(self) -> bytes:
-        """把 `Message` 对象序列化为二进制帧。"""
+        """
+        把 `Message` 对象序列化为二进制帧。
+
+        Returns:
+            bytes: 可直接发送的协议帧。
+        """
 
         buffer = io.BytesIO()
         header = [
@@ -155,7 +176,15 @@ class Message:
         return buffer.getvalue()
 
     def unmarshal(self, data: bytes) -> None:
-        """从二进制帧中解析并回填当前对象字段。"""
+        """
+        从二进制帧中解析并回填当前对象字段。
+
+        Args:
+            data: 原始协议二进制帧。
+
+        Returns:
+            None
+        """
 
         buffer = io.BytesIO(data)
         version_and_header_size = buffer.read(1)[0]
@@ -195,9 +224,13 @@ class Message:
         self._read_payload(buffer)
 
     def _write_event(self, buffer: io.BytesIO) -> None:
+        """写入事件类型字段。"""
+
         buffer.write(struct.pack(">i", self.event))
 
     def _write_session_id(self, buffer: io.BytesIO) -> None:
+        """按协议规则写入会话 ID。"""
+
         if self.event in (
                 EventType.StartConnection,
                 EventType.FinishConnection,
@@ -211,17 +244,25 @@ class Message:
             buffer.write(payload)
 
     def _write_sequence(self, buffer: io.BytesIO) -> None:
+        """写入消息序号字段。"""
+
         buffer.write(struct.pack(">i", self.sequence))
 
     def _write_error_code(self, buffer: io.BytesIO) -> None:
+        """写入错误码字段。"""
+
         buffer.write(struct.pack(">I", self.error_code))
 
     def _write_payload(self, buffer: io.BytesIO) -> None:
+        """写入 payload 长度与载荷本体。"""
+
         buffer.write(struct.pack(">I", len(self.payload)))
         if self.payload:
             buffer.write(self.payload)
 
     def _read_event(self, buffer: io.BytesIO) -> None:
+        """读取事件类型字段。"""
+
         data = buffer.read(4)
         if data:
             raw_event = struct.unpack(">i", data)[0]
@@ -233,6 +274,8 @@ class Message:
                 self.event = EventType.None_
 
     def _read_session_id(self, buffer: io.BytesIO) -> None:
+        """读取会话 ID 字段。"""
+
         if self.event in (
                 EventType.StartConnection,
                 EventType.FinishConnection,
@@ -251,6 +294,8 @@ class Message:
                 self.session_id = session_id_bytes.decode("utf-8")
 
     def _read_connect_id(self, buffer: io.BytesIO) -> None:
+        """读取连接 ID 字段。"""
+
         if self.event not in (
                 EventType.ConnectionStarted,
                 EventType.ConnectionFailed,
@@ -265,16 +310,22 @@ class Message:
             self.connect_id = buffer.read(size).decode("utf-8")
 
     def _read_sequence(self, buffer: io.BytesIO) -> None:
+        """读取消息序号字段。"""
+
         data = buffer.read(4)
         if data:
             self.sequence = struct.unpack(">i", data)[0]
 
     def _read_error_code(self, buffer: io.BytesIO) -> None:
+        """读取错误码字段。"""
+
         data = buffer.read(4)
         if data:
             self.error_code = struct.unpack(">I", data)[0]
 
     def _read_payload(self, buffer: io.BytesIO) -> None:
+        """读取 payload 长度与载荷本体。"""
+
         data = buffer.read(4)
         if not data:
             return
@@ -299,7 +350,16 @@ class SttServerMessage:
 
 
 def compress_payload(payload: bytes, compression: CompressionBits) -> bytes:
-    """按协议压缩 payload。"""
+    """
+    按协议压缩 payload。
+
+    Args:
+        payload: 原始载荷。
+        compression: 压缩方式。
+
+    Returns:
+        bytes: 压缩后的载荷字节。
+    """
 
     if compression == CompressionBits.None_:
         return payload
@@ -309,7 +369,16 @@ def compress_payload(payload: bytes, compression: CompressionBits) -> bytes:
 
 
 def decompress_payload(payload: bytes, compression: CompressionBits) -> bytes:
-    """按协议解压 payload。"""
+    """
+    按协议解压 payload。
+
+    Args:
+        payload: 压缩载荷。
+        compression: 压缩方式。
+
+    Returns:
+        bytes: 解压后的载荷字节。
+    """
 
     if compression == CompressionBits.None_:
         return payload
@@ -319,7 +388,16 @@ def decompress_payload(payload: bytes, compression: CompressionBits) -> bytes:
 
 
 def deserialize_payload(payload: bytes, serialization: SerializationBits) -> Any | None:
-    """按协议序列化方式解析 payload。"""
+    """
+    按协议序列化方式解析 payload。
+
+    Args:
+        payload: 解压后的载荷字节。
+        serialization: 序列化方式。
+
+    Returns:
+        Any | None: JSON 模式返回 Python 对象；Raw 或空载荷返回 `None`。
+    """
 
     if not payload:
         return None
@@ -331,18 +409,52 @@ def deserialize_payload(payload: bytes, serialization: SerializationBits) -> Any
 
 
 def _read_uint32(frame: bytes, offset: int) -> tuple[int, int]:
+    """
+    从帧中按大端读取无符号 32 位整数。
+
+    Args:
+        frame: 原始协议帧。
+        offset: 当前读取偏移量。
+
+    Returns:
+        tuple[int, int]: `(读取值, 新偏移量)`。
+    """
+
     if len(frame) < offset + 4:
         raise ValueError("invalid frame: insufficient bytes for uint32")
     return struct.unpack(">I", frame[offset: offset + 4])[0], offset + 4
 
 
 def _read_int32(frame: bytes, offset: int) -> tuple[int, int]:
+    """
+    从帧中按大端读取有符号 32 位整数。
+
+    Args:
+        frame: 原始协议帧。
+        offset: 当前读取偏移量。
+
+    Returns:
+        tuple[int, int]: `(读取值, 新偏移量)`。
+    """
+
     if len(frame) < offset + 4:
         raise ValueError("invalid frame: insufficient bytes for int32")
     return struct.unpack(">i", frame[offset: offset + 4])[0], offset + 4
 
 
 def _read_payload_bytes(frame: bytes, offset: int, size: int) -> tuple[bytes, int]:
+    """
+    按指定长度从帧中读取 payload。
+
+    Args:
+        frame: 原始协议帧。
+        offset: 当前读取偏移量。
+        size: 目标读取长度。
+
+    Returns:
+        tuple[bytes, int]: `(payload 字节, 新偏移量)`。
+    """
+
     if size < 0:
         raise ValueError("invalid frame: payload size must be >= 0")
     end = offset + size
@@ -416,7 +528,15 @@ def parse_stt_server_message(frame: bytes) -> SttServerMessage:
 
 
 async def receive_message(websocket: Any) -> Message:
-    """从 websocket 接收一帧并解析为协议消息对象。"""
+    """
+    从 websocket 接收一帧并解析为协议消息对象。
+
+    Args:
+        websocket: 已连接的 websocket 客户端对象。
+
+    Returns:
+        Message: 解析后的协议消息。
+    """
 
     data = await websocket.recv()
     if isinstance(data, str):
@@ -432,7 +552,17 @@ async def wait_for_event(
         msg_type: MsgType,
         event_type: EventType,
 ) -> Message:
-    """阻塞等待指定类型与事件的协议消息。"""
+    """
+    阻塞等待指定类型与事件的协议消息。
+
+    Args:
+        websocket: 已连接的 websocket 客户端对象。
+        msg_type: 目标消息类型。
+        event_type: 目标事件类型。
+
+    Returns:
+        Message: 命中的协议消息。
+    """
 
     while True:
         msg = await receive_message(websocket)
@@ -444,7 +574,15 @@ async def wait_for_event(
 
 
 async def start_connection(websocket: Any) -> None:
-    """发送 `StartConnection` 事件。"""
+    """
+    发送 `StartConnection` 事件。
+
+    Args:
+        websocket: 已连接 websocket。
+
+    Returns:
+        None
+    """
 
     msg = Message(type=MsgType.FullClientRequest, flag=MsgTypeFlagBits.WithEvent)
     msg.event = EventType.StartConnection
@@ -453,7 +591,15 @@ async def start_connection(websocket: Any) -> None:
 
 
 async def finish_connection(websocket: Any) -> None:
-    """发送 `FinishConnection` 事件。"""
+    """
+    发送 `FinishConnection` 事件。
+
+    Args:
+        websocket: 已连接 websocket。
+
+    Returns:
+        None
+    """
 
     msg = Message(type=MsgType.FullClientRequest, flag=MsgTypeFlagBits.WithEvent)
     msg.event = EventType.FinishConnection
@@ -462,7 +608,17 @@ async def finish_connection(websocket: Any) -> None:
 
 
 async def start_session(websocket: Any, payload: bytes, session_id: str) -> None:
-    """发送 `StartSession` 事件。"""
+    """
+    发送 `StartSession` 事件。
+
+    Args:
+        websocket: 已连接 websocket。
+        payload: 事件载荷。
+        session_id: 会话 ID。
+
+    Returns:
+        None
+    """
 
     msg = Message(type=MsgType.FullClientRequest, flag=MsgTypeFlagBits.WithEvent)
     msg.event = EventType.StartSession
@@ -472,7 +628,16 @@ async def start_session(websocket: Any, payload: bytes, session_id: str) -> None
 
 
 async def finish_session(websocket: Any, session_id: str) -> None:
-    """发送 `FinishSession` 事件。"""
+    """
+    发送 `FinishSession` 事件。
+
+    Args:
+        websocket: 已连接 websocket。
+        session_id: 会话 ID。
+
+    Returns:
+        None
+    """
 
     msg = Message(type=MsgType.FullClientRequest, flag=MsgTypeFlagBits.WithEvent)
     msg.event = EventType.FinishSession
@@ -482,7 +647,17 @@ async def finish_session(websocket: Any, session_id: str) -> None:
 
 
 async def task_request(websocket: Any, payload: bytes, session_id: str) -> None:
-    """发送 `TaskRequest` 事件。"""
+    """
+    发送 `TaskRequest` 事件。
+
+    Args:
+        websocket: 已连接 websocket。
+        payload: 任务请求载荷。
+        session_id: 会话 ID。
+
+    Returns:
+        None
+    """
 
     msg = Message(type=MsgType.FullClientRequest, flag=MsgTypeFlagBits.WithEvent)
     msg.event = EventType.TaskRequest

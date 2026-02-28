@@ -4,17 +4,30 @@ import os
 import uuid
 from dataclasses import dataclass
 
-from app.core.codes import ResponseCode
-from app.core.exception.exceptions import ServiceException
-from app.core.speech.env_utils import resolve_required_env
+from app.core.speech.env_utils import (
+    parse_positive_int,
+    resolve_required_env,
+    resolve_volcengine_shared_auth,
+)
 
+# 火山实时 STT 默认接入地址（双向流式优化版）。
 DEFAULT_VOLCENGINE_STT_ENDPOINT = "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async"
+# 单次 STT 会话最大时长默认值（秒）。
 DEFAULT_VOLCENGINE_STT_MAX_DURATION_SECONDS = 60
 
 
 @dataclass(frozen=True)
 class VolcengineSttConfig:
-    """火山实时 STT 运行时配置。"""
+    """
+    火山实时 STT 运行时配置。
+
+    Attributes:
+        endpoint: 上游 STT WebSocket 地址。
+        app_id: 火山应用 ID（与 TTS 共用）。
+        access_token: 火山访问令牌（与 TTS 共用）。
+        resource_id: STT 资源 ID（如 `volc.seedasr.sauc.duration`）。
+        max_duration_seconds: 单连接最大识别时长（秒）。
+    """
 
     endpoint: str
     app_id: str
@@ -23,34 +36,23 @@ class VolcengineSttConfig:
     max_duration_seconds: int
 
 
-def _parse_positive_int(*, value: str | None, name: str, default: int) -> int:
-    if value is None or value.strip() == "":
-        return default
-    try:
-        resolved = int(value)
-    except ValueError as exc:
-        raise ServiceException(
-            code=ResponseCode.INTERNAL_ERROR,
-            message=f"{name} must be an integer",
-        ) from exc
-    if resolved <= 0:
-        raise ServiceException(
-            code=ResponseCode.INTERNAL_ERROR,
-            message=f"{name} must be greater than 0",
-        )
-    return resolved
-
-
 def resolve_volcengine_stt_config() -> VolcengineSttConfig:
-    """从环境变量解析实时 STT 配置。"""
+    """
+    从环境变量解析实时 STT 配置。
 
-    app_id = resolve_required_env("VOLCENGINE_STT_APP_ID")
-    access_token = resolve_required_env("VOLCENGINE_STT_ACCESS_TOKEN")
+    Returns:
+        VolcengineSttConfig: 解析完成且可直接用于建连的配置对象。
+
+    Raises:
+        ServiceException: 必填配置缺失或数值配置非法时抛出。
+    """
+
+    app_id, access_token = resolve_volcengine_shared_auth()
     resource_id = resolve_required_env("VOLCENGINE_STT_RESOURCE_ID")
     endpoint = (os.getenv("VOLCENGINE_STT_ENDPOINT") or DEFAULT_VOLCENGINE_STT_ENDPOINT).strip()
     if not endpoint:
         endpoint = DEFAULT_VOLCENGINE_STT_ENDPOINT
-    max_duration_seconds = _parse_positive_int(
+    max_duration_seconds = parse_positive_int(
         value=os.getenv("VOLCENGINE_STT_MAX_DURATION_SECONDS"),
         name="VOLCENGINE_STT_MAX_DURATION_SECONDS",
         default=DEFAULT_VOLCENGINE_STT_MAX_DURATION_SECONDS,
@@ -69,7 +71,16 @@ def build_volcengine_stt_headers(
         *,
         connect_id: str | None = None,
 ) -> dict[str, str]:
-    """构造连接火山实时 STT 所需 websocket 请求头。"""
+    """
+    构造连接火山实时 STT 所需 websocket 请求头。
+
+    Args:
+        config: STT 配置对象。
+        connect_id: 业务侧连接标识；为空时自动生成 UUID。
+
+    Returns:
+        dict[str, str]: 可直接传给 websocket 客户端的请求头。
+    """
 
     resolved_connect_id = (connect_id or str(uuid.uuid4())).strip()
     if not resolved_connect_id:

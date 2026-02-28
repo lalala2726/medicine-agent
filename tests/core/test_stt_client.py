@@ -58,7 +58,7 @@ def test_verify_volcengine_stt_connection_on_startup_skips_when_config_invalid(
         lambda: (_ for _ in ()).throw(
             ServiceException(
                 code=ResponseCode.INTERNAL_ERROR,
-                message="VOLCENGINE_STT_APP_ID is not set",
+                message="VOLCENGINE_APP_ID is not set",
             )
         ),
     )
