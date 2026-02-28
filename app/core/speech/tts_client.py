@@ -32,6 +32,7 @@ from app.core.speech.volcengine_tts_protocol import (
 )
 from app.schemas.document.message import MessageRole
 from app.services.conversation_service import get_admin_conversation_by_id
+from app.services.message_tts_usage_service import add_message_tts_usage
 from app.services.message_service import get_message_by_uuid
 
 MAX_WS_MESSAGE_SIZE = 10 * 1024 * 1024
@@ -53,6 +54,48 @@ class MessageTtsStream:
     media_type: str
 
 
+@dataclass(frozen=True)
+class PreparedTtsTextDetail:
+    """TTS 文本预处理结果。"""
+
+    raw_text: str
+    sanitized_text: str
+    sent_text: str
+    source_text_chars: int
+    sanitized_text_chars: int
+    billable_chars: int
+    max_text_chars: int
+    is_truncated: bool
+
+
+@dataclass(frozen=True)
+class TtsMessageContext:
+    """消息转语音的已校验消息上下文。"""
+
+    message_uuid: str
+    conversation_id: str
+    conversation_uuid: str
+    user_id: int
+    raw_text: str
+
+
+@dataclass(frozen=True)
+class TtsUsageContext:
+    """TTS 成功计量落库所需上下文。"""
+
+    usage_uuid: str
+    message_uuid: str
+    conversation_id: str
+    conversation_uuid: str
+    user_id: int
+    sent_text: str
+    source_text_chars: int
+    sanitized_text_chars: int
+    billable_chars: int
+    max_text_chars: int
+    is_truncated: bool
+
+
 def resolve_audio_media_type(encoding: str) -> str:
     """根据音频编码推导 HTTP `Content-Type`。"""
 
@@ -66,7 +109,7 @@ def prepare_tts_text(
         *,
         raw_text: str,
         max_text_chars: int,
-) -> str:
+) -> PreparedTtsTextDetail:
     """
     对待合成文本执行发送前处理。
 
@@ -83,8 +126,19 @@ def prepare_tts_text(
             message="消息清洗后为空，无法转语音",
         )
 
+    source_text_chars = len(raw_text)
+    sanitized_text_chars = len(sanitized_text)
     if len(sanitized_text) <= max_text_chars:
-        return sanitized_text
+        return PreparedTtsTextDetail(
+            raw_text=raw_text,
+            sanitized_text=sanitized_text,
+            sent_text=sanitized_text,
+            source_text_chars=source_text_chars,
+            sanitized_text_chars=sanitized_text_chars,
+            billable_chars=len(sanitized_text),
+            max_text_chars=max_text_chars,
+            is_truncated=False,
+        )
 
     truncation_prefix = DEFAULT_TTS_TRUNCATION_PREFIX_TEMPLATE.format(max_chars=max_text_chars).strip()
     truncated_text = sanitized_text[:max_text_chars]
@@ -93,10 +147,19 @@ def prepare_tts_text(
     logger.info(
         "Volcengine TTS input text truncated max_chars={max_chars} source_chars={source_chars} final_chars={final_chars}",
         max_chars=max_text_chars,
-        source_chars=len(sanitized_text),
+        source_chars=sanitized_text_chars,
         final_chars=len(final_text),
     )
-    return final_text
+    return PreparedTtsTextDetail(
+        raw_text=raw_text,
+        sanitized_text=sanitized_text,
+        sent_text=final_text,
+        source_text_chars=source_text_chars,
+        sanitized_text_chars=sanitized_text_chars,
+        billable_chars=len(final_text),
+        max_text_chars=max_text_chars,
+        is_truncated=True,
+    )
 
 
 def _normalize_message_uuid(message_uuid: str) -> str:
@@ -111,11 +174,11 @@ def _normalize_message_uuid(message_uuid: str) -> str:
     )
 
 
-def _load_message_text_for_tts(
+def _load_message_context_for_tts(
         *,
         message_uuid: str,
         user_id: int,
-) -> str:
+) -> TtsMessageContext:
     """
     加载并校验待合成消息文本。
 
@@ -149,13 +212,20 @@ def _load_message_text_for_tts(
             message="仅支持 AI 消息转语音",
         )
 
-    text = message.content.strip()
-    if not text:
+    raw_text = str(message.content or "")
+    if not raw_text.strip():
         raise ServiceException(
             code=ResponseCode.BAD_REQUEST,
             message="消息内容为空，无法转语音",
         )
-    return text
+
+    return TtsMessageContext(
+        message_uuid=message_uuid,
+        conversation_id=message.conversation_id,
+        conversation_uuid=conversation.uuid,
+        user_id=conversation.user_id,
+        raw_text=raw_text,
+    )
 
 
 def build_message_tts_stream(
@@ -173,17 +243,33 @@ def build_message_tts_stream(
     """
 
     normalized_message_uuid = _normalize_message_uuid(message_uuid)
-    text = _load_message_text_for_tts(
+    message_context = _load_message_context_for_tts(
         message_uuid=normalized_message_uuid,
         user_id=user_id,
     )
     config = resolve_volcengine_tts_config()
-    prepared_text = prepare_tts_text(
-        raw_text=text,
+    prepared_text_detail = prepare_tts_text(
+        raw_text=message_context.raw_text,
         max_text_chars=config.max_text_chars,
     )
+    usage_context = TtsUsageContext(
+        usage_uuid=str(uuid.uuid4()),
+        message_uuid=message_context.message_uuid,
+        conversation_id=message_context.conversation_id,
+        conversation_uuid=message_context.conversation_uuid,
+        user_id=message_context.user_id,
+        sent_text=prepared_text_detail.sent_text,
+        source_text_chars=prepared_text_detail.source_text_chars,
+        sanitized_text_chars=prepared_text_detail.sanitized_text_chars,
+        billable_chars=prepared_text_detail.billable_chars,
+        max_text_chars=prepared_text_detail.max_text_chars,
+        is_truncated=prepared_text_detail.is_truncated,
+    )
     return MessageTtsStream(
-        audio_stream=_stream_tts_audio(text=prepared_text, config=config),
+        audio_stream=_stream_tts_audio(
+            usage_context=usage_context,
+            config=config,
+        ),
         media_type=resolve_audio_media_type(config.encoding),
     )
 
@@ -360,9 +446,54 @@ async def verify_volcengine_tts_connection_on_startup() -> None:
                 pass
 
 
+def _persist_tts_usage_on_success(
+        *,
+        usage_context: TtsUsageContext,
+        config: VolcengineTtsConfig,
+        connect_id: str,
+        session_id: str,
+        provider_log_id: str | None,
+        audio_chunk_count: int,
+        audio_bytes: int,
+        duration_ms: int,
+) -> None:
+    """持久化成功 TTS 调用明细，失败仅记录告警日志。"""
+
+    try:
+        add_message_tts_usage(
+            usage_uuid=usage_context.usage_uuid,
+            message_uuid=usage_context.message_uuid,
+            conversation_id=usage_context.conversation_id,
+            conversation_uuid=usage_context.conversation_uuid,
+            user_id=usage_context.user_id,
+            endpoint=config.endpoint,
+            resource_id=config.resource_id,
+            voice_type=config.voice_type,
+            encoding=config.encoding,
+            sample_rate=config.sample_rate,
+            sent_text=usage_context.sent_text,
+            source_text_chars=usage_context.source_text_chars,
+            sanitized_text_chars=usage_context.sanitized_text_chars,
+            max_text_chars=usage_context.max_text_chars,
+            is_truncated=usage_context.is_truncated,
+            audio_chunk_count=audio_chunk_count,
+            audio_bytes=audio_bytes,
+            duration_ms=duration_ms,
+            connect_id=connect_id,
+            session_id=session_id,
+            provider_log_id=provider_log_id,
+        )
+    except Exception as exc:  # pragma: no cover - 防御性兜底
+        logger.opt(exception=exc).warning(
+            "Persist message_tts_usage failed message_uuid={message_uuid} usage_uuid={usage_uuid}",
+            message_uuid=usage_context.message_uuid,
+            usage_uuid=usage_context.usage_uuid,
+        )
+
+
 async def _stream_tts_audio(
         *,
-        text: str,
+        usage_context: TtsUsageContext,
         config: VolcengineTtsConfig,
 ) -> AsyncIterator[bytes]:
     """
@@ -373,13 +504,19 @@ async def _stream_tts_audio(
     2. StartSession -> SessionStarted
     3. TaskRequest + FinishSession
     4. 持续读取 `AudioOnlyServer` 直到 `SessionFinished`
-    5. FinishConnection 并关闭 websocket
+    5. 成功结束后写入 `message_tts_usages`
+    6. FinishConnection 并关闭 websocket
     """
 
     websocket = None
     session_id = str(uuid.uuid4())
     connect_id = str(uuid.uuid4())
+    provider_log_id = ""
     headers = build_volcengine_tts_headers(config, connect_id=connect_id)
+    started_at = time.monotonic()
+    audio_chunk_count = 0
+    audio_bytes = 0
+    is_session_finished = False
 
     try:
         websocket = await websockets.connect(
@@ -387,6 +524,7 @@ async def _stream_tts_audio(
             additional_headers=headers,
             max_size=MAX_WS_MESSAGE_SIZE,
         )
+        provider_log_id = _extract_log_id(websocket)
 
         await start_connection(websocket)
         await wait_for_event(
@@ -408,7 +546,7 @@ async def _stream_tts_audio(
 
         await task_request(
             websocket,
-            _build_task_request_payload(config=config, text=text),
+            _build_task_request_payload(config=config, text=usage_context.sent_text),
             session_id,
         )
         await finish_session(websocket, session_id)
@@ -417,11 +555,14 @@ async def _stream_tts_audio(
             message = await receive_message(websocket)
             if message.type == MsgType.AudioOnlyServer:
                 if message.payload:
+                    audio_chunk_count += 1
+                    audio_bytes += len(message.payload)
                     yield message.payload
                 continue
 
             if message.type == MsgType.FullServerResponse:
                 if message.event == EventType.SessionFinished:
+                    is_session_finished = True
                     break
                 if message.event == EventType.SessionFailed:
                     logger.warning(
@@ -447,6 +588,18 @@ async def _stream_tts_audio(
             session_id=session_id,
         )
     finally:
+        duration_ms = int((time.monotonic() - started_at) * 1000)
+        if is_session_finished:
+            _persist_tts_usage_on_success(
+                usage_context=usage_context,
+                config=config,
+                connect_id=connect_id,
+                session_id=session_id,
+                provider_log_id=provider_log_id or None,
+                audio_chunk_count=audio_chunk_count,
+                audio_bytes=audio_bytes,
+                duration_ms=duration_ms,
+            )
         if websocket is not None:
             try:
                 await finish_connection(websocket)

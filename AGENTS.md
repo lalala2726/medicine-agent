@@ -43,6 +43,7 @@
   `MONGODB_DB_NAME` (defaults to `medicine_ai_agent`), `MONGODB_TIMEOUT_MS` (defaults to `3000`),
   `MONGODB_CONVERSATIONS_COLLECTION` (defaults to `conversations`), `MONGODB_MESSAGES_COLLECTION`
   (defaults to `messages`), `MONGODB_MESSAGE_TRACES_COLLECTION` (defaults to `message_traces`),
+  `MONGODB_MESSAGE_TTS_USAGES_COLLECTION` (defaults to `message_tts_usages`),
   `MONGODB_CONVERSATION_SUMMARIES_COLLECTION` (defaults to `conversation_summaries`),
   `MONGODB_STARTUP_PING_ENABLED` (default false, set true to fail fast
   on startup when MongoDB is unreachable/unauthorized).
