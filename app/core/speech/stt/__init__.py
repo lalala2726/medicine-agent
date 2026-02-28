@@ -13,6 +13,7 @@ from app.core.speech.stt.client import (
 from app.core.speech.stt.config import (
     DEFAULT_VOLCENGINE_STT_ENDPOINT,
     DEFAULT_VOLCENGINE_STT_MAX_DURATION_SECONDS,
+    MAX_VOLCENGINE_STT_MAX_DURATION_SECONDS,
     VolcengineSttConfig,
     build_volcengine_stt_headers,
     resolve_volcengine_stt_config,
@@ -35,6 +36,7 @@ __all__ = [
     "MAX_WS_MESSAGE_SIZE",
     "DEFAULT_VOLCENGINE_STT_ENDPOINT",
     "DEFAULT_VOLCENGINE_STT_MAX_DURATION_SECONDS",
+    "MAX_VOLCENGINE_STT_MAX_DURATION_SECONDS",
     "VolcengineSttConfig",
     "SttStartRequest",
     "VolcengineSttClient",

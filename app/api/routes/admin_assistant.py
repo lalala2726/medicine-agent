@@ -33,9 +33,9 @@ CHAT_RATE_LIMIT_RULES = (
 
 TTS_RATE_LIMIT_RULES = (
     RateLimitRule.preset(RateLimitPreset.MINUTE_1, limit=5),
-    RateLimitRule.preset(RateLimitPreset.MINUTE_5, limit=15),
     RateLimitRule.preset(RateLimitPreset.HOUR_1, limit=60),
-    RateLimitRule.preset(RateLimitPreset.HOUR_24, limit=300),
+    RateLimitRule.preset(RateLimitPreset.HOUR_5, limit=100),
+    RateLimitRule.preset(RateLimitPreset.HOUR_24, limit=200),
 )
 
 TEST_RATE_LIMIT_RULES = (

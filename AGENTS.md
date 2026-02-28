@@ -75,5 +75,6 @@
   fail service startup when pre-connect check fails).
 - Volcengine streaming STT configuration: `VOLCENGINE_STT_RESOURCE_ID` (required),
   `VOLCENGINE_STT_ENDPOINT` (defaults to `wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async`),
-  `VOLCENGINE_STT_MAX_DURATION_SECONDS` (defaults to `60`, backend active-close timeout).
+  `VOLCENGINE_STT_MAX_DURATION_SECONDS` (defaults to `600`, server-side allowed max duration cap;
+  business code may pass shorter `session_duration_seconds`, default session duration is 60s).
 - Document new config values in this file when you introduce them.

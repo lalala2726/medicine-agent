@@ -9,7 +9,7 @@ from functools import wraps
 from typing import Callable, Iterable, Literal
 from uuid import uuid4
 
-from fastapi import Request
+from fastapi import Request, WebSocket
 from fastapi.responses import Response
 from loguru import logger
 from redis.exceptions import RedisError
@@ -21,7 +21,8 @@ from app.core.security.auth_context import get_user_id
 from app.utils.resource_text_utils import load_resource_text
 
 SubjectKind = Literal["user_id", "ip"]
-SubjectResolver = Callable[[Request], str] | Callable[[], str]
+Connection = Request | WebSocket
+SubjectResolver = Callable[[Connection], str] | Callable[[], str]
 SubjectSpec = SubjectKind | SubjectResolver | str
 
 RATE_LIMIT_BACKEND_UNAVAILABLE_MESSAGE = "限流服务不可用，请稍后再试"
@@ -136,20 +137,20 @@ def _load_rate_limit_lua_script() -> str:
     return script
 
 
-def _extract_request(args: tuple, kwargs: dict) -> Request | None:
+def _extract_request(args: tuple, kwargs: dict) -> Connection | None:
     request = kwargs.get("request")
-    if isinstance(request, Request):
+    if isinstance(request, (Request, WebSocket)):
         return request
     for value in kwargs.values():
-        if isinstance(value, Request):
+        if isinstance(value, (Request, WebSocket)):
             return value
     for arg in args:
-        if isinstance(arg, Request):
+        if isinstance(arg, (Request, WebSocket)):
             return arg
     return None
 
 
-def _resolve_ip(request: Request | None) -> str:
+def _resolve_ip(request: Connection | None) -> str:
     if request is not None and request.client is not None and request.client.host:
         return request.client.host
 
@@ -164,7 +165,7 @@ def _resolve_ip(request: Request | None) -> str:
     return "unknown"
 
 
-def _call_subject_resolver(resolver: SubjectResolver, request: Request | None) -> str:
+def _call_subject_resolver(resolver: SubjectResolver, request: Connection | None) -> str:
     signature = inspect.signature(resolver)
     if len(signature.parameters) == 0:
         return str(resolver())
@@ -183,7 +184,7 @@ def _normalize_subject_value(value: str) -> str:
 def _resolve_subject_key(
         *,
         subjects: tuple[SubjectSpec, ...],
-        request: Request | None,
+        request: Connection | None,
 ) -> str:
     parts: list[str] = []
     for index, subject in enumerate(subjects):
@@ -212,7 +213,7 @@ def _build_rate_limit_headers(result: RateLimitCheckResult) -> dict[str, str]:
     }
 
 
-def _resolve_request_path(request: Request | None) -> str:
+def _resolve_request_path(request: Connection | None) -> str:
     if request is None:
         return "当前接口"
     return request.url.path or "当前接口"
@@ -220,7 +221,7 @@ def _resolve_request_path(request: Request | None) -> str:
 
 def _build_rate_limit_exceeded_message(
         *,
-        request: Request | None,
+        request: Connection | None,
         retry_after_seconds: int,
 ) -> str:
     path = _resolve_request_path(request)
@@ -362,6 +363,30 @@ def _check_rate_limit(
     )
 
 
+def check_rate_limit(
+        *,
+        scope: str,
+        rules: Iterable[RateLimitRule],
+        subjects: tuple[SubjectSpec, ...] = ("user_id",),
+        fail_open: bool = True,
+        request: Connection | None = None,
+) -> dict[str, str]:
+    """执行一次限流检查并返回限流响应头。"""
+
+    resolved_rules = _normalize_rules(tuple(rules))
+    if not subjects:
+        raise ValueError("rate_limit requires at least one subject")
+
+    return _check_rate_limit(
+        scope=scope,
+        subjects=tuple(subjects),
+        rules=resolved_rules,
+        fail_open=fail_open,
+        args=(request,) if request is not None else (),
+        kwargs={"request": request} if request is not None else {},
+    )
+
+
 def rate_limit(
         *,
         rules: Iterable[RateLimitRule],
@@ -428,5 +453,6 @@ __all__ = [
     "RateLimitRule",
     "RateLimitCheckResult",
     "RateLimitException",
+    "check_rate_limit",
     "rate_limit",
 ]

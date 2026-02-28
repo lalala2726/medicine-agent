@@ -1257,6 +1257,30 @@ def test_assistant_tts_route_returns_503_when_redis_unavailable(monkeypatch):
     assert "data" not in body
 
 
+def test_voice_tts_rate_limit_rules_match_expected() -> None:
+    assert [
+        (rule.window_seconds, rule.limit)
+        for rule in assistant_module.TTS_RATE_LIMIT_RULES
+    ] == [
+        (60, 5),
+        (3600, 60),
+        (18000, 100),
+        (86400, 200),
+    ]
+
+
+def test_speech_stt_rate_limit_rules_match_expected() -> None:
+    assert [
+        (rule.window_seconds, rule.limit)
+        for rule in speech_stt_module.STT_RATE_LIMIT_RULES
+    ] == [
+        (60, 5),
+        (3600, 60),
+        (18000, 100),
+        (86400, 200),
+    ]
+
+
 def test_assistant_stt_websocket_rejects_without_authorization(monkeypatch):
     called = {"value": False}
 
@@ -1283,6 +1307,65 @@ def test_assistant_stt_websocket_rejects_without_authorization(monkeypatch):
 
     assert exc_info.value.code == 1008
     assert called["value"] is True
+
+
+def test_assistant_stt_websocket_rejects_when_rate_limited(monkeypatch):
+    _mock_ws_auth(monkeypatch)
+    _mock_rate_limit_result(
+        monkeypatch,
+        allowed=False,
+        retry_after_seconds=15,
+        limit=5,
+        remaining=0,
+        reset_seconds=15,
+    )
+    called = {"value": False}
+
+    async def _fake_stt_service(*, websocket, user):  # noqa: ARG001
+        called["value"] = True
+        raise AssertionError("service should not be called")
+
+    monkeypatch.setattr(
+        speech_stt_module,
+        "speech_stt_stream_service",
+        _fake_stt_service,
+    )
+
+    client = TestClient(app)
+    with pytest.raises(WebSocketDisconnect) as exc_info:
+        with client.websocket_connect(
+                "/ws/speech/stt/stream?access_token=test-token",
+        ):
+            pass
+
+    assert exc_info.value.code == 1013
+    assert called["value"] is False
+
+
+def test_assistant_stt_websocket_rejects_when_rate_limit_backend_unavailable(monkeypatch):
+    _mock_ws_auth(monkeypatch)
+    _mock_rate_limit_result(monkeypatch, allowed=True, exc=RedisError("redis down"))
+    called = {"value": False}
+
+    async def _fake_stt_service(*, websocket, user):  # noqa: ARG001
+        called["value"] = True
+        raise AssertionError("service should not be called")
+
+    monkeypatch.setattr(
+        speech_stt_module,
+        "speech_stt_stream_service",
+        _fake_stt_service,
+    )
+
+    client = TestClient(app)
+    with pytest.raises(WebSocketDisconnect) as exc_info:
+        with client.websocket_connect(
+                "/ws/speech/stt/stream?access_token=test-token",
+        ):
+            pass
+
+    assert exc_info.value.code == 1011
+    assert called["value"] is False
 
 
 def test_assistant_stt_websocket_rejects_without_permission(monkeypatch):

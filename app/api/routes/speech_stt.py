@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from fastapi import APIRouter, WebSocket
 
+from app.core.codes import ResponseCode
 from app.core.security.auth_context import (
     reset_authorization_header,
     reset_current_user,
@@ -9,6 +12,12 @@ from app.core.security.auth_context import (
     set_current_user,
 )
 from app.core.security.pre_authorize import RoleCode
+from app.core.security.rate_limit import (
+    RateLimitException,
+    RateLimitPreset,
+    RateLimitRule,
+    check_rate_limit,
+)
 from app.schemas.auth import AuthUser
 from app.services.speech_stt_service import speech_stt_stream_service
 from app.services.auth_service import verify_authorization
@@ -16,6 +25,14 @@ from app.services.auth_service import verify_authorization
 router = APIRouter(prefix="/ws/speech/stt", tags=["语音识别"])
 
 SPEECH_STT_ACCESS_PERMISSION = "admin:assistant:access"
+STT_RATE_LIMIT_RULES = (
+    RateLimitRule.preset(RateLimitPreset.MINUTE_1, limit=5),
+    RateLimitRule.preset(RateLimitPreset.HOUR_1, limit=60),
+    RateLimitRule.preset(RateLimitPreset.HOUR_5, limit=100),
+    RateLimitRule.preset(RateLimitPreset.HOUR_24, limit=200),
+)
+STT_RATE_LIMIT_SUBJECTS: tuple[Literal["user_id"], ...] = ("user_id",)
+STT_RATE_LIMIT_SCOPE = "speech_stt_stream"
 
 
 def _has_stt_access(user: AuthUser) -> bool:
@@ -62,9 +79,27 @@ async def speech_stt_stream(websocket: WebSocket) -> None:
             await websocket.close(code=1008, reason="forbidden")
             return
 
+        try:
+            check_rate_limit(
+                scope=STT_RATE_LIMIT_SCOPE,
+                rules=STT_RATE_LIMIT_RULES,
+                subjects=STT_RATE_LIMIT_SUBJECTS,
+                fail_open=False,
+                request=websocket,
+            )
+        except RateLimitException as exc:
+            close_code = (
+                1013
+                if exc.code == ResponseCode.TOO_MANY_REQUESTS.code
+                else 1011
+            )
+            await websocket.close(code=close_code, reason=exc.message)
+            return
+
         await speech_stt_stream_service(
             websocket=websocket,
             user=current_user,
+            session_duration_seconds=60
         )
     finally:
         reset_current_user(user_token)

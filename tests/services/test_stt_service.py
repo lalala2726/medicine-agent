@@ -7,7 +7,7 @@ import pytest
 import app.services.speech_stt_service as speech_stt_service_module
 from app.core.exception.exceptions import ServiceException
 from app.core.speech.stt.config import VolcengineSttConfig
-from app.core.speech.stt.session import AdminAssistantSttSession
+from app.core.speech.stt.session import AdminAssistantSttSession, SttSessionError
 from app.core.speech.volcengine_speech_protocol import (
     CompressionBits,
     MsgType,
@@ -130,9 +130,70 @@ def test_stt_session_start_binary_finish_flow() -> None:
     assert websocket.closed is True
     assert websocket.close_code == 1000
     assert websocket.sent_json[0]["type"] == "started"
+    assert websocket.sent_json[0]["max_duration_seconds"] == 60
     assert any(item.get("type") == "transcript" for item in websocket.sent_json)
     assert websocket.sent_json[-1] == {"type": "completed", "reason": "client_finish"}
     assert fake_client_holder["client"].sent_audio == [(b"\x01\x02", False), (b"", True)]
+
+
+def test_stt_session_start_supports_custom_duration_under_server_max() -> None:
+    websocket = _FakeFrontendWebSocket(
+        messages=[
+            {"type": "websocket.receive", "text": json.dumps({"type": "start"})},
+            {"type": "websocket.receive", "text": json.dumps({"type": "finish"})},
+        ]
+    )
+
+    session = AdminAssistantSttSession(
+        websocket=websocket,  # type: ignore[arg-type]
+        user=_build_user(),
+        config=_build_config(max_duration_seconds=120),
+        session_duration_seconds=30,
+        stt_client_factory=lambda *, config: _FakeSttClient(config=config),
+    )
+
+    result = asyncio.run(session.run())
+
+    assert result.reason == "client_finish"
+    assert websocket.sent_json[0]["type"] == "started"
+    assert websocket.sent_json[0]["max_duration_seconds"] == 30
+    assert websocket.sent_json[0]["max_allowed_duration_seconds"] == 120
+
+
+def test_stt_session_start_rejects_duration_exceeding_server_max() -> None:
+    with pytest.raises(SttSessionError) as exc_info:
+        AdminAssistantSttSession(
+            websocket=_FakeFrontendWebSocket(messages=[]),  # type: ignore[arg-type]
+            user=_build_user(),
+            config=_build_config(max_duration_seconds=60),
+            session_duration_seconds=61,
+            stt_client_factory=lambda *, config: _FakeSttClient(config=config),
+        )
+
+    assert "session_duration_seconds 不能超过 60 秒" in str(exc_info.value)
+
+
+def test_stt_session_start_rejects_frontend_duration_override() -> None:
+    websocket = _FakeFrontendWebSocket(
+        messages=[
+            {
+                "type": "websocket.receive",
+                "text": json.dumps({"type": "start", "max_duration_seconds": 61}),
+            },
+        ]
+    )
+
+    session = AdminAssistantSttSession(
+        websocket=websocket,  # type: ignore[arg-type]
+        user=_build_user(),
+        config=_build_config(max_duration_seconds=60),
+        stt_client_factory=lambda *, config: _FakeSttClient(config=config),
+    )
+
+    with pytest.raises(SttSessionError) as exc_info:
+        asyncio.run(session.run())
+
+    assert "max_duration_seconds 不允许由前端设置" in str(exc_info.value)
 
 
 def test_stt_session_timeout_active_close() -> None:
@@ -161,6 +222,7 @@ def test_stt_session_timeout_active_close() -> None:
     assert websocket.closed is True
     assert websocket.close_code == 1000
     assert websocket.sent_json[-1]["type"] == "timeout"
+    assert websocket.sent_json[-1]["error_code"] == "stt_timeout"
     assert fake_client_holder["client"].sent_audio[-1] == (b"", True)
 
 
@@ -226,3 +288,44 @@ def test_speech_stt_service_closes_when_stt_config_invalid(monkeypatch: pytest.M
 
     assert websocket.closed is True
     assert websocket.close_code == 1011
+
+
+def test_speech_stt_service_supports_business_level_session_duration(monkeypatch: pytest.MonkeyPatch) -> None:
+    websocket = _FakeFrontendWebSocket(messages=[])
+    captured: dict[str, int | None] = {"session_duration_seconds": None}
+
+    monkeypatch.setattr(
+        speech_stt_service_module,
+        "resolve_volcengine_stt_config",
+        lambda: _build_config(max_duration_seconds=600),
+    )
+
+    class _FakeSession:
+        def __init__(
+                self,
+                *,
+                websocket,  # noqa: ANN001, ARG002
+                user,  # noqa: ANN001, ARG002
+                config,  # noqa: ANN001, ARG002
+                session_duration_seconds: int | None = None,
+        ) -> None:
+            captured["session_duration_seconds"] = session_duration_seconds
+
+        async def run(self) -> None:
+            return None
+
+    monkeypatch.setattr(
+        speech_stt_service_module,
+        "AdminAssistantSttSession",
+        _FakeSession,
+    )
+
+    asyncio.run(
+        speech_stt_stream_service(
+            websocket=websocket,  # type: ignore[arg-type]
+            user=_build_user(),
+            session_duration_seconds=30,
+        )
+    )
+
+    assert captured["session_duration_seconds"] == 30

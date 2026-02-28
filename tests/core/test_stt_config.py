@@ -60,6 +60,30 @@ def test_resolve_volcengine_stt_config_raises_when_max_duration_invalid(
     assert "VOLCENGINE_STT_MAX_DURATION_SECONDS" in exc_info.value.message
 
 
+def test_resolve_volcengine_stt_config_caps_max_duration_to_internal_upper_bound(
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _disable_dotenv_lookup(monkeypatch)
+    _set_required_env(monkeypatch)
+    monkeypatch.setenv("VOLCENGINE_STT_MAX_DURATION_SECONDS", "1800")
+
+    config = stt_config_module.resolve_volcengine_stt_config()
+
+    assert config.max_duration_seconds == stt_config_module.MAX_VOLCENGINE_STT_MAX_DURATION_SECONDS
+
+
+def test_resolve_volcengine_stt_config_supports_custom_max_duration_from_env(
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _disable_dotenv_lookup(monkeypatch)
+    _set_required_env(monkeypatch)
+    monkeypatch.setenv("VOLCENGINE_STT_MAX_DURATION_SECONDS", "300")
+
+    config = stt_config_module.resolve_volcengine_stt_config()
+
+    assert config.max_duration_seconds == 300
+
+
 def test_build_volcengine_stt_headers_contains_required_fields(monkeypatch: pytest.MonkeyPatch) -> None:
     _disable_dotenv_lookup(monkeypatch)
     _set_required_env(monkeypatch)

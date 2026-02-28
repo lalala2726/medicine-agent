@@ -13,6 +13,7 @@ async def speech_stt_stream_service(
         *,
         websocket: WebSocket,
         user: AuthUser,
+        session_duration_seconds: int | None = None,
 ) -> None:
     """
     管理助手实时语音识别 websocket 服务入口。
@@ -21,6 +22,12 @@ async def speech_stt_stream_service(
     1. 接收前端 start/binary/finish；
     2. 转发到火山实时 STT 并回传 transcript；
     3. 到达最大时长或完成后由后端主动关闭连接。
+
+    Args:
+        websocket: 前端 websocket 连接对象。
+        user: 当前认证用户。
+        session_duration_seconds: 业务代码指定的本次会话时长（秒）；
+            为空时使用默认 60 秒，且不超过配置上限。
     """
 
     try:
@@ -29,6 +36,7 @@ async def speech_stt_stream_service(
             websocket=websocket,
             user=user,
             config=config,
+            session_duration_seconds=session_duration_seconds,
         )
         await session.run()
     except SttSessionError as exc:

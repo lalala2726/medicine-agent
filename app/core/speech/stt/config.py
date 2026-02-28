@@ -12,8 +12,10 @@ from app.core.speech.env_utils import (
 
 # 火山实时 STT 默认接入地址（双向流式优化版）。
 DEFAULT_VOLCENGINE_STT_ENDPOINT = "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async"
-# 单次 STT 会话最大时长默认值（秒）。
-DEFAULT_VOLCENGINE_STT_MAX_DURATION_SECONDS = 60
+# 单次 STT 会话可配置最大时长默认值（秒，默认 10 分钟）。
+DEFAULT_VOLCENGINE_STT_MAX_DURATION_SECONDS = 600
+# 单次 STT 会话允许配置的最大时长上限（秒，10 分钟）。
+MAX_VOLCENGINE_STT_MAX_DURATION_SECONDS = 600
 
 
 @dataclass(frozen=True)
@@ -26,7 +28,7 @@ class VolcengineSttConfig:
         app_id: 火山应用 ID（与 TTS 共用）。
         access_token: 火山访问令牌（与 TTS 共用）。
         resource_id: STT 资源 ID（如 `volc.seedasr.sauc.duration`）。
-        max_duration_seconds: 单连接最大识别时长（秒）。
+        max_duration_seconds: 单连接可配置的最大识别时长（秒）。
     """
 
     endpoint: str
@@ -57,6 +59,8 @@ def resolve_volcengine_stt_config() -> VolcengineSttConfig:
         name="VOLCENGINE_STT_MAX_DURATION_SECONDS",
         default=DEFAULT_VOLCENGINE_STT_MAX_DURATION_SECONDS,
     )
+    if max_duration_seconds > MAX_VOLCENGINE_STT_MAX_DURATION_SECONDS:
+        max_duration_seconds = MAX_VOLCENGINE_STT_MAX_DURATION_SECONDS
     return VolcengineSttConfig(
         endpoint=endpoint,
         app_id=app_id,
@@ -96,6 +100,7 @@ def build_volcengine_stt_headers(
 __all__ = [
     "DEFAULT_VOLCENGINE_STT_ENDPOINT",
     "DEFAULT_VOLCENGINE_STT_MAX_DURATION_SECONDS",
+    "MAX_VOLCENGINE_STT_MAX_DURATION_SECONDS",
     "VolcengineSttConfig",
     "resolve_volcengine_stt_config",
     "build_volcengine_stt_headers",

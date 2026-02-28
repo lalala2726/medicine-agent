@@ -18,6 +18,8 @@ from app.schemas.auth import AuthUser
 MAX_FRONTEND_AUDIO_CHUNK_SIZE = 512 * 1024
 # 收到 finish 后等待上游最终结果的最大时长（秒）。
 FINISH_WAIT_MAX_SECONDS = 8
+# 前端未显式指定时的会话默认识别时长（秒）。
+DEFAULT_STT_SESSION_DURATION_SECONDS = 60
 
 
 class SttSessionError(RuntimeError):
@@ -45,6 +47,7 @@ class AdminAssistantSttSession:
             websocket: WebSocket,
             user: AuthUser,
             config: VolcengineSttConfig,
+            session_duration_seconds: int | None = None,
             stt_client_factory: Any = VolcengineSttClient,
     ) -> None:
         """
@@ -54,6 +57,8 @@ class AdminAssistantSttSession:
             websocket: 下游前端 WebSocket 连接。
             user: 当前认证用户信息。
             config: STT 配置对象。
+            session_duration_seconds: 本次会话识别时长（秒），由业务代码传入；
+                为空时默认 60 秒，且不会超过 `config.max_duration_seconds`。
             stt_client_factory: 上游 STT 客户端工厂，默认 `VolcengineSttClient`。
         """
 
@@ -64,6 +69,9 @@ class AdminAssistantSttSession:
 
         self._started = False
         self._finish_requested = False
+        self._session_duration_seconds = self._resolve_session_duration_seconds(
+            session_duration_seconds
+        )
         self._deadline_at: float | None = None
         self._upstream_task: asyncio.Task[None] | None = None
         self._upstream_ended = asyncio.Event()
@@ -177,6 +185,9 @@ class AdminAssistantSttSession:
             None
         """
 
+        if "max_duration_seconds" in payload:
+            raise SttSessionError("max_duration_seconds 不允许由前端设置")
+
         request = self._build_start_request(payload.get("request"))
         await self._stt_client.connect()
         await self._stt_client.send_full_client_request(
@@ -184,12 +195,13 @@ class AdminAssistantSttSession:
             user_id=self._user.id,
         )
         self._started = True
-        self._deadline_at = time.monotonic() + float(self._config.max_duration_seconds)
+        self._deadline_at = time.monotonic() + float(self._session_duration_seconds)
         self._upstream_task = asyncio.create_task(self._forward_upstream_messages())
         await self._send_json(
             {
                 "type": "started",
-                "max_duration_seconds": self._config.max_duration_seconds,
+                "max_duration_seconds": self._session_duration_seconds,
+                "max_allowed_duration_seconds": self._config.max_duration_seconds,
                 "provider_log_id": self._stt_client.provider_log_id,
             }
         )
@@ -329,7 +341,8 @@ class AdminAssistantSttSession:
         await self._send_json(
             {
                 "type": "timeout",
-                "message": f"识别已超过 {self._config.max_duration_seconds} 秒，连接已关闭",
+                "error_code": "stt_timeout",
+                "message": f"识别已超过 {self._session_duration_seconds} 秒，连接已关闭",
             }
         )
         await self._close_websocket(code=1000)
@@ -469,6 +482,35 @@ class AdminAssistantSttSession:
             raise SttSessionError("控制消息必须为 JSON object")
         return parsed
 
+    def _resolve_session_duration_seconds(self, value: int | None) -> int:
+        """
+        解析本次会话识别时长（秒），仅接受业务代码传入值。
+
+        规则：
+        1. 未传则使用默认值 60 秒；
+        2. 任何传入值都必须为正整数；
+        3. 传入值不能超过服务端配置上限 `config.max_duration_seconds`。
+        """
+
+        if value is None:
+            return min(
+                DEFAULT_STT_SESSION_DURATION_SECONDS,
+                self._config.max_duration_seconds,
+            )
+        if isinstance(value, bool):
+            raise SttSessionError("session_duration_seconds 必须是正整数（秒）")
+        try:
+            resolved = int(value)
+        except (TypeError, ValueError) as exc:
+            raise SttSessionError("session_duration_seconds 必须是正整数（秒）") from exc
+        if resolved <= 0:
+            raise SttSessionError("session_duration_seconds 必须大于 0")
+        if resolved > self._config.max_duration_seconds:
+            raise SttSessionError(
+                f"session_duration_seconds 不能超过 {self._config.max_duration_seconds} 秒"
+            )
+        return resolved
+
     @staticmethod
     def _build_start_request(request_payload: Any) -> SttStartRequest:
         """
@@ -513,6 +555,7 @@ class AdminAssistantSttSession:
 
 __all__ = [
     "AdminAssistantSttSession",
+    "DEFAULT_STT_SESSION_DURATION_SECONDS",
     "MAX_FRONTEND_AUDIO_CHUNK_SIZE",
     "SttSessionCloseResult",
     "SttSessionError",
