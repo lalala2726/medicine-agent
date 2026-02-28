@@ -44,7 +44,7 @@ async def get_order_list(
         delivery_type: Optional[str] = None,
         receiver_name: Optional[str] = None,
         receiver_phone: Optional[str] = None,
-) -> str:
+) -> dict:
     """获取订单列表。"""
 
     async with HttpClient() as client:
@@ -58,11 +58,11 @@ async def get_order_list(
             "receiverName": receiver_name,
             "receiverPhone": receiver_phone,
         }
-        return await client.get(
+        response = await client.get(
             url="/agent/admin/order/list",
             params=params,
-            include_envelope=True,
         )
+        return HttpResponse.parse_data(response)
 
 
 @tool(
@@ -81,16 +81,16 @@ async def get_order_list(
     error_message="获取订单详情失败",
     timely_message="订单详情正在持续处理中",
 )
-async def get_orders_detail(order_id: list[str]) -> str:
+async def get_orders_detail(order_id: list[str]) -> dict:
     """获取订单详情，支持批量查询。"""
 
     normalized_ids = _normalize_id_list(order_id, field_name="order_id")
     ids_str = format_ids_to_string(normalized_ids)
     async with HttpClient() as client:
-        return await client.get(
+        response = await client.get(
             url=f"/agent/admin/order/{ids_str}",
-            include_envelope=True,
         )
+        return HttpResponse.parse_data(response)
 
 
 @tool(
@@ -106,14 +106,14 @@ async def get_orders_detail(order_id: list[str]) -> str:
     error_message="获取订单流程失败",
     timely_message="订单流程正在持续处理中",
 )
-async def get_order_timeline(order_id: int) -> str:
+async def get_order_timeline(order_id: int) -> dict:
     """根据订单 ID 查询订单流程（时间线）。"""
 
     async with HttpClient() as client:
-        return await client.get(
+        response = await client.get(
             url=f"/agent/admin/order/timeline/{order_id}",
-            include_envelope=True,
         )
+        return HttpResponse.parse_data(response)
 
 
 @tool(
@@ -129,14 +129,14 @@ async def get_order_timeline(order_id: int) -> str:
     error_message="获取发货记录失败",
     timely_message="发货记录正在持续处理中",
 )
-async def get_order_shipping(order_id: int) -> str:
+async def get_order_shipping(order_id: int) -> dict:
     """根据订单 ID 查询发货记录。"""
 
     async with HttpClient() as client:
-        return await client.get(
+        response = await client.get(
             url=f"/agent/admin/order/shipping/{order_id}",
-            include_envelope=True,
         )
+        return HttpResponse.parse_data(response)
 
 
 _ORDER_SYSTEM_PROMPT = load_prompt("assistant/order_system_prompt.md")
