@@ -5,10 +5,13 @@ import pytest
 from fastapi.responses import StreamingResponse
 from fastapi.testclient import TestClient
 from redis.exceptions import RedisError
+from starlette.websockets import WebSocketDisconnect
 
 import app.main as main_module
 from app.api.routes import admin_assistant as assistant_module
+from app.api.routes import speech_stt as speech_stt_module
 from app.core.codes import ResponseCode
+from app.core.security.auth_context import get_authorization_header
 from app.core.exception.exceptions import ServiceException
 from app.core.security.role_codes import RoleCode
 from app.main import app
@@ -147,6 +150,30 @@ def _mock_auth(
 
     monkeypatch.setattr(
         main_module,
+        "verify_authorization",
+        _fake_fetch_current_user,
+    )
+
+
+def _mock_ws_auth(
+        monkeypatch,
+        *,
+        roles: list[str] | None = None,
+        permissions: list[str] | None = None,
+) -> None:
+    resolved_roles = [RoleCode.SUPER_ADMIN.value] if roles is None else roles
+    resolved_permissions = [] if permissions is None else permissions
+
+    async def _fake_fetch_current_user() -> AuthUser:
+        return AuthUser(
+            id=1,
+            username="tester",
+            roles=resolved_roles,
+            permissions=resolved_permissions,
+        )
+
+    monkeypatch.setattr(
+        speech_stt_module,
         "verify_authorization",
         _fake_fetch_current_user,
     )
@@ -1228,3 +1255,201 @@ def test_assistant_tts_route_returns_503_when_redis_unavailable(monkeypatch):
     assert body["message"] == "限流服务不可用，请稍后再试"
     assert called["value"] is False
     assert "data" not in body
+
+
+def test_assistant_stt_websocket_rejects_without_authorization(monkeypatch):
+    called = {"value": False}
+
+    async def _fake_verify_authorization() -> AuthUser:
+        called["value"] = True
+        raise ServiceException(code=ResponseCode.UNAUTHORIZED, message="未认证")
+
+    monkeypatch.setattr(speech_stt_module, "verify_authorization", _fake_verify_authorization)
+
+    async def _fake_stt_service(*, websocket, user):  # noqa: ARG001
+        raise AssertionError("service should not be called")
+
+    monkeypatch.setattr(
+        speech_stt_module,
+        "assistant_message_stt_stream",
+        _fake_stt_service,
+    )
+
+    client = TestClient(app)
+
+    with pytest.raises(WebSocketDisconnect) as exc_info:
+        with client.websocket_connect("/ws/speech/stt/stream"):
+            pass
+
+    assert exc_info.value.code == 1008
+    assert called["value"] is True
+
+
+def test_assistant_stt_websocket_rejects_without_permission(monkeypatch):
+    _mock_ws_auth(monkeypatch, roles=[], permissions=[])
+    called = {"value": False}
+
+    async def _fake_stt_service(*, websocket, user):  # noqa: ARG001
+        called["value"] = True
+        raise AssertionError("service should not be called")
+
+    monkeypatch.setattr(
+        speech_stt_module,
+        "assistant_message_stt_stream",
+        _fake_stt_service,
+    )
+
+    client = TestClient(app)
+    with pytest.raises(WebSocketDisconnect) as exc_info:
+        with client.websocket_connect(
+                "/ws/speech/stt/stream?access_token=test-token",
+        ):
+            pass
+
+    assert exc_info.value.code == 1008
+    assert called["value"] is False
+
+
+def test_assistant_stt_websocket_route_delegates_to_service(monkeypatch):
+    _mock_ws_auth(monkeypatch)
+    captured: dict = {}
+
+    async def _fake_stt_service(*, websocket, user):
+        captured["user_id"] = user.id
+        await websocket.accept()
+        await websocket.send_json({"type": "started", "max_duration_seconds": 60})
+        await websocket.send_json({"type": "completed", "reason": "client_finish"})
+        await websocket.close(code=1000)
+
+    monkeypatch.setattr(
+        speech_stt_module,
+        "assistant_message_stt_stream",
+        _fake_stt_service,
+    )
+
+    client = TestClient(app)
+    with client.websocket_connect(
+            "/ws/speech/stt/stream?access_token=test-token",
+    ) as websocket:
+        started = websocket.receive_json()
+        completed = websocket.receive_json()
+
+    assert started["type"] == "started"
+    assert started["max_duration_seconds"] == 60
+    assert completed == {"type": "completed", "reason": "client_finish"}
+    assert captured == {"user_id": 1}
+
+
+def test_assistant_stt_websocket_supports_token_query_key(monkeypatch):
+    _mock_ws_auth(monkeypatch)
+    captured: dict = {}
+
+    async def _fake_stt_service(*, websocket, user):
+        captured["user_id"] = user.id
+        await websocket.accept()
+        await websocket.send_json({"type": "started", "max_duration_seconds": 60})
+        await websocket.send_json({"type": "completed", "reason": "client_finish"})
+        await websocket.close(code=1000)
+
+    monkeypatch.setattr(
+        speech_stt_module,
+        "assistant_message_stt_stream",
+        _fake_stt_service,
+    )
+
+    client = TestClient(app)
+    with client.websocket_connect(
+            "/ws/speech/stt/stream?token=test-token",
+    ) as websocket:
+        started = websocket.receive_json()
+        completed = websocket.receive_json()
+
+    assert started["type"] == "started"
+    assert started["max_duration_seconds"] == 60
+    assert completed == {"type": "completed", "reason": "client_finish"}
+    assert captured == {"user_id": 1}
+
+
+def test_assistant_stt_websocket_route_can_return_timeout_event(monkeypatch):
+    _mock_ws_auth(monkeypatch)
+
+    async def _fake_stt_service(*, websocket, user):  # noqa: ARG001
+        await websocket.accept()
+        await websocket.send_json(
+            {
+                "type": "timeout",
+                "message": "识别已超过 60 秒，连接已关闭",
+            }
+        )
+        await websocket.close(code=1000)
+
+    monkeypatch.setattr(
+        speech_stt_module,
+        "assistant_message_stt_stream",
+        _fake_stt_service,
+    )
+
+    client = TestClient(app)
+    with client.websocket_connect(
+            "/ws/speech/stt/stream?access_token=test-token",
+    ) as websocket:
+        timeout_payload = websocket.receive_json()
+
+    assert timeout_payload["type"] == "timeout"
+    assert "60 秒" in timeout_payload["message"]
+
+
+def test_assistant_stt_websocket_route_can_return_protocol_error_event(monkeypatch):
+    _mock_ws_auth(monkeypatch)
+
+    async def _fake_stt_service(*, websocket, user):  # noqa: ARG001
+        await websocket.accept()
+        await websocket.send_json({"type": "error", "message": "请先发送 start"})
+        await websocket.close(code=1008)
+
+    monkeypatch.setattr(
+        speech_stt_module,
+        "assistant_message_stt_stream",
+        _fake_stt_service,
+    )
+
+    client = TestClient(app)
+    with client.websocket_connect(
+            "/ws/speech/stt/stream?access_token=test-token",
+    ) as websocket:
+        payload = websocket.receive_json()
+
+    assert payload == {"type": "error", "message": "请先发送 start"}
+
+
+def test_assistant_stt_websocket_query_token_forwarded_as_bearer(monkeypatch):
+    observed = {"authorization": None}
+
+    async def _fake_verify_authorization() -> AuthUser:
+        observed["authorization"] = get_authorization_header()
+        return AuthUser(
+            id=1,
+            username="tester",
+            roles=[RoleCode.SUPER_ADMIN.value],
+            permissions=[],
+        )
+
+    monkeypatch.setattr(speech_stt_module, "verify_authorization", _fake_verify_authorization)
+
+    async def _fake_stt_service(*, websocket, user):  # noqa: ARG001
+        await websocket.accept()
+        await websocket.send_json({"type": "completed", "reason": "client_finish"})
+        await websocket.close(code=1000)
+
+    monkeypatch.setattr(
+        speech_stt_module,
+        "assistant_message_stt_stream",
+        _fake_stt_service,
+    )
+
+    client = TestClient(app)
+    with client.websocket_connect("/ws/speech/stt/stream?access_token=test-token") as websocket:
+        payload = websocket.receive_json()
+
+    assert payload == {"type": "completed", "reason": "client_finish"}
+    assert observed["authorization"] == "Bearer test-token"

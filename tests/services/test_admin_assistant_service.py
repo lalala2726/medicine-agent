@@ -10,7 +10,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from app.core.agent.agent_orchestrator import AssistantStreamConfig
 from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException
-from app.core.speech.tts_client import MessageTtsStream
+from app.core.speech.tts.client import MessageTtsStream
 from app.schemas.base_request import PageRequest
 from app.schemas.document.conversation import ConversationDocument, ConversationListItem, ConversationType
 from app.schemas.document.message import MessageRole, MessageStatus

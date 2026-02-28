@@ -5,10 +5,10 @@ import pytest
 
 from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException
-from app.core.speech.config import VolcengineTtsConfig
+from app.core.speech.tts.config import VolcengineTtsConfig
 from app.core.speech.volcengine_tts_protocol import EventType, Message, MsgType
 from app.schemas.document.message import MessageRole
-import app.core.speech.tts_client as service_module
+import app.core.speech.tts.client as service_module
 
 
 class _DummyWebSocket:

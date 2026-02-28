@@ -72,4 +72,8 @@
   max chars after sanitizer), `VOLCENGINE_TTS_STARTUP_CONNECT_ENABLED`
   (default true, run startup pre-connect check), `VOLCENGINE_TTS_STARTUP_FAIL_FAST` (default false,
   fail service startup when pre-connect check fails).
+- Volcengine streaming STT configuration: `VOLCENGINE_STT_APP_ID` (required),
+  `VOLCENGINE_STT_ACCESS_TOKEN` (required), `VOLCENGINE_STT_RESOURCE_ID` (required),
+  `VOLCENGINE_STT_ENDPOINT` (defaults to `wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async`),
+  `VOLCENGINE_STT_MAX_DURATION_SECONDS` (defaults to `60`, backend active-close timeout).
 - Document new config values in this file when you introduce them.

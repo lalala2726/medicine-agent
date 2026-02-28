@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.core.speech.text_sanitizer import TtsTextSanitizer
+from app.core.speech.tts.text_sanitizer import TtsTextSanitizer
 
 
 RAW_TEXT_BLOCK = """

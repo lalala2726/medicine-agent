@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 from typing import Awaitable, Callable
 
@@ -20,7 +21,10 @@ from app.core.security.auth_context import (
 )
 from app.core.security.anonymous_access import is_anonymous_request
 from app.core.security.cors import load_cors_config
-from app.core.speech import verify_volcengine_tts_connection_on_startup
+from app.core.speech import (
+    verify_volcengine_stt_connection_on_startup,
+    verify_volcengine_tts_connection_on_startup,
+)
 from app.services.auth_service import verify_authorization
 
 # 加载 .env 配置，确保本地开发环境变量生效
@@ -41,10 +45,30 @@ OPENAPI_DESCRIPTION = """
 - `Authorization: Bearer <token>`
 """
 
+_speech_startup_probe_done = False
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    global _speech_startup_probe_done
+    if not _speech_startup_probe_done:
+        probe_results = await asyncio.gather(
+            verify_volcengine_stt_connection_on_startup(),
+            verify_volcengine_tts_connection_on_startup(),
+            return_exceptions=True,
+        )
+        for result in probe_results:
+            if isinstance(result, Exception):
+                raise result
+        _speech_startup_probe_done = True
+    yield
+
+
 app = FastAPI(
     title="Medicine AI Agent API",
     description=OPENAPI_DESCRIPTION,
     version="0.1.0",
+    lifespan=lifespan,
 )
 app.add_middleware(CORSMiddleware, **load_cors_config())
 app.include_router(api_router)
@@ -57,12 +81,6 @@ app.add_exception_handler(ServiceException, ExceptionHandlers.service_exception_
 app.add_exception_handler(StarletteHTTPException, ExceptionHandlers.http_exception_handler)
 app.add_exception_handler(PyMongoError, ExceptionHandlers.pymongo_exception_handler)
 app.add_exception_handler(Exception, ExceptionHandlers.unhandled_exception_handler)
-
-
-@asynccontextmanager
-async def lifespan():
-    await verify_volcengine_tts_connection_on_startup()
-    yield
 
 
 AUTH_BYPASS_PATHS = {

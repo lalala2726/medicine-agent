@@ -1,0 +1,228 @@
+import asyncio
+import json
+from dataclasses import dataclass
+
+import pytest
+
+import app.services.speech_stt_service as speech_stt_service_module
+from app.core.exception.exceptions import ServiceException
+from app.core.speech.stt.config import VolcengineSttConfig
+from app.core.speech.stt.session import AdminAssistantSttSession
+from app.core.speech.volcengine_tts_protocol import (
+    CompressionBits,
+    MsgType,
+    SerializationBits,
+    SttServerMessage,
+)
+from app.schemas.auth import AuthUser
+from app.services.speech_stt_service import assistant_message_stt_stream
+
+
+class _FakeFrontendWebSocket:
+    def __init__(self, messages: list[dict]):
+        self._queue: asyncio.Queue = asyncio.Queue()
+        for message in messages:
+            self._queue.put_nowait(message)
+        self.accepted = False
+        self.closed = False
+        self.close_code: int | None = None
+        self.sent_json: list[dict] = []
+
+    async def accept(self) -> None:
+        self.accepted = True
+
+    async def receive(self) -> dict:
+        return await self._queue.get()
+
+    async def send_json(self, payload: dict) -> None:
+        self.sent_json.append(payload)
+
+    async def close(self, code: int = 1000, reason: str | None = None) -> None:  # noqa: ARG002
+        self.closed = True
+        self.close_code = code
+
+
+@dataclass
+class _FakeSttClient:
+    config: VolcengineSttConfig
+
+    def __post_init__(self) -> None:
+        self.provider_log_id = "provider-log-1"
+        self.connected = False
+        self.closed = False
+        self.sent_audio: list[tuple[bytes, bool]] = []
+        self._response_queue: asyncio.Queue[SttServerMessage] = asyncio.Queue()
+
+    async def connect(self) -> None:
+        self.connected = True
+
+    async def close(self) -> None:
+        self.closed = True
+
+    async def send_full_client_request(self, *, request, user_id: int | None = None) -> None:  # noqa: ANN001, ARG002
+        return None
+
+    async def send_audio_chunk(self, chunk: bytes, *, is_last: bool) -> None:
+        self.sent_audio.append((chunk, is_last))
+        self._response_queue.put_nowait(
+            SttServerMessage(
+                message_type=MsgType.FullServerResponse,
+                flag=0b0011 if is_last else 0b0001,
+                sequence=len(self.sent_audio),
+                is_last_package=is_last,
+                serialization=SerializationBits.JSON,
+                compression=CompressionBits.None_,
+                payload=b"",
+                payload_json={"result": {"text": "final" if is_last else "partial"}},
+                error_code=None,
+            )
+        )
+
+    async def receive_server_message(self) -> SttServerMessage:
+        return await self._response_queue.get()
+
+
+def _build_config(*, max_duration_seconds: int = 60) -> VolcengineSttConfig:
+    return VolcengineSttConfig(
+        endpoint="wss://stt.example/ws",
+        app_id="app-id",
+        access_token="access-token",
+        resource_id="volc.seedasr.sauc.duration",
+        max_duration_seconds=max_duration_seconds,
+    )
+
+
+def _build_user() -> AuthUser:
+    return AuthUser(
+        id=1,
+        username="tester",
+        roles=["SUPER_ADMIN"],
+        permissions=["admin:assistant:access"],
+    )
+
+
+def test_stt_session_start_binary_finish_flow() -> None:
+    websocket = _FakeFrontendWebSocket(
+        messages=[
+            {"type": "websocket.receive", "text": json.dumps({"type": "start"})},
+            {"type": "websocket.receive", "bytes": b"\x01\x02"},
+            {"type": "websocket.receive", "text": json.dumps({"type": "finish"})},
+        ]
+    )
+    fake_client_holder: dict[str, _FakeSttClient] = {}
+
+    def _factory(*, config: VolcengineSttConfig) -> _FakeSttClient:
+        client = _FakeSttClient(config=config)
+        fake_client_holder["client"] = client
+        return client
+
+    session = AdminAssistantSttSession(
+        websocket=websocket,  # type: ignore[arg-type]
+        user=_build_user(),
+        config=_build_config(),
+        stt_client_factory=_factory,
+    )
+
+    result = asyncio.run(session.run())
+
+    assert result.reason == "client_finish"
+    assert websocket.accepted is True
+    assert websocket.closed is True
+    assert websocket.close_code == 1000
+    assert websocket.sent_json[0]["type"] == "started"
+    assert any(item.get("type") == "transcript" for item in websocket.sent_json)
+    assert websocket.sent_json[-1] == {"type": "completed", "reason": "client_finish"}
+    assert fake_client_holder["client"].sent_audio == [(b"\x01\x02", False), (b"", True)]
+
+
+def test_stt_session_timeout_active_close() -> None:
+    websocket = _FakeFrontendWebSocket(
+        messages=[
+            {"type": "websocket.receive", "text": json.dumps({"type": "start"})},
+        ]
+    )
+    fake_client_holder: dict[str, _FakeSttClient] = {}
+
+    def _factory(*, config: VolcengineSttConfig) -> _FakeSttClient:
+        client = _FakeSttClient(config=config)
+        fake_client_holder["client"] = client
+        return client
+
+    session = AdminAssistantSttSession(
+        websocket=websocket,  # type: ignore[arg-type]
+        user=_build_user(),
+        config=_build_config(max_duration_seconds=1),
+        stt_client_factory=_factory,
+    )
+
+    result = asyncio.run(session.run())
+
+    assert result.reason == "timeout"
+    assert websocket.closed is True
+    assert websocket.close_code == 1000
+    assert websocket.sent_json[-1]["type"] == "timeout"
+    assert fake_client_holder["client"].sent_audio[-1] == (b"", True)
+
+
+def test_stt_session_returns_error_when_upstream_reports_error() -> None:
+    websocket = _FakeFrontendWebSocket(
+        messages=[
+            {"type": "websocket.receive", "text": json.dumps({"type": "start"})},
+        ]
+    )
+
+    class _ErrorSttClient(_FakeSttClient):
+        async def send_full_client_request(self, *, request, user_id: int | None = None) -> None:  # noqa: ANN001, ARG002
+            self._response_queue.put_nowait(
+                SttServerMessage(
+                    message_type=MsgType.Error,
+                    flag=0,
+                    sequence=None,
+                    is_last_package=True,
+                    serialization=SerializationBits.JSON,
+                    compression=CompressionBits.None_,
+                    payload=b"",
+                    payload_json={"message": "provider bad request"},
+                    error_code=45000001,
+                )
+            )
+
+    session = AdminAssistantSttSession(
+        websocket=websocket,  # type: ignore[arg-type]
+        user=_build_user(),
+        config=_build_config(),
+        stt_client_factory=lambda *, config: _ErrorSttClient(config=config),
+    )
+
+    result = asyncio.run(session.run())
+
+    assert result.reason == "upstream_end"
+    assert websocket.closed is True
+    assert websocket.close_code == 1011
+    assert any(
+        item.get("type") == "error" and "provider bad request" in item.get("message", "")
+        for item in websocket.sent_json
+    )
+
+
+def test_speech_stt_service_closes_when_stt_config_invalid(monkeypatch: pytest.MonkeyPatch) -> None:
+    websocket = _FakeFrontendWebSocket(messages=[])
+
+    def _raise_config_error() -> VolcengineSttConfig:
+        raise ServiceException(message="VOLCENGINE_STT_APP_ID is not set")
+
+    monkeypatch.setattr(
+        speech_stt_service_module,
+        "resolve_volcengine_stt_config",
+        _raise_config_error,
+    )
+
+    asyncio.run(
+        assistant_message_stt_stream(
+            websocket=websocket,  # type: ignore[arg-type]
+            user=_build_user(),
+        )
+    )
+
+    assert websocket.closed is True
+    assert websocket.close_code == 1011

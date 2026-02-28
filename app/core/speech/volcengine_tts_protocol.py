@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import gzip
 import io
+import json
 import struct
 from dataclasses import dataclass
 from enum import IntEnum
@@ -44,6 +46,7 @@ class SerializationBits(IntEnum):
 
 class CompressionBits(IntEnum):
     None_ = 0
+    Gzip = 0b0001
 
 
 class EventType(IntEnum):
@@ -278,6 +281,138 @@ class Message:
         size = struct.unpack(">I", data)[0]
         if size > 0:
             self.payload = buffer.read(size)
+
+
+@dataclass(frozen=True)
+class SttServerMessage:
+    """实时 STT 链路中服务端返回帧的解析结果。"""
+
+    message_type: MsgType
+    flag: int
+    sequence: int | None
+    is_last_package: bool
+    serialization: SerializationBits
+    compression: CompressionBits
+    payload: bytes
+    payload_json: Any | None
+    error_code: int | None = None
+
+
+def compress_payload(payload: bytes, compression: CompressionBits) -> bytes:
+    """按协议压缩 payload。"""
+
+    if compression == CompressionBits.None_:
+        return payload
+    if compression == CompressionBits.Gzip:
+        return gzip.compress(payload)
+    raise ValueError(f"Unsupported compression type: {compression}")
+
+
+def decompress_payload(payload: bytes, compression: CompressionBits) -> bytes:
+    """按协议解压 payload。"""
+
+    if compression == CompressionBits.None_:
+        return payload
+    if compression == CompressionBits.Gzip:
+        return gzip.decompress(payload)
+    raise ValueError(f"Unsupported compression type: {compression}")
+
+
+def deserialize_payload(payload: bytes, serialization: SerializationBits) -> Any | None:
+    """按协议序列化方式解析 payload。"""
+
+    if not payload:
+        return None
+    if serialization == SerializationBits.Raw:
+        return None
+    if serialization == SerializationBits.JSON:
+        return json.loads(payload.decode("utf-8"))
+    raise ValueError(f"Unsupported serialization type: {serialization}")
+
+
+def _read_uint32(frame: bytes, offset: int) -> tuple[int, int]:
+    if len(frame) < offset + 4:
+        raise ValueError("invalid frame: insufficient bytes for uint32")
+    return struct.unpack(">I", frame[offset: offset + 4])[0], offset + 4
+
+
+def _read_int32(frame: bytes, offset: int) -> tuple[int, int]:
+    if len(frame) < offset + 4:
+        raise ValueError("invalid frame: insufficient bytes for int32")
+    return struct.unpack(">i", frame[offset: offset + 4])[0], offset + 4
+
+
+def _read_payload_bytes(frame: bytes, offset: int, size: int) -> tuple[bytes, int]:
+    if size < 0:
+        raise ValueError("invalid frame: payload size must be >= 0")
+    end = offset + size
+    if len(frame) < end:
+        raise ValueError("invalid frame: payload truncated")
+    return frame[offset:end], end
+
+
+def parse_stt_server_message(frame: bytes) -> SttServerMessage:
+    """
+    解析实时 STT（二进制协议）返回帧。
+
+    该函数用于 sauc(bigmodel/bigmodel_async/bigmodel_nostream) 链路，
+    解析规则遵循官方示例：
+    - full server response: [sequence?][payload_size][payload]
+    - error response: [error_code][payload_size][payload]
+    """
+
+    if len(frame) < 4:
+        raise ValueError("invalid frame: length < 4")
+
+    message_type = MsgType(frame[1] >> 4)
+    flag = frame[1] & 0b00001111
+    serialization = SerializationBits(frame[2] >> 4)
+    compression = CompressionBits(frame[2] & 0b00001111)
+
+    header_words = frame[0] & 0b00001111
+    header_size = 4 * header_words
+    if header_size < 4 or len(frame) < header_size:
+        raise ValueError("invalid frame: header size")
+
+    cursor = header_size
+    sequence: int | None = None
+    if flag & 0b0001:
+        sequence, cursor = _read_int32(frame, cursor)
+
+    is_last_package = bool(flag & 0b0010)
+
+    if message_type == MsgType.Error:
+        error_code, cursor = _read_uint32(frame, cursor)
+        payload_size, cursor = _read_uint32(frame, cursor)
+        payload, cursor = _read_payload_bytes(frame, cursor, payload_size)
+        payload = decompress_payload(payload, compression)
+        payload_json = deserialize_payload(payload, serialization)
+        return SttServerMessage(
+            message_type=message_type,
+            flag=flag,
+            sequence=sequence,
+            is_last_package=is_last_package,
+            serialization=serialization,
+            compression=compression,
+            payload=payload,
+            payload_json=payload_json,
+            error_code=error_code,
+        )
+
+    payload_size, cursor = _read_uint32(frame, cursor)
+    payload, cursor = _read_payload_bytes(frame, cursor, payload_size)
+    payload = decompress_payload(payload, compression)
+    payload_json = deserialize_payload(payload, serialization)
+    return SttServerMessage(
+        message_type=message_type,
+        flag=flag,
+        sequence=sequence,
+        is_last_package=is_last_package,
+        serialization=serialization,
+        compression=compression,
+        payload=payload,
+        payload_json=payload_json,
+    )
 
 
 async def receive_message(websocket: Any) -> Message:

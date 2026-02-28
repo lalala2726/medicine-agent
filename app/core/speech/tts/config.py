@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException
+from app.core.speech.env_utils import resolve_required_env
 
 DEFAULT_VOLCENGINE_TTS_ENDPOINT = "wss://openspeech.bytedance.com/api/v3/tts/bidirection"
 DEFAULT_VOLCENGINE_TTS_ENCODING = "mp3"
@@ -41,18 +42,6 @@ def infer_resource_id(voice_type: str) -> str:
     if voice_type.startswith("S_"):
         return "volc.megatts.default"
     return "volc.service_type.10029"
-
-
-def _resolve_required_env(name: str) -> str:
-    """读取必填环境变量；为空时抛出配置异常。"""
-
-    value = (os.getenv(name) or "").strip()
-    if value:
-        return value
-    raise ServiceException(
-        code=ResponseCode.INTERNAL_ERROR,
-        message=f"{name} is not set",
-    )
 
 
 def _parse_positive_int(*, value: str | None, name: str, default: int) -> int:
@@ -96,8 +85,8 @@ def resolve_volcengine_tts_config() -> VolcengineTtsConfig:
     - 文本最大字符数由 `VOLCENGINE_TTS_MAX_TEXT_CHARS` 控制。
     """
 
-    app_id = _resolve_required_env("VOLCENGINE_TTS_APP_ID")
-    access_token = _resolve_required_env("VOLCENGINE_TTS_ACCESS_TOKEN")
+    app_id = resolve_required_env("VOLCENGINE_TTS_APP_ID")
+    access_token = resolve_required_env("VOLCENGINE_TTS_ACCESS_TOKEN")
     endpoint = (os.getenv("VOLCENGINE_TTS_ENDPOINT") or DEFAULT_VOLCENGINE_TTS_ENDPOINT).strip()
     if not endpoint:
         endpoint = DEFAULT_VOLCENGINE_TTS_ENDPOINT

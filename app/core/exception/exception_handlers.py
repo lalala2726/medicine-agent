@@ -1,7 +1,7 @@
 import time
 from collections.abc import Mapping
 
-from fastapi import Request
+from fastapi import Request, WebSocket
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from loguru import logger
@@ -24,14 +24,14 @@ class ExceptionHandlers:
     """
 
     @staticmethod
-    def _build_request_context(request: Request | None) -> str:
+    def _build_request_context(request: Request | WebSocket | None) -> str:
         """
         构造统一的请求定位信息。
 
         仅输出 method/path/client，避免泄露 body 与敏感头信息。
 
         Args:
-            request: FastAPI 请求对象；在部分异常场景中可能为 None。
+            request: FastAPI Request/WebSocket 对象；在部分异常场景中可能为 None。
 
         Returns:
             str: 结构化请求定位字符串，格式为
@@ -41,9 +41,10 @@ class ExceptionHandlers:
         if request is None:
             return "method=unknown path=unknown client=unknown"
 
-        method = request.method or "unknown"
-        path = request.url.path or "unknown"
-        client = request.client
+        method = getattr(request, "method", None) or getattr(request, "scope", {}).get("type", "unknown")
+        url = getattr(request, "url", None)
+        path = getattr(url, "path", None) or getattr(request, "scope", {}).get("path", "unknown")
+        client = getattr(request, "client", None)
         if client is None:
             client_text = "unknown"
         elif client.port is None:
@@ -53,7 +54,7 @@ class ExceptionHandlers:
         return f"method={method} path={path} client={client_text}"
 
     @staticmethod
-    def _log_exception(*, request: Request | None, exc: Exception, category: str) -> None:
+    def _log_exception(*, request: Request | WebSocket | None, exc: Exception, category: str) -> None:
         """
         记录异常详细日志（含堆栈）用于排查。
 
@@ -121,7 +122,7 @@ class ExceptionHandlers:
 
     @staticmethod
     async def request_validation_exception_handler(
-            request: Request | None, exc: RequestValidationError
+            request: Request | WebSocket | None, exc: RequestValidationError
     ) -> JSONResponse:
         """
         处理请求参数校验异常。
@@ -150,7 +151,7 @@ class ExceptionHandlers:
         )
 
     @staticmethod
-    async def service_exception_handler(request: Request | None, exc: ServiceException) -> JSONResponse:
+    async def service_exception_handler(request: Request | WebSocket | None, exc: ServiceException) -> JSONResponse:
         """
         处理业务异常（ServiceException）。
 
@@ -194,7 +195,7 @@ class ExceptionHandlers:
         )
 
     @staticmethod
-    async def http_exception_handler(request: Request | None, exc: StarletteHTTPException) -> JSONResponse:
+    async def http_exception_handler(request: Request | WebSocket | None, exc: StarletteHTTPException) -> JSONResponse:
         """
         处理 Starlette/FastAPI 的 HTTPException。
 
@@ -231,7 +232,7 @@ class ExceptionHandlers:
         )
 
     @staticmethod
-    async def pymongo_exception_handler(request: Request | None, exc: PyMongoError) -> JSONResponse:
+    async def pymongo_exception_handler(request: Request | WebSocket | None, exc: PyMongoError) -> JSONResponse:
         """
         处理 MongoDB 驱动异常（PyMongoError）。
 
@@ -256,7 +257,7 @@ class ExceptionHandlers:
         )
 
     @staticmethod
-    async def unhandled_exception_handler(request: Request | None, exc: Exception) -> JSONResponse:
+    async def unhandled_exception_handler(request: Request | WebSocket | None, exc: Exception) -> JSONResponse:
         """
         处理未被其他处理器捕获的未知异常。
 

@@ -11,14 +11,14 @@ from loguru import logger
 
 from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException
-from app.core.speech.config import (
+from app.core.speech.tts.config import (
     VolcengineTtsConfig,
     build_volcengine_tts_headers,
     is_volcengine_tts_startup_connect_enabled,
     is_volcengine_tts_startup_fail_fast_enabled,
     resolve_volcengine_tts_config,
 )
-from app.core.speech.text_sanitizer import TtsTextSanitizer
+from app.core.speech.tts.text_sanitizer import TtsTextSanitizer
 from app.core.speech.volcengine_tts_protocol import (
     EventType,
     MsgType,

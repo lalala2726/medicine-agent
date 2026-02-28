@@ -4,6 +4,7 @@ import anyio
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.requests import Request
+from starlette.websockets import WebSocket
 
 from app.core.codes import ResponseCode
 from app.core.exception.exception_handlers import ExceptionHandlers
@@ -12,6 +13,29 @@ from app.core.exception.exceptions import ServiceException
 
 def _build_request(path: str) -> Request:
     return Request({"type": "http", "method": "POST", "path": path, "headers": []})
+
+
+def _build_websocket(path: str) -> WebSocket:
+    async def _receive() -> dict:
+        return {"type": "websocket.disconnect", "code": 1000}
+
+    async def _send(_message: dict) -> None:
+        return None
+
+    return WebSocket(
+        {
+            "type": "websocket",
+            "path": path,
+            "headers": [],
+            "query_string": b"",
+            "client": ("127.0.0.1", 12345),
+            "server": ("testserver", 80),
+            "scheme": "ws",
+            "subprotocols": [],
+        },
+        receive=_receive,
+        send=_send,
+    )
 
 
 def _install_log_spy(monkeypatch) -> list[dict]:
@@ -147,6 +171,12 @@ def test_unhandled_exception_handler():
 def test_build_request_context_handles_none_request():
     context = ExceptionHandlers._build_request_context(None)
     assert context == "method=unknown path=unknown client=unknown"
+
+
+def test_build_request_context_handles_websocket():
+    websocket = _build_websocket("/ws/speech/stt/stream")
+    context = ExceptionHandlers._build_request_context(websocket)
+    assert context == "method=websocket path=/ws/speech/stt/stream client=127.0.0.1:12345"
 
 
 def test_request_validation_exception_handler_logs_detail(monkeypatch):
