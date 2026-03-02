@@ -19,8 +19,8 @@ from app.core.security.rate_limit import (
     check_rate_limit,
 )
 from app.schemas.auth import AuthUser
-from app.services.speech_stt_service import speech_stt_stream_service
 from app.services.auth_service import verify_authorization
+from app.services.speech_stt_service import speech_stt_stream_service
 
 router = APIRouter(prefix="/ws/speech/stt", tags=["语音识别"])
 
@@ -43,9 +43,9 @@ def _has_stt_access(user: AuthUser) -> bool:
 
 def _resolve_query_authorization(websocket: WebSocket) -> str | None:
     raw_token = (
-        websocket.query_params.get("access_token")
-        or websocket.query_params.get("token")
-        or ""
+            websocket.query_params.get("access_token")
+            or websocket.query_params.get("token")
+            or ""
     ).strip()
     if not raw_token:
         return None

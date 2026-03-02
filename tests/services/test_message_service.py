@@ -130,6 +130,28 @@ def test_add_message_persists_token_usage_totals_for_assistant(monkeypatch):
     }
 
 
+def test_add_message_persists_thinking_for_assistant(monkeypatch):
+    """验证 assistant 消息落库会保存 thinking 字段。"""
+
+    collection = _DummyCollection()
+    monkeypatch.setattr(
+        service_module,
+        "get_mongo_database",
+        lambda: {"messages": collection},
+    )
+    monkeypatch.setattr(service_module, "_resolve_collection_name", lambda: "messages")
+
+    service_module.add_message(
+        conversation_id="507f1f77bcf86cd799439011",
+        role=MessageRole.AI,
+        content="助手回复",
+        thinking="这是完整思考内容",
+    )
+
+    assert collection.last_inserted is not None
+    assert collection.last_inserted["thinking"] == "这是完整思考内容"
+
+
 def test_add_message_ignores_token_usage_with_legacy_fields(monkeypatch):
     """验证 token_usage 含扩展字段时，仍会规范化并保存三元组。"""
 
@@ -187,6 +209,28 @@ def test_add_message_user_ignores_token_usage(monkeypatch):
     assert "token_usage" not in collection.last_inserted
 
 
+def test_add_message_user_ignores_thinking(monkeypatch):
+    """验证 user 消息不会保存 thinking 字段。"""
+
+    collection = _DummyCollection()
+    monkeypatch.setattr(
+        service_module,
+        "get_mongo_database",
+        lambda: {"messages": collection},
+    )
+    monkeypatch.setattr(service_module, "_resolve_collection_name", lambda: "messages")
+
+    service_module.add_message(
+        conversation_id="507f1f77bcf86cd799439011",
+        role=MessageRole.USER,
+        content="用户提问",
+        thinking="不应保存",
+    )
+
+    assert collection.last_inserted is not None
+    assert "thinking" not in collection.last_inserted
+
+
 def test_add_message_rejects_invalid_conversation_id(monkeypatch):
     """验证 add_message：非法 conversation_id 会返回 BAD_REQUEST。"""
 
@@ -218,6 +262,7 @@ def test_get_message_by_uuid_returns_typed_model(monkeypatch):
         "conversation_id": ObjectId("507f1f77bcf86cd799439011"),
         "role": "ai",
         "content": "hello",
+        "thinking": "这是思考内容",
         "token_usage": {
             "prompt_tokens": 2,
             "completion_tokens": 1,
@@ -240,6 +285,7 @@ def test_get_message_by_uuid_returns_typed_model(monkeypatch):
     assert result.id == "507f1f77bcf86cd799439012"
     assert result.conversation_id == "507f1f77bcf86cd799439011"
     assert result.role == MessageRole.AI
+    assert result.thinking == "这是思考内容"
     assert result.token_usage is not None
     assert result.token_usage.model_dump() == {
         "prompt_tokens": 2,
@@ -259,6 +305,7 @@ def test_list_messages_returns_typed_models(monkeypatch):
             "conversation_id": ObjectId("507f1f77bcf86cd799439011"),
             "role": "ai",
             "content": "b",
+            "thinking": "AI思考",
             "created_at": datetime.datetime(2026, 1, 1, 10, 0, 2),
             "updated_at": datetime.datetime(2026, 1, 1, 10, 0, 2),
         },
@@ -292,7 +339,9 @@ def test_list_messages_returns_typed_models(monkeypatch):
     assert len(result) == 2
     assert all(isinstance(item, MessageDocument) for item in result)
     assert result[0].content == "a"
+    assert result[0].thinking is None
     assert result[1].content == "b"
+    assert result[1].thinking == "AI思考"
 
 
 def test_list_messages_supports_skip_with_descending_order(monkeypatch):

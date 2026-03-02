@@ -35,7 +35,7 @@ def test_build_message_token_usage_only_accumulates_node_llm():
                 "llm_token_usage": {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7},
                 "tool_calls": [
                     {
-                        "tool_name": "order_tool_agent",
+                        "tool_name": "order_sub_agent",
                         "tool_input": {"task_description": "查订单"},
                         "llm_used": True,
                         "llm_usage_complete": True,

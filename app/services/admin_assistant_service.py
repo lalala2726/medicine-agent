@@ -19,9 +19,9 @@ from app.core.agent.agent_orchestrator import (
 from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException
 from app.core.langsmith import build_langsmith_runnable_config
-from app.core.llm import create_chat_model
-from app.core.speech import build_message_tts_stream
+from app.core.llms import create_chat_model
 from app.core.security.auth_context import get_user_id
+from app.core.speech import build_message_tts_stream
 from app.schemas.admin_assistant_history import ConversationMessageResponse
 from app.schemas.base_request import PageRequest
 from app.schemas.document.conversation import ConversationListItem
@@ -39,14 +39,19 @@ from app.services.message_service import add_message, list_messages
 from app.services.message_trace_service import add_message_trace
 from app.services.token_usage_service import (
     resolve_persistable_token_usage,
-    resolve_persistable_token_usage_detail,
+    resolve_persistable_trace_token_usage,
 )
-from app.utils.prompt_utils import PromptUtils, load_prompt
+from app.utils.prompt_utils import load_prompt
 
 ADMIN_WORKFLOW = build_graph()
 STREAM_OUTPUT_NODES = {
     "chat_agent",
-    "supervisor_agent",
+    "order_agent",
+    "product_agent",
+    "after_sale_agent",
+    "user_agent",
+    "analytics_agent",
+    "adaptive_agent",
 }
 EMPTY_ASSISTANT_ANSWER_FALLBACK = "服务暂时不可用，请稍后重试。"
 
@@ -108,11 +113,20 @@ def _build_initial_state(
         question: str,
         *,
         history_messages: list[ChatHistoryMessage] | None = None,
+        enable_thinking: bool = False,
 ) -> dict[str, Any]:
     """
     构造管理助手的初始状态。
 
     所有节点共享该状态结构，避免执行过程中出现缺失键导致的分支判断复杂化。
+
+    Args:
+        question: 当前用户问题文本；当前实现仅用于接口语义占位，不参与状态构造。
+        history_messages: 会话历史消息列表；为空时默认空列表。
+        enable_thinking: 是否开启深度思考透传；默认 `False`。
+
+    Returns:
+        dict[str, Any]: LangGraph 初始状态字典，包含路由、历史、消息与透传开关等字段。
     """
 
     _ = question
@@ -120,11 +134,12 @@ def _build_initial_state(
 
     return {
         "routing": {
-            "route_target": "",
+            "route_targets": [],
             "task_difficulty": "normal",
         },
         "context": "",
         "history_messages": base_history,
+        "enable_thinking": bool(enable_thinking),
         "execution_traces": [],
         "token_usage": None,
         "result": "",
@@ -137,7 +152,7 @@ def _should_stream_token(stream_node: str | None, latest_state: dict[str, Any]) 
     """
     判定某个节点 token 是否应该被推送给前端。
 
-    当前最小实现仅允许 chat/supervisor 两个节点输出 token。
+    当前规则允许所有业务输出节点输出 token（gateway 节点除外）。
     """
 
     _ = latest_state
@@ -329,13 +344,14 @@ def _persist_assistant_message(
         execution_trace: list[ExecutionTraceState] | None,
         token_usage: TokenUsageState | dict[str, Any] | None,
         status: MessageStatus | str,
+        thinking_text: str | None = None,
 ) -> None:
     """
     持久化 ai 消息。
 
     流程：
     1. 主消息表保存基础消息 + token 总量；
-    2. trace 表保存 execution_trace + token 明细；
+    2. trace 表保存 workflow 汇总 + execution_trace + token 汇总；
     3. trace 失败仅记录 warning，不影响主消息保存。
     """
     resolved_status = MessageStatus(status)
@@ -343,7 +359,7 @@ def _persist_assistant_message(
         token_usage,
         execution_trace,
     )
-    persistable_token_usage_detail = resolve_persistable_token_usage_detail(
+    persistable_trace_token_usage = resolve_persistable_trace_token_usage(
         token_usage,
         execution_trace,
     )
@@ -352,6 +368,7 @@ def _persist_assistant_message(
         role="ai",
         status=resolved_status,
         content=answer_text,
+        thinking=thinking_text,
         token_usage=persistable_token_usage,
         message_uuid=message_uuid,
     )
@@ -360,7 +377,8 @@ def _persist_assistant_message(
             message_uuid=message_uuid,
             conversation_id=conversation_id,
             execution_trace=execution_trace,
-            token_usage_detail=persistable_token_usage_detail,
+            token_usage=persistable_trace_token_usage,
+            has_error=resolved_status == MessageStatus.ERROR,
         )
     except Exception as exc:  # pragma: no cover - 防御性兜底
         logger.opt(exception=exc).warning(
@@ -379,8 +397,9 @@ def _build_assistant_message_callback(*, conversation_id: str, assistant_message
     async def _callback(
             answer_text: str,
             execution_trace: list[ExecutionTraceState] | None,
-            token_usage: TokenUsageState | dict[str, Any] | None,
+            token_usage: TokenUsageState | dict[str, Any] | None = None,
             has_error: bool = False,
+            thinking_text: str | None = None,
     ) -> None:
         resolved_token_usage = token_usage
         resolved_has_error = has_error
@@ -402,6 +421,7 @@ def _build_assistant_message_callback(*, conversation_id: str, assistant_message
                 "conversation_id": conversation_id,
                 "message_uuid": assistant_message_uuid,
                 "answer_text": normalized_answer,
+                "thinking_text": thinking_text,
                 "execution_trace": execution_trace,
                 "token_usage": resolved_token_usage,
                 "status": resolved_status,
@@ -541,7 +561,12 @@ def _prepare_conversation_context(
     )
 
 
-def assistant_chat(*, question: str, conversation_uuid: str | None = None) -> StreamingResponse:
+def assistant_chat(
+        *,
+        question: str,
+        conversation_uuid: str | None = None,
+        enable_thinking: bool = False,
+) -> StreamingResponse:
     """
     管理助手聊天入口（SSE 流式返回）。
 
@@ -553,6 +578,14 @@ def assistant_chat(*, question: str, conversation_uuid: str | None = None) -> St
     5. AI 回复会在流结束后后台写入消息表（空输出也会落库 error 兜底文案）；
     6. 标题生成与保存在后台并行执行，不阻塞当前流式响应。
     7. 会话准备逻辑由 `_prepare_conversation_context` 统一处理。
+
+    Args:
+        question: 用户输入问题文本。
+        conversation_uuid: 可选会话 UUID；为空时创建新会话。
+        enable_thinking: 是否开启深度思考流式透传；默认 `False`。
+
+    Returns:
+        StreamingResponse: 标准 SSE 流式响应对象。
     """
 
     current_user_id = get_user_id()
@@ -578,6 +611,7 @@ def assistant_chat(*, question: str, conversation_uuid: str | None = None) -> St
         build_initial_state=lambda q: _build_initial_state(
             q,
             history_messages=context.history_messages,
+            enable_thinking=enable_thinking,
         ),
         extract_final_content=lambda state: str(state.get("result") or ""),
         should_stream_token=_should_stream_token,
@@ -715,6 +749,9 @@ def conversation_messages(
         }
         if role == "ai":
             payload["status"] = document.status.value
+            raw_thinking = getattr(document, "thinking", None)
+            if isinstance(raw_thinking, str) and raw_thinking.strip():
+                payload["thinking"] = raw_thinking
         result.append(ConversationMessageResponse.model_validate(payload))
     return result
 
@@ -799,8 +836,7 @@ def generate_title(question: str) -> str:
         return "未知标题"
 
     llm_model = create_chat_model(
-        model="qwen-flash",
-        temperature=0.3
+        temperature=1.0
     )
     messages = [
         SystemMessage(content=system_prompt),

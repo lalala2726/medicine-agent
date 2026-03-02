@@ -68,7 +68,7 @@ def test_record_agent_trace_maps_sub_agent_trace_from_tool_artifact():
             content="",
             tool_calls=[
                 {
-                    "name": "analytics_tool_agent",
+                    "name": "analytics_sub_agent",
                     "args": {"task_description": "获取今日订单与销售额"},
                     "id": "call_sub_agent_1",
                     "type": "tool_call",
@@ -90,7 +90,7 @@ def test_record_agent_trace_maps_sub_agent_trace_from_tool_artifact():
 
     assert len(trace["tool_calls"]) == 1
     parent_tool_call = trace["tool_calls"][0]
-    assert parent_tool_call["tool_name"] == "analytics_tool_agent"
+    assert parent_tool_call["tool_name"] == "analytics_sub_agent"
     # 当前追踪层仅提取 AI tool_calls 输入，不聚合 ToolMessage 输出与 artifact。
     assert parent_tool_call["is_error"] is False
     assert parent_tool_call["error_message"] is None

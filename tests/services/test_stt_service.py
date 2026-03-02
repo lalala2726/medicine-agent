@@ -226,6 +226,28 @@ def test_stt_session_timeout_active_close() -> None:
     assert fake_client_holder["client"].sent_audio[-1] == (b"", True)
 
 
+def test_stt_session_timeout_when_client_never_sends_start() -> None:
+    """测试目的：验证客户端连接后未发送 start 时仍会触发会话超时；预期结果：会话返回 timeout 并关闭连接。"""
+
+    websocket = _FakeFrontendWebSocket(messages=[])
+
+    session = AdminAssistantSttSession(
+        websocket=websocket,  # type: ignore[arg-type]
+        user=_build_user(),
+        config=_build_config(max_duration_seconds=1),
+        session_duration_seconds=1,
+        stt_client_factory=lambda *, config: _FakeSttClient(config=config),
+    )
+
+    result = asyncio.run(session.run())
+
+    assert result.reason == "timeout"
+    assert websocket.closed is True
+    assert websocket.close_code == 1000
+    assert websocket.sent_json[-1]["type"] == "timeout"
+    assert websocket.sent_json[-1]["error_code"] == "stt_timeout"
+
+
 def test_stt_session_returns_error_when_upstream_reports_error() -> None:
     websocket = _FakeFrontendWebSocket(
         messages=[
@@ -234,7 +256,8 @@ def test_stt_session_returns_error_when_upstream_reports_error() -> None:
     )
 
     class _ErrorSttClient(_FakeSttClient):
-        async def send_full_client_request(self, *, request, user_id: int | None = None) -> None:  # noqa: ANN001, ARG002
+        async def send_full_client_request(self, *, request,
+                                           user_id: int | None = None) -> None:  # noqa: ANN001, ARG002
             self._response_queue.put_nowait(
                 SttServerMessage(
                     message_type=MsgType.Error,

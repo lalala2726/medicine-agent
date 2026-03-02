@@ -83,9 +83,10 @@ class AssistantStreamConfig:
     invoke_sync: Callable[[dict[str, Any]], dict[str, Any]]
     # 异常映射器：把内部异常转成统一错误文案。
     map_exception: Callable[[Exception], str]
-    # 可选收尾回调：在流结束时回调完整 answer 文本、执行追踪与 token 汇总。
-    # 回调兼容 2/3/4 参：2参(answer,trace)、3参(answer,trace,has_error)、
-    # 4参(answer,trace,token_usage,has_error)。
+    # 可选收尾回调：在流结束时回调完整 answer/thinking 文本、执行追踪与 token 汇总。
+    # 回调兼容 2/3/4/5 参：2参(answer,trace)、3参(answer,trace,has_error)、
+    # 4参(answer,trace,token_usage,has_error)、
+    # 5参(answer,trace,token_usage,has_error,thinking_text)。
     on_answer_completed: OnAnswerCompletedCallback | None = None
     # 流开始前注入的事件列表（例如会话创建成功事件），会按给定顺序输出。
     initial_emitted_events: tuple[InitialEmittedEvent, ...] = field(
@@ -122,6 +123,8 @@ class StreamRuntimeState:
     has_emitted_error: bool = False
     aggregated_answer_parts: list[str] = field(default_factory=list)
     aggregated_answer_text: str = ""
+    aggregated_thinking_parts: list[str] = field(default_factory=list)
+    aggregated_thinking_text: str = ""
     active_tool_calls: int = 0
 
 
@@ -309,15 +312,21 @@ def _normalize_initial_event_payload(event: InitialEmittedEvent) -> dict[str, An
     return None
 
 
-def _normalize_execution_trace_item(raw_item: Any) -> dict[str, Any] | None:
+def _normalize_execution_trace_item(
+        raw_item: Any,
+        *,
+        fallback_sequence: int,
+) -> dict[str, Any] | None:
     """
     归一化单条 execution_trace 记录。
 
     Args:
         raw_item: 原始执行追踪项。
+        fallback_sequence: 当上游未提供合法 `sequence` 时使用的兜底顺序值。
 
     Returns:
-        dict[str, Any] | None: 合法记录返回标准化字典；非法记录返回 None。
+        dict[str, Any] | None:
+            合法记录返回标准化字典；非法记录返回 None。
     """
 
     if not isinstance(raw_item, dict):
@@ -327,23 +336,27 @@ def _normalize_execution_trace_item(raw_item: Any) -> dict[str, Any] | None:
     if not node_name:
         return None
 
+    raw_sequence = _to_non_negative_int(raw_item.get("sequence"))
+    sequence = raw_sequence if raw_sequence is not None and raw_sequence >= 1 else fallback_sequence
     model_name = str(raw_item.get("model_name") or UNKNOWN_MODEL_NAME).strip() or UNKNOWN_MODEL_NAME
-    input_messages = raw_item.get("input_messages")
-    if not isinstance(input_messages, list):
-        input_messages = []
+    status = str(raw_item.get("status") or "success").strip().lower()
+    normalized_status = status if status in {"success", "error"} else "success"
     tool_calls = raw_item.get("tool_calls")
     if not isinstance(tool_calls, list):
         tool_calls = []
+    raw_node_context = raw_item.get("node_context")
+    node_context = raw_node_context if isinstance(raw_node_context, dict) else None
 
     return {
+        "sequence": sequence,
         "node_name": node_name,
         "model_name": model_name,
-        "input_messages": input_messages,
+        "status": normalized_status,
         "output_text": str(raw_item.get("output_text") or ""),
-        "llm_used": bool(raw_item.get("llm_used", True)),
         "llm_usage_complete": bool(raw_item.get("llm_usage_complete", True)),
         "llm_token_usage": raw_item.get("llm_token_usage"),
         "tool_calls": tool_calls,
+        "node_context": node_context,
     }
 
 
@@ -363,8 +376,11 @@ def _build_execution_trace_summary(latest_state: dict[str, Any]) -> list[dict[st
         return None
 
     normalized_items: list[dict[str, Any]] = []
-    for item in raw_items:
-        normalized_item = _normalize_execution_trace_item(item)
+    for index, item in enumerate(raw_items, start=1):
+        normalized_item = _normalize_execution_trace_item(
+            item,
+            fallback_sequence=index,
+        )
         if normalized_item is not None:
             normalized_items.append(normalized_item)
     return normalized_items or None
@@ -440,6 +456,35 @@ def _append_answer_text(runtime_state: StreamRuntimeState, text: str) -> str:
 
     runtime_state.aggregated_answer_parts.append(delta_text)
     runtime_state.aggregated_answer_text += delta_text
+    return delta_text
+
+
+def _append_thinking_text(runtime_state: StreamRuntimeState, text: str) -> str:
+    """
+    向聚合思考缓冲区追加文本，并对“全量快照重复”做增量裁剪。
+
+    Args:
+        runtime_state: 流式运行时状态。
+        text: 待追加的思考文本片段。
+
+    Returns:
+        str: 实际新增的文本；若无新增则返回空字符串。
+    """
+
+    raw_text = str(text or "")
+    if not raw_text:
+        return ""
+
+    delta_text = raw_text
+    existing_text = runtime_state.aggregated_thinking_text
+    if existing_text and raw_text.startswith(existing_text):
+        delta_text = raw_text[len(existing_text):]
+
+    if not delta_text:
+        return ""
+
+    runtime_state.aggregated_thinking_parts.append(delta_text)
+    runtime_state.aggregated_thinking_text += delta_text
     return delta_text
 
 
@@ -599,6 +644,20 @@ def _process_stream_event(
                 )
             else:
                 return result
+        elif (
+                emitted_response.type == MessageType.THINKING
+                and isinstance(emitted_response.content.text, str)
+                and emitted_response.content.text
+        ):
+            delta_thinking = _append_thinking_text(runtime_state, emitted_response.content.text)
+            if delta_thinking:
+                emitted_response = emitted_response.model_copy(
+                    update={
+                        "content": emitted_response.content.model_copy(update={"text": delta_thinking}),
+                    }
+                )
+            else:
+                return result
 
         result.rendered_events.append(serialize_sse(emitted_response))
         return result
@@ -729,6 +788,7 @@ async def _invoke_answer_completed_callback(
         execution_trace: list[dict[str, Any]] | None,
         token_usage: dict[str, Any] | None,
         has_error: bool,
+        thinking_text: str,
 ) -> None:
     """
     执行“回答完成”回调。
@@ -741,6 +801,7 @@ async def _invoke_answer_completed_callback(
         execution_trace: 汇总后的节点执行追踪。
         token_usage: 汇总后的消息级 token 使用信息。
         has_error: 本次流式执行是否出现错误。
+        thinking_text: 聚合后的完整思考文本。
     """
 
     if callback is None:
@@ -761,9 +822,12 @@ async def _invoke_answer_completed_callback(
         for parameter in parameters
     )
     supports_four_args = accepts_variadic or len(positional_parameters) >= 4
+    supports_five_args = accepts_variadic or len(positional_parameters) >= 5
     supports_three_args = accepts_variadic or len(positional_parameters) >= 3
 
-    if supports_four_args:
+    if supports_five_args:
+        callback_result = callback(answer_text, execution_trace, token_usage, has_error, thinking_text)
+    elif supports_four_args:
         callback_result = callback(answer_text, execution_trace, token_usage, has_error)
     elif supports_three_args:
         callback_result = callback(answer_text, execution_trace, has_error)
@@ -860,6 +924,7 @@ async def _event_stream(
                 execution_trace,
                 token_usage,
                 runtime_state.has_emitted_error,
+                runtime_state.aggregated_thinking_text,
             )
         except Exception as exc:  # pragma: no cover - 防御性兜底
             logger.opt(exception=exc).warning("Assistant stream finalize callback failed")

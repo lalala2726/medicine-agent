@@ -32,8 +32,8 @@ from app.core.speech.volcengine_speech_protocol import (
 )
 from app.schemas.document.message import MessageRole
 from app.services.conversation_service import get_admin_conversation_by_id
-from app.services.message_tts_usage_service import add_message_tts_usage
 from app.services.message_service import get_message_by_uuid
+from app.services.message_tts_usage_service import add_message_tts_usage
 
 # WebSocket 单帧最大载荷（bytes）。
 MAX_WS_MESSAGE_SIZE = 10 * 1024 * 1024
@@ -169,7 +169,7 @@ def prepare_tts_text(
     处理规则：
     1. 先做白名单清洗，仅保留可播报文本；
     2. 清洗后为空则拒绝转语音；
-    3. 超过 `max_text_chars` 时，截取前 N 个字符并添加固定提示前缀。
+    3. 超过 `max_text_chars` 时，追加截断提示前缀，并保证最终发送文本总长度不超过上限。
 
     Args:
         raw_text: 原始消息文本。
@@ -204,8 +204,12 @@ def prepare_tts_text(
         )
 
     truncation_prefix = DEFAULT_TTS_TRUNCATION_PREFIX_TEMPLATE.format(max_chars=max_text_chars).strip()
-    truncated_text = sanitized_text[:max_text_chars]
-    final_text = f"{truncation_prefix}{truncated_text}" if truncation_prefix else truncated_text
+    if truncation_prefix:
+        prefix_part = truncation_prefix[:max_text_chars]
+        remaining_chars = max(max_text_chars - len(prefix_part), 0)
+        final_text = f"{prefix_part}{sanitized_text[:remaining_chars]}"
+    else:
+        final_text = sanitized_text[:max_text_chars]
 
     logger.info(
         "Volcengine TTS input text truncated max_chars={max_chars} source_chars={source_chars} final_chars={final_chars}",

@@ -282,9 +282,8 @@ def _build_tool_call_traces(messages: list[Any]) -> list[dict[str, Any]]:
         messages: 最终消息列表。
 
     Returns:
-        list[dict[str, Any]]: 结构化工具调用追踪明细。
+        list[dict[str, Any]]: 结构化工具调用追踪明细（仅保留真实最小字段）。
     """
-    # TODO(zhangchuang): 后续补充 ToolMessage 输出、status/error 与 artifact 子调用追踪映射。
 
     tool_calls: list[dict[str, Any]] = []
     for message in messages:
@@ -299,13 +298,10 @@ def _build_tool_call_traces(messages: list[Any]) -> list[dict[str, Any]]:
             tool_calls.append(
                 {
                     "tool_name": str(raw_call.get("name") or ""),
+                    "tool_call_id": (
+                        str(raw_call.get("id") or "").strip() or None
+                    ),
                     "tool_input": raw_call.get("args"),
-                    "is_error": False,
-                    "error_message": None,
-                    "llm_used": False,
-                    "llm_usage_complete": True,
-                    "llm_token_usage": None,
-                    "children": [],
                 }
             )
     return tool_calls

@@ -42,6 +42,7 @@ class MessageCreate(BaseModel):
     role: MessageRole = Field(..., description="消息角色")
     status: MessageStatus = Field(default=MessageStatus.SUCCESS, description="消息状态")
     content: str = Field(..., min_length=1, description="消息内容")
+    thinking: str | None = Field(default=None, description="AI深度思考完整文本")
     token_usage: TokenUsage | None = Field(default=None, description="消息 token 使用总量")
 
 
@@ -56,6 +57,7 @@ class MessageDocument(BaseModel):
     role: MessageRole = Field(..., description="消息角色")
     status: MessageStatus = Field(default=MessageStatus.SUCCESS, description="消息状态")
     content: str = Field(..., description="消息内容")
+    thinking: str | None = Field(default=None, description="AI深度思考完整文本")
     token_usage: TokenUsage | None = Field(default=None, description="消息 token 使用总量")
     created_at: datetime = Field(..., description="创建时间")
     updated_at: datetime = Field(..., description="更新时间")

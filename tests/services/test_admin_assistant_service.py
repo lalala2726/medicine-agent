@@ -498,6 +498,7 @@ def test_assistant_chat_schedules_user_persist_without_blocking_main_flow(monkey
     initial_state = stream_config.build_initial_state("x")
     assert "context" in initial_state
     assert "messages" in initial_state
+    assert initial_state["enable_thinking"] is False
     assert [message.content for message in initial_state["history_messages"]] == [
         "历史问题",
         "历史回答",
@@ -529,6 +530,73 @@ def test_assistant_chat_schedules_user_persist_without_blocking_main_flow(monkey
             "content": "代理测试",
         }
     ]
+
+
+def test_assistant_chat_injects_enable_thinking_flag_into_initial_state(monkeypatch):
+    """测试目的：验证开启深度思考时状态透传生效；预期结果：initial_state.enable_thinking 为 True。"""
+
+    captured: dict = {}
+
+    def _fake_create_streaming_response(question: str, config: AssistantStreamConfig):
+        captured["question"] = question
+        captured["config"] = config
+
+        async def _stream():
+            yield (
+                    "data: "
+                    + json.dumps(
+                {
+                    "content": {"text": ""},
+                    "type": "answer",
+                    "is_end": True,
+                    "timestamp": 1,
+                },
+                ensure_ascii=False,
+            )
+                    + "\n\n"
+            )
+
+        return StreamingResponse(_stream(), media_type="text/event-stream")
+
+    monkeypatch.setattr(service_module, "create_streaming_response", _fake_create_streaming_response)
+    monkeypatch.setattr(service_module, "get_user_id", lambda: 100)
+    monkeypatch.setattr(service_module.uuid, "uuid4", lambda: "assistant-msg-uuid")
+    monkeypatch.setattr(
+        service_module,
+        "get_admin_conversation",
+        lambda *, conversation_uuid, user_id: ConversationDocument(
+            _id=ObjectId("507f1f77bcf86cd799439011"),
+            uuid=conversation_uuid,
+            conversation_type=ConversationType.ADMIN,
+            user_id=user_id,
+            title="会话标题",
+            create_time=datetime.datetime(2026, 1, 1, 10, 0, 0),
+            update_time=datetime.datetime(2026, 1, 1, 10, 0, 0),
+            is_deleted=0,
+        ),
+    )
+    monkeypatch.setattr(
+        service_module,
+        "load_history",
+        lambda **_kwargs: [HumanMessage(content="历史问题"), AIMessage(content="历史回答")],
+    )
+    monkeypatch.setattr(
+        service_module,
+        "_schedule_background_task",
+        lambda *, task_name, func, kwargs: None,
+    )
+
+    response = service_module.assistant_chat(
+        question="开启思考",
+        conversation_uuid="conv-1",
+        enable_thinking=True,
+    )
+
+    assert isinstance(response, StreamingResponse)
+    assert captured["question"] == "开启思考"
+    stream_config = captured["config"]
+    initial_state = stream_config.build_initial_state("x")
+    assert initial_state["enable_thinking"] is True
 
 
 def test_answer_completed_schedules_async_persist_with_execution_trace(monkeypatch):
@@ -659,6 +727,52 @@ def test_answer_completed_marks_error_status_when_stream_failed(monkeypatch):
     assert saved_traces[-1]["message_uuid"] == "msg-uuid-error"
 
 
+def test_answer_completed_persists_thinking_text(monkeypatch):
+    """测试目标：流结束回调携带 thinking 时会写入主消息；成功标准：add_message 收到 thinking 字段。"""
+
+    saved_messages: list[dict] = []
+    saved_traces: list[dict] = []
+
+    monkeypatch.setattr(
+        service_module,
+        "_schedule_background_task",
+        lambda *, task_name, func, kwargs: func(**kwargs),
+    )
+    monkeypatch.setattr(
+        service_module,
+        "add_message",
+        lambda **kwargs: saved_messages.append(kwargs) or "507f1f77bcf86cd799439012",
+    )
+    monkeypatch.setattr(
+        service_module,
+        "add_message_trace",
+        lambda **kwargs: saved_traces.append(kwargs) or None,
+    )
+    monkeypatch.setattr(
+        service_module,
+        "resolve_persistable_token_usage",
+        lambda _token_usage, _execution_trace: None,
+    )
+
+    callback = service_module._build_assistant_message_callback(
+        conversation_id="507f1f77bcf86cd799439011",
+        assistant_message_uuid="msg-uuid-thinking",
+    )
+    asyncio.run(
+        callback(
+            "带思考的回复",
+            [],
+            None,
+            False,
+            "这是完整思考文本",
+        )
+    )
+
+    assert saved_messages[-1]["message_uuid"] == "msg-uuid-thinking"
+    assert saved_messages[-1]["thinking"] == "这是完整思考文本"
+    assert saved_traces[-1]["message_uuid"] == "msg-uuid-thinking"
+
+
 def test_answer_completed_persists_fallback_when_answer_empty(monkeypatch):
     """测试目标：空输出也要落库；成功标准：写入兜底文案且状态为 error。"""
 
@@ -732,6 +846,7 @@ def test_persist_assistant_message_trace_failure_only_logs_warning(monkeypatch):
             "node_breakdown": [],
         },
     )
+
     class _DummyLogger:
         def warning(self, message: str, **kwargs):
             warning_calls.append({"message": message, "kwargs": kwargs})
@@ -929,16 +1044,51 @@ def test_conversation_messages_returns_latest_page_in_chronological_order(monkey
     assert [item.id for item in result] == ["msg-user-1", "msg-ai-2"]
     assert result[0].role == "user"
     assert result[0].status is None
+    assert result[0].thinking is None
     assert result[1].role == "ai"
     assert result[1].status == "success"
+    assert result[1].thinking is None
     assert result[1].thought_chain is None
 
 
-def test_should_stream_token_only_allows_chat_and_supervisor_nodes():
-    """测试目标：仅 chat/supervisor 节点允许输出 token。"""
+def test_conversation_messages_returns_thinking_for_ai_when_present(monkeypatch):
+    """测试目标：AI 历史消息存在思考文本时返回 thinking 字段；成功标准：结果包含完整 thinking 文本。"""
 
-    latest_state = {"routing": {"route_target": "chat_agent", "task_difficulty": "simple"}}
-    assert service_module._should_stream_token("chat_agent", latest_state) is True
-    assert service_module._should_stream_token("supervisor_agent", latest_state) is True
-    assert service_module._should_stream_token("order_tool_agent", latest_state) is False
-    assert service_module._should_stream_token("product_tool_agent", latest_state) is False
+    monkeypatch.setattr(service_module, "get_user_id", lambda: 100)
+    monkeypatch.setattr(
+        service_module,
+        "_load_admin_conversation",
+        lambda *, conversation_uuid, user_id: "507f1f77bcf86cd799439011",
+    )
+    mock_docs = [
+        {
+            "uuid": "msg-user-1",
+            "role": MessageRole.USER,
+            "status": MessageStatus.SUCCESS,
+            "content": "用户第一条",
+        },
+        {
+            "uuid": "msg-ai-2",
+            "role": MessageRole.AI,
+            "status": MessageStatus.SUCCESS,
+            "content": "AI第二条",
+            "thinking": "这是完整思考文本",
+        },
+    ]
+    monkeypatch.setattr(
+        service_module,
+        "list_messages",
+        lambda **_kwargs: [
+            type("Doc", (), item)() for item in reversed(mock_docs)
+        ],
+    )
+
+    result = service_module.conversation_messages(
+        conversation_uuid="conv-1",
+        page_request=PageRequest(page_num=1, page_size=50),
+    )
+
+    assert [item.id for item in result] == ["msg-user-1", "msg-ai-2"]
+    assert result[0].thinking is None
+    assert result[1].thinking == "这是完整思考文本"
+

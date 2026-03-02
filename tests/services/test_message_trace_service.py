@@ -5,7 +5,8 @@ from bson import ObjectId
 
 from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException
-from app.schemas.document.message_trace import MessageTraceDocument
+from app.core.llms.provider import LlmProvider
+from app.schemas.document.message_trace import MessageTraceDocument, MessageTraceProvider
 from app.services import message_trace_service as service_module
 
 
@@ -39,6 +40,7 @@ def test_add_message_trace_inserts_expected_document(monkeypatch):
         lambda: {"message_traces": collection},
     )
     monkeypatch.setattr(service_module, "_resolve_collection_name", lambda: "message_traces")
+    monkeypatch.setattr(service_module, "resolve_provider", lambda _provider=None: LlmProvider.OPENAI)
 
     result = service_module.add_message_trace(
         message_uuid="msg-1",
@@ -70,10 +72,66 @@ def test_add_message_trace_inserts_expected_document(monkeypatch):
     assert collection.last_inserted is not None
     assert collection.last_inserted["message_uuid"] == "msg-1"
     assert collection.last_inserted["conversation_id"] == ObjectId("507f1f77bcf86cd799439011")
+    assert collection.last_inserted["provider"] == MessageTraceProvider.OPENAI
     assert collection.last_inserted["execution_trace"][0]["node_name"] == "chat_agent"
     assert collection.last_inserted["token_usage_detail"]["is_complete"] is True
     assert isinstance(collection.last_inserted["created_at"], datetime.datetime)
     assert isinstance(collection.last_inserted["updated_at"], datetime.datetime)
+
+
+def test_add_message_trace_uses_env_provider_when_provider_missing(monkeypatch):
+    """验证 add_message_trace：未显式传 provider 时按环境解析厂家。"""
+
+    collection = _DummyCollection()
+    monkeypatch.setattr(
+        service_module,
+        "get_mongo_database",
+        lambda: {"message_traces": collection},
+    )
+    monkeypatch.setattr(service_module, "_resolve_collection_name", lambda: "message_traces")
+    monkeypatch.setattr(service_module, "resolve_provider", lambda _provider=None: LlmProvider.ALIYUN)
+
+    result = service_module.add_message_trace(
+        message_uuid="msg-env-provider",
+        conversation_id="507f1f77bcf86cd799439011",
+        execution_trace=[{"node_name": "chat_agent", "model_name": "qwen-max"}],
+    )
+
+    assert result == "507f1f77bcf86cd799439021"
+    assert collection.last_inserted is not None
+    assert collection.last_inserted["provider"] == MessageTraceProvider.ALIYUN
+
+
+def test_add_message_trace_explicit_provider_overrides_env(monkeypatch):
+    """验证 add_message_trace：显式 provider 覆盖环境默认厂家。"""
+
+    collection = _DummyCollection()
+    monkeypatch.setattr(
+        service_module,
+        "get_mongo_database",
+        lambda: {"message_traces": collection},
+    )
+    monkeypatch.setattr(service_module, "_resolve_collection_name", lambda: "message_traces")
+
+    captured: dict[str, str | None] = {"provider": None}
+
+    def _fake_resolve_provider(provider=None):
+        captured["provider"] = str(provider)
+        return LlmProvider.VOLCENGINE
+
+    monkeypatch.setattr(service_module, "resolve_provider", _fake_resolve_provider)
+
+    result = service_module.add_message_trace(
+        message_uuid="msg-explicit-provider",
+        conversation_id="507f1f77bcf86cd799439011",
+        provider="volcengine",
+        execution_trace=[{"node_name": "chat_agent", "model_name": "doubao-seed"}],
+    )
+
+    assert result == "507f1f77bcf86cd799439021"
+    assert captured["provider"] == "volcengine"
+    assert collection.last_inserted is not None
+    assert collection.last_inserted["provider"] == MessageTraceProvider.VOLCENGINE
 
 
 def test_add_message_trace_rejects_legacy_token_usage_payload(monkeypatch):
@@ -150,6 +208,7 @@ def test_get_message_trace_by_message_uuid_returns_typed_model(monkeypatch):
         "_id": ObjectId("507f1f77bcf86cd799439022"),
         "message_uuid": "msg-1",
         "conversation_id": ObjectId("507f1f77bcf86cd799439011"),
+        "provider": "aliyun",
         "execution_trace": [
             {
                 "node_name": "chat_agent",
@@ -180,5 +239,6 @@ def test_get_message_trace_by_message_uuid_returns_typed_model(monkeypatch):
     assert result.id == "507f1f77bcf86cd799439022"
     assert result.message_uuid == "msg-1"
     assert result.conversation_id == "507f1f77bcf86cd799439011"
+    assert result.provider == MessageTraceProvider.ALIYUN
     assert result.execution_trace is not None
     assert result.execution_trace[0].node_name == "chat_agent"

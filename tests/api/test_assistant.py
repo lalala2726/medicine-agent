@@ -1,5 +1,5 @@
-import json
 import importlib
+import json
 
 import pytest
 from fastapi.responses import StreamingResponse
@@ -11,8 +11,8 @@ import app.main as main_module
 from app.api.routes import admin_assistant as assistant_module
 from app.api.routes import speech_stt as speech_stt_module
 from app.core.codes import ResponseCode
-from app.core.security.auth_context import get_authorization_header
 from app.core.exception.exceptions import ServiceException
+from app.core.security.auth_context import get_authorization_header
 from app.core.security.role_codes import RoleCode
 from app.main import app
 from app.schemas.admin_assistant_history import ConversationMessageResponse, ThoughtNodeResponse
@@ -290,6 +290,67 @@ def test_assistant_request_defaults_conversation_uuid_to_none(monkeypatch):
     assert captured["conversation_uuid"] is None
 
 
+def test_assistant_route_passes_enable_thinking_when_true(monkeypatch):
+    """测试目的：验证路由在开启深度思考时透传开关；预期结果：service 收到 enable_thinking=True。"""
+
+    captured: dict = {}
+    _mock_auth(monkeypatch)
+
+    def _fake_assistant_chat(
+            *,
+            question: str,
+            conversation_uuid: str | None = None,
+            enable_thinking: bool = False,
+    ):
+        captured["question"] = question
+        captured["conversation_uuid"] = conversation_uuid
+        captured["enable_thinking"] = enable_thinking
+        return _build_streaming_response("ok")
+
+    monkeypatch.setattr(assistant_module, "assistant_chat", _fake_assistant_chat)
+    client = TestClient(app)
+
+    response = client.post(
+        "/admin/assistant/chat",
+        headers=_auth_headers(),
+        json={"question": "思考开关", "enable_thinking": True},
+    )
+
+    assert response.status_code == 200
+    assert captured == {
+        "question": "思考开关",
+        "conversation_uuid": None,
+        "enable_thinking": True,
+    }
+
+
+def test_assistant_route_keeps_backward_signature_when_thinking_disabled(monkeypatch):
+    """测试目的：验证默认不开启时不传额外参数；预期结果：旧签名 service 仍可正常调用。"""
+
+    captured: dict = {}
+    _mock_auth(monkeypatch)
+
+    def _fake_assistant_chat(*, question: str, conversation_uuid: str | None = None):
+        captured["question"] = question
+        captured["conversation_uuid"] = conversation_uuid
+        return _build_streaming_response("ok")
+
+    monkeypatch.setattr(assistant_module, "assistant_chat", _fake_assistant_chat)
+    client = TestClient(app)
+
+    response = client.post(
+        "/admin/assistant/chat",
+        headers=_auth_headers(),
+        json={"question": "默认不开启", "enable_thinking": False},
+    )
+
+    assert response.status_code == 200
+    assert captured == {
+        "question": "默认不开启",
+        "conversation_uuid": None,
+    }
+
+
 def test_assistant_route_new_conversation_stream_first_notice_contains_conversation_and_message_uuid(monkeypatch):
     captured: dict = {}
     _mock_auth(monkeypatch)
@@ -520,6 +581,7 @@ def test_conversation_messages_route_delegates_to_service(monkeypatch):
                 id="msg-2",
                 role="ai",
                 content="您好",
+                thinking="这是完整思考文本",
                 status="success",
                 thought_chain=[
                     ThoughtNodeResponse(
@@ -553,7 +615,9 @@ def test_conversation_messages_route_delegates_to_service(monkeypatch):
     assert body["data"][1]["id"] == "msg-2"
     assert body["data"][1]["role"] == "ai"
     assert body["data"][1]["status"] == "success"
+    assert body["data"][1]["thinking"] == "这是完整思考文本"
     assert body["data"][1]["thoughtChain"][0]["node"] == "planner"
+    assert "thinking" not in body["data"][0]
     assert captured == {"conversation_uuid": "conv-1", "page_num": 1, "page_size": 50}
 
 
@@ -1259,26 +1323,26 @@ def test_assistant_tts_route_returns_503_when_redis_unavailable(monkeypatch):
 
 def test_voice_tts_rate_limit_rules_match_expected() -> None:
     assert [
-        (rule.window_seconds, rule.limit)
-        for rule in assistant_module.TTS_RATE_LIMIT_RULES
-    ] == [
-        (60, 5),
-        (3600, 60),
-        (18000, 100),
-        (86400, 200),
-    ]
+               (rule.window_seconds, rule.limit)
+               for rule in assistant_module.TTS_RATE_LIMIT_RULES
+           ] == [
+               (60, 5),
+               (3600, 60),
+               (18000, 100),
+               (86400, 200),
+           ]
 
 
 def test_speech_stt_rate_limit_rules_match_expected() -> None:
     assert [
-        (rule.window_seconds, rule.limit)
-        for rule in speech_stt_module.STT_RATE_LIMIT_RULES
-    ] == [
-        (60, 5),
-        (3600, 60),
-        (18000, 100),
-        (86400, 200),
-    ]
+               (rule.window_seconds, rule.limit)
+               for rule in speech_stt_module.STT_RATE_LIMIT_RULES
+           ] == [
+               (60, 5),
+               (3600, 60),
+               (18000, 100),
+               (86400, 200),
+           ]
 
 
 def test_assistant_stt_websocket_rejects_without_authorization(monkeypatch):
@@ -1290,7 +1354,7 @@ def test_assistant_stt_websocket_rejects_without_authorization(monkeypatch):
 
     monkeypatch.setattr(speech_stt_module, "verify_authorization", _fake_verify_authorization)
 
-    async def _fake_stt_service(*, websocket, user):  # noqa: ARG001
+    async def _fake_stt_service(*, websocket, user, session_duration_seconds):  # noqa: ARG001
         raise AssertionError("service should not be called")
 
     monkeypatch.setattr(
@@ -1321,7 +1385,7 @@ def test_assistant_stt_websocket_rejects_when_rate_limited(monkeypatch):
     )
     called = {"value": False}
 
-    async def _fake_stt_service(*, websocket, user):  # noqa: ARG001
+    async def _fake_stt_service(*, websocket, user, session_duration_seconds):  # noqa: ARG001
         called["value"] = True
         raise AssertionError("service should not be called")
 
@@ -1347,7 +1411,7 @@ def test_assistant_stt_websocket_rejects_when_rate_limit_backend_unavailable(mon
     _mock_rate_limit_result(monkeypatch, allowed=True, exc=RedisError("redis down"))
     called = {"value": False}
 
-    async def _fake_stt_service(*, websocket, user):  # noqa: ARG001
+    async def _fake_stt_service(*, websocket, user, session_duration_seconds):  # noqa: ARG001
         called["value"] = True
         raise AssertionError("service should not be called")
 
@@ -1372,7 +1436,7 @@ def test_assistant_stt_websocket_rejects_without_permission(monkeypatch):
     _mock_ws_auth(monkeypatch, roles=[], permissions=[])
     called = {"value": False}
 
-    async def _fake_stt_service(*, websocket, user):  # noqa: ARG001
+    async def _fake_stt_service(*, websocket, user, session_duration_seconds):  # noqa: ARG001
         called["value"] = True
         raise AssertionError("service should not be called")
 
@@ -1397,10 +1461,16 @@ def test_assistant_stt_websocket_route_delegates_to_service(monkeypatch):
     _mock_ws_auth(monkeypatch)
     captured: dict = {}
 
-    async def _fake_stt_service(*, websocket, user):
+    async def _fake_stt_service(*, websocket, user, session_duration_seconds):
         captured["user_id"] = user.id
+        captured["session_duration_seconds"] = session_duration_seconds
         await websocket.accept()
-        await websocket.send_json({"type": "started", "max_duration_seconds": 60})
+        await websocket.send_json(
+            {
+                "type": "started",
+                "max_duration_seconds": session_duration_seconds,
+            }
+        )
         await websocket.send_json({"type": "completed", "reason": "client_finish"})
         await websocket.close(code=1000)
 
@@ -1420,17 +1490,23 @@ def test_assistant_stt_websocket_route_delegates_to_service(monkeypatch):
     assert started["type"] == "started"
     assert started["max_duration_seconds"] == 60
     assert completed == {"type": "completed", "reason": "client_finish"}
-    assert captured == {"user_id": 1}
+    assert captured == {"user_id": 1, "session_duration_seconds": 60}
 
 
 def test_assistant_stt_websocket_supports_token_query_key(monkeypatch):
     _mock_ws_auth(monkeypatch)
     captured: dict = {}
 
-    async def _fake_stt_service(*, websocket, user):
+    async def _fake_stt_service(*, websocket, user, session_duration_seconds):
         captured["user_id"] = user.id
+        captured["session_duration_seconds"] = session_duration_seconds
         await websocket.accept()
-        await websocket.send_json({"type": "started", "max_duration_seconds": 60})
+        await websocket.send_json(
+            {
+                "type": "started",
+                "max_duration_seconds": session_duration_seconds,
+            }
+        )
         await websocket.send_json({"type": "completed", "reason": "client_finish"})
         await websocket.close(code=1000)
 
@@ -1450,13 +1526,13 @@ def test_assistant_stt_websocket_supports_token_query_key(monkeypatch):
     assert started["type"] == "started"
     assert started["max_duration_seconds"] == 60
     assert completed == {"type": "completed", "reason": "client_finish"}
-    assert captured == {"user_id": 1}
+    assert captured == {"user_id": 1, "session_duration_seconds": 60}
 
 
 def test_assistant_stt_websocket_route_can_return_timeout_event(monkeypatch):
     _mock_ws_auth(monkeypatch)
 
-    async def _fake_stt_service(*, websocket, user):  # noqa: ARG001
+    async def _fake_stt_service(*, websocket, user, session_duration_seconds):  # noqa: ARG001
         await websocket.accept()
         await websocket.send_json(
             {
@@ -1485,7 +1561,7 @@ def test_assistant_stt_websocket_route_can_return_timeout_event(monkeypatch):
 def test_assistant_stt_websocket_route_can_return_protocol_error_event(monkeypatch):
     _mock_ws_auth(monkeypatch)
 
-    async def _fake_stt_service(*, websocket, user):  # noqa: ARG001
+    async def _fake_stt_service(*, websocket, user, session_duration_seconds):  # noqa: ARG001
         await websocket.accept()
         await websocket.send_json({"type": "error", "message": "请先发送 start"})
         await websocket.close(code=1008)
@@ -1519,7 +1595,7 @@ def test_assistant_stt_websocket_query_token_forwarded_as_bearer(monkeypatch):
 
     monkeypatch.setattr(speech_stt_module, "verify_authorization", _fake_verify_authorization)
 
-    async def _fake_stt_service(*, websocket, user):  # noqa: ARG001
+    async def _fake_stt_service(*, websocket, user, session_duration_seconds):  # noqa: ARG001
         await websocket.accept()
         await websocket.send_json({"type": "completed", "reason": "client_finish"})
         await websocket.close(code=1000)

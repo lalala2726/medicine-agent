@@ -322,3 +322,25 @@ def emit_answer_delta(text: str) -> None:
             content=Content(text=text),
         )
     )
+
+
+def emit_thinking_delta(text: str) -> None:
+    """
+    发送 thinking 类型的文本增量事件。
+
+    该函数用于模型“深度思考”流式输出场景，调用方仅需传入思考文本分片，
+    无需重复构造 `AssistantResponse` 对象。
+
+    Args:
+        text: 本次输出的思考文本分片。
+
+    Returns:
+        None: 事件通过 `emit_sse_response` 推送到 SSE 发射器。
+    """
+
+    emit_sse_response(
+        AssistantResponse(
+            type=MessageType.THINKING,
+            content=Content(text=text),
+        )
+    )

@@ -87,6 +87,8 @@ class AdminAssistantSttSession:
         """
 
         await self._websocket.accept()
+        # 接入后立即启动会话超时计时，避免客户端长期空闲不发 start 占用连接资源。
+        self._deadline_at = time.monotonic() + float(self._session_duration_seconds)
         try:
             while True:
                 wait_timeout = self._remaining_timeout_seconds()
@@ -418,11 +420,9 @@ class AdminAssistantSttSession:
         计算当前距离会话超时还剩余的秒数。
 
         Returns:
-            float | None: 剩余秒数；未启动会话时返回 `None`。
+            float | None: 剩余秒数；若尚未初始化截止时间则返回 `None`。
         """
 
-        if not self._started:
-            return None
         if self._deadline_at is None:
             return None
         return max(self._deadline_at - time.monotonic(), 0.0)

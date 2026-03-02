@@ -110,4 +110,3 @@ class MessageTtsUsageDocument(BaseModel):
         if isinstance(value, ObjectId):
             return str(value)
         return str(value)
-
