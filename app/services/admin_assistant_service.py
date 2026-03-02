@@ -339,6 +339,7 @@ def _persist_assistant_message(
         execution_trace: list[ExecutionTraceState] | None,
         token_usage: TokenUsageState | dict[str, Any] | None,
         status: MessageStatus | str,
+        thinking_text: str | None = None,
 ) -> None:
     """
     持久化 ai 消息。
@@ -362,6 +363,7 @@ def _persist_assistant_message(
         role="ai",
         status=resolved_status,
         content=answer_text,
+        thinking=thinking_text,
         token_usage=persistable_token_usage,
         message_uuid=message_uuid,
     )
@@ -389,8 +391,9 @@ def _build_assistant_message_callback(*, conversation_id: str, assistant_message
     async def _callback(
             answer_text: str,
             execution_trace: list[ExecutionTraceState] | None,
-            token_usage: TokenUsageState | dict[str, Any] | None,
+            token_usage: TokenUsageState | dict[str, Any] | None = None,
             has_error: bool = False,
+            thinking_text: str | None = None,
     ) -> None:
         resolved_token_usage = token_usage
         resolved_has_error = has_error
@@ -412,6 +415,7 @@ def _build_assistant_message_callback(*, conversation_id: str, assistant_message
                 "conversation_id": conversation_id,
                 "message_uuid": assistant_message_uuid,
                 "answer_text": normalized_answer,
+                "thinking_text": thinking_text,
                 "execution_trace": execution_trace,
                 "token_usage": resolved_token_usage,
                 "status": resolved_status,
@@ -739,6 +743,9 @@ def conversation_messages(
         }
         if role == "ai":
             payload["status"] = document.status.value
+            raw_thinking = getattr(document, "thinking", None)
+            if isinstance(raw_thinking, str) and raw_thinking.strip():
+                payload["thinking"] = raw_thinking
         result.append(ConversationMessageResponse.model_validate(payload))
     return result
 

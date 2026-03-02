@@ -581,6 +581,7 @@ def test_conversation_messages_route_delegates_to_service(monkeypatch):
                 id="msg-2",
                 role="ai",
                 content="您好",
+                thinking="这是完整思考文本",
                 status="success",
                 thought_chain=[
                     ThoughtNodeResponse(
@@ -614,7 +615,9 @@ def test_conversation_messages_route_delegates_to_service(monkeypatch):
     assert body["data"][1]["id"] == "msg-2"
     assert body["data"][1]["role"] == "ai"
     assert body["data"][1]["status"] == "success"
+    assert body["data"][1]["thinking"] == "这是完整思考文本"
     assert body["data"][1]["thoughtChain"][0]["node"] == "planner"
+    assert "thinking" not in body["data"][0]
     assert captured == {"conversation_uuid": "conv-1", "page_num": 1, "page_size": 50}
 
 

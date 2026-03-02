@@ -46,6 +46,7 @@ class ConversationMessageResponse(BaseModel):
     id: str = Field(..., min_length=1, description="消息唯一ID")
     role: Literal["user", "ai"] = Field(..., description="消息发送方")
     content: str = Field(..., description="消息内容")
+    thinking: str | None = Field(default=None, description="AI深度思考完整文本")
     status: Literal["success", "error"] | None = Field(default=None, description="消息状态")
     thought_chain: list[ThoughtNodeResponse] | None = Field(
         default=None,

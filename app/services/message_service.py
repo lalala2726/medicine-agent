@@ -109,12 +109,22 @@ def _normalize_token_usage(
         return None
 
 
+def _normalize_thinking(thinking: Any) -> str | None:
+    """归一化 thinking 文本，空值或空白内容返回 None。"""
+
+    if not isinstance(thinking, str):
+        return None
+    normalized = thinking.strip()
+    return normalized or None
+
+
 def add_message(
         *,
         conversation_id: Annotated[str, Field(min_length=1)],
         role: MessageRole | str,
         status: MessageStatus | str = MessageStatus.SUCCESS,
         content: Annotated[str, Field(min_length=1)],
+        thinking: str | None = None,
         token_usage: TokenUsage | dict[str, Any] | None = None,
         message_uuid: str | None = None,
 ) -> str:
@@ -126,6 +136,7 @@ def add_message(
         role: 消息角色（user/ai）。
         status: 消息状态（success/error）。
         content: 消息内容。
+        thinking: 可选 AI 深度思考完整文本，仅 ai 消息会保存。
         token_usage: 可选 token 使用总量，仅支持
             prompt_tokens/completion_tokens/total_tokens 三个字段。
             且仅 ai 消息会保存，user 消息会被忽略。
@@ -148,6 +159,11 @@ def add_message(
         role=normalized_role,
         status=status,
         content=content,
+        thinking=(
+            _normalize_thinking(thinking)
+            if normalized_role == MessageRole.AI
+            else None
+        ),
         token_usage=(
             _normalize_token_usage(token_usage)
             if normalized_role == MessageRole.AI
@@ -158,6 +174,8 @@ def add_message(
     now = datetime.datetime.now()
     # Mongo 写入文档统一由 Pydantic 模型序列化产出。
     document = payload.model_dump()
+    if document.get("thinking") is None:
+        document.pop("thinking", None)
     if document.get("token_usage") is None:
         document.pop("token_usage", None)
     document["conversation_id"] = _to_object_id(payload.conversation_id)

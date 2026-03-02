@@ -83,9 +83,10 @@ class AssistantStreamConfig:
     invoke_sync: Callable[[dict[str, Any]], dict[str, Any]]
     # 异常映射器：把内部异常转成统一错误文案。
     map_exception: Callable[[Exception], str]
-    # 可选收尾回调：在流结束时回调完整 answer 文本、执行追踪与 token 汇总。
-    # 回调兼容 2/3/4 参：2参(answer,trace)、3参(answer,trace,has_error)、
-    # 4参(answer,trace,token_usage,has_error)。
+    # 可选收尾回调：在流结束时回调完整 answer/thinking 文本、执行追踪与 token 汇总。
+    # 回调兼容 2/3/4/5 参：2参(answer,trace)、3参(answer,trace,has_error)、
+    # 4参(answer,trace,token_usage,has_error)、
+    # 5参(answer,trace,token_usage,has_error,thinking_text)。
     on_answer_completed: OnAnswerCompletedCallback | None = None
     # 流开始前注入的事件列表（例如会话创建成功事件），会按给定顺序输出。
     initial_emitted_events: tuple[InitialEmittedEvent, ...] = field(
@@ -122,6 +123,8 @@ class StreamRuntimeState:
     has_emitted_error: bool = False
     aggregated_answer_parts: list[str] = field(default_factory=list)
     aggregated_answer_text: str = ""
+    aggregated_thinking_parts: list[str] = field(default_factory=list)
+    aggregated_thinking_text: str = ""
     active_tool_calls: int = 0
 
 
@@ -443,6 +446,35 @@ def _append_answer_text(runtime_state: StreamRuntimeState, text: str) -> str:
     return delta_text
 
 
+def _append_thinking_text(runtime_state: StreamRuntimeState, text: str) -> str:
+    """
+    向聚合思考缓冲区追加文本，并对“全量快照重复”做增量裁剪。
+
+    Args:
+        runtime_state: 流式运行时状态。
+        text: 待追加的思考文本片段。
+
+    Returns:
+        str: 实际新增的文本；若无新增则返回空字符串。
+    """
+
+    raw_text = str(text or "")
+    if not raw_text:
+        return ""
+
+    delta_text = raw_text
+    existing_text = runtime_state.aggregated_thinking_text
+    if existing_text and raw_text.startswith(existing_text):
+        delta_text = raw_text[len(existing_text):]
+
+    if not delta_text:
+        return ""
+
+    runtime_state.aggregated_thinking_parts.append(delta_text)
+    runtime_state.aggregated_thinking_text += delta_text
+    return delta_text
+
+
 def _update_tool_call_depth(runtime_state: StreamRuntimeState, payload: Any) -> None:
     """
     根据 emitted 的 function_call 事件维护工具调用深度计数。
@@ -599,6 +631,20 @@ def _process_stream_event(
                 )
             else:
                 return result
+        elif (
+                emitted_response.type == MessageType.THINKING
+                and isinstance(emitted_response.content.text, str)
+                and emitted_response.content.text
+        ):
+            delta_thinking = _append_thinking_text(runtime_state, emitted_response.content.text)
+            if delta_thinking:
+                emitted_response = emitted_response.model_copy(
+                    update={
+                        "content": emitted_response.content.model_copy(update={"text": delta_thinking}),
+                    }
+                )
+            else:
+                return result
 
         result.rendered_events.append(serialize_sse(emitted_response))
         return result
@@ -729,6 +775,7 @@ async def _invoke_answer_completed_callback(
         execution_trace: list[dict[str, Any]] | None,
         token_usage: dict[str, Any] | None,
         has_error: bool,
+        thinking_text: str,
 ) -> None:
     """
     执行“回答完成”回调。
@@ -741,6 +788,7 @@ async def _invoke_answer_completed_callback(
         execution_trace: 汇总后的节点执行追踪。
         token_usage: 汇总后的消息级 token 使用信息。
         has_error: 本次流式执行是否出现错误。
+        thinking_text: 聚合后的完整思考文本。
     """
 
     if callback is None:
@@ -761,9 +809,12 @@ async def _invoke_answer_completed_callback(
         for parameter in parameters
     )
     supports_four_args = accepts_variadic or len(positional_parameters) >= 4
+    supports_five_args = accepts_variadic or len(positional_parameters) >= 5
     supports_three_args = accepts_variadic or len(positional_parameters) >= 3
 
-    if supports_four_args:
+    if supports_five_args:
+        callback_result = callback(answer_text, execution_trace, token_usage, has_error, thinking_text)
+    elif supports_four_args:
         callback_result = callback(answer_text, execution_trace, token_usage, has_error)
     elif supports_three_args:
         callback_result = callback(answer_text, execution_trace, has_error)
@@ -860,6 +911,7 @@ async def _event_stream(
                 execution_trace,
                 token_usage,
                 runtime_state.has_emitted_error,
+                runtime_state.aggregated_thinking_text,
             )
         except Exception as exc:  # pragma: no cover - 防御性兜底
             logger.opt(exception=exc).warning("Assistant stream finalize callback failed")
