@@ -20,6 +20,43 @@ from app.utils.prompt_section_utils import (
 )
 
 
+def _normalize_middleware_scopes(
+        scope: str | None,
+        skill_scope: str | None,
+) -> tuple[str, str | None, str]:
+    """规范化 SkillMiddleware 的作用域参数并执行互斥校验。
+
+    功能描述：
+        统一处理中间件初始化时的 `scope/skill_scope` 参数，确保二者不能同时生效，
+        并返回可直接用于发现逻辑与工具注册的标准化结果。
+
+    参数说明：
+        scope (str | None): 历史目录扫描作用域；为空时表示技能根目录。
+        skill_scope (str | None): 单技能直读作用域；启用后读取 `<skill_scope>/SKILL.md`。
+
+    返回值：
+        tuple[str, str | None, str]:
+            - 规范化后的 `scope`（目录扫描模式）；
+            - 规范化后的 `skill_scope`（未启用时为 `None`）；
+            - 工具展示与错误提示使用的生效作用域标签。
+
+    异常说明：
+        ValueError: 当 `scope` 与 `skill_scope` 同时非空时抛出。
+    """
+
+    normalized_scope_input = str(scope or "").strip()
+    normalized_skill_scope_input = str(skill_scope or "").strip()
+    if normalized_scope_input and normalized_skill_scope_input:
+        raise ValueError("SkillMiddleware arguments are mutually exclusive: scope and skill_scope.")
+
+    normalized_scope, _ = normalize_scope(scope)
+    if normalized_skill_scope_input:
+        normalized_skill_scope, _ = normalize_scope(skill_scope)
+        return normalized_scope, normalized_skill_scope, normalized_skill_scope
+
+    return normalized_scope, None, normalized_scope
+
+
 class SkillMiddlewareState(TypedDict, total=False):
     """技能中间件状态结构。
 
@@ -44,32 +81,51 @@ class SkillMiddleware(AgentMiddleware):
 
     state_schema = SkillMiddlewareState
 
-    def __init__(self, scope: str | None = None, system_prompt_template: str = SKILLS_SYSTEM_PROMPT):
+    def __init__(
+            self,
+            scope: str | None = None,
+            system_prompt_template: str = SKILLS_SYSTEM_PROMPT,
+            *,
+            skill_scope: str | None = None,
+    ):
         """初始化技能中间件。
 
-        参数：
-            scope: 技能作用域，例如 `supervisor`、`supervisor/a`。
-                为空时默认扫描技能根目录 `resources/skills`。
-            system_prompt_template: 技能提示词模板，默认使用内置模板。
+        功能描述：
+            初始化技能发现参数、提示词模板与三类技能工具，并对入参执行互斥校验。
 
-        返回：
-            None
+        参数说明：
+            scope (str | None): 目录扫描作用域，例如 `supervisor`、`supervisor/a`。
+                为空时默认扫描技能根目录，默认 `None`。
+            system_prompt_template (str): 技能提示词模板，默认使用内置模板。
+            skill_scope (str | None): 单技能直读作用域，例如 `chart`；
+                启用后仅读取 `<skill_scope>/SKILL.md`，默认 `None`。
+
+        返回值：
+            None。
+
+        异常说明：
+            ValueError: 当 `scope` 与 `skill_scope` 同时非空时抛出。
         """
 
-        normalized_scope, _ = normalize_scope(scope)
+        normalized_scope, normalized_skill_scope, effective_scope = _normalize_middleware_scopes(
+            scope,
+            skill_scope,
+        )
         self.scope = normalized_scope
+        self.skill_scope = normalized_skill_scope
+        self._effective_scope = effective_scope
         self._system_prompt_template = system_prompt_template
         self._skill_file_index: SkillFileIndex = {}
         self._load_skill_tool = create_load_skill_tool(
-            normalized_scope,
+            self._effective_scope,
             get_skill_file_index=lambda: self._skill_file_index,
         )
         self._load_skill_resource_tool = create_load_skill_resource_tool(
-            normalized_scope,
+            self._effective_scope,
             get_skill_file_index=lambda: self._skill_file_index,
         )
         self._list_skill_resources_tool = create_list_skill_resources_tool(
-            normalized_scope,
+            self._effective_scope,
             get_skill_file_index=lambda: self._skill_file_index,
         )
         self.tools = [
@@ -170,7 +226,10 @@ class SkillMiddleware(AgentMiddleware):
         """
 
         _ = runtime
-        skills_metadata, skill_file_index = discover_skills_metadata(self.scope)
+        skills_metadata, skill_file_index = discover_skills_metadata(
+            self.scope,
+            skill_scope=self.skill_scope,
+        )
         self._skill_file_index = skill_file_index
         if "skills_metadata" in state:
             return None

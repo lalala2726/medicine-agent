@@ -22,6 +22,7 @@ from app.core.agent.agent_tool_trace import record_agent_trace
 from app.core.agent.base_prompt_middleware import BasePromptMiddleware
 from app.core.langsmith import traceable
 from app.core.llms import create_chat_model
+from app.core.skill import SkillMiddleware
 from app.services.token_usage_service import append_trace_and_refresh_token_usage
 from app.utils.prompt_utils import load_prompt
 
@@ -69,6 +70,7 @@ def analytics_agent(state: AgentState) -> dict[str, Any]:
         middleware=[
             BasePromptMiddleware(),
             build_tool_status_middleware(),
+            SkillMiddleware(skill_scope="chart"),
             ToolCallLimitMiddleware(thread_limit=5, run_limit=5),
         ],
     )
