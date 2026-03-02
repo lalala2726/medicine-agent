@@ -40,13 +40,11 @@ def supervisor_agent(state: AgentState) -> dict[str, Any]:
         dict[str, Any]: 节点输出状态增量，包含 `result/messages/execution_traces/token_usage`。
     """
 
-    model_name = model_switch(state)
+    model_name, enable_think = model_switch(state)
     history_messages = list(state.get("history_messages") or [])
-    # 占位开关：当前固定开启 Think，后续处理逻辑由调用方继续扩展。
-    enable_think = True
     llm = create_chat_model(
-        model='qwen3.5-plus',
-        temperature=0.7,
+        model=model_name,
+        temperature=1.0,
         think=enable_think,
     )
 
@@ -72,7 +70,7 @@ def supervisor_agent(state: AgentState) -> dict[str, Any]:
         agent,
         history_messages,
         on_model_delta=emit_answer_delta,
-        on_thinking_delta=emit_thinking_delta
+        on_thinking_delta=emit_thinking_delta if enable_think else None,
     )
 
     trace = record_agent_trace(

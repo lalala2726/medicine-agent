@@ -5,6 +5,7 @@ from typing import Any
 from langchain.agents import create_agent
 from langchain_core.messages import AIMessage, SystemMessage
 
+from app.agent.assistant.model_switch import model_switch
 from app.agent.assistant.state import AgentState, ExecutionTraceState
 from app.agent.assistant.tools import get_safe_user_info
 from app.agent.assistant.tools.base_tools import get_current_time
@@ -33,10 +34,10 @@ def chat_agent(state: AgentState) -> dict[str, Any]:
         dict[str, Any]: 节点输出状态增量，包含 `result/messages/execution_traces/token_usage`。
     """
 
-    model_name = "qwen3.5-plus"
     history_messages = list(state.get("history_messages") or [])
     # 占位开关：当前固定开启 Think，后续处理逻辑由调用方继续扩展。
-    enable_think = True
+
+    model_name, enable_think = model_switch(state)
     tools = [
         get_current_time,
         get_safe_user_info
