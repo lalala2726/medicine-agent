@@ -46,7 +46,12 @@ from app.utils.prompt_utils import load_prompt
 ADMIN_WORKFLOW = build_graph()
 STREAM_OUTPUT_NODES = {
     "chat_agent",
-    "supervisor_agent",
+    "order_agent",
+    "product_agent",
+    "after_sale_agent",
+    "user_agent",
+    "analytics_agent",
+    "adaptive_agent",
 }
 EMPTY_ASSISTANT_ANSWER_FALLBACK = "服务暂时不可用，请稍后重试。"
 
@@ -129,7 +134,7 @@ def _build_initial_state(
 
     return {
         "routing": {
-            "route_target": "",
+            "route_targets": [],
             "task_difficulty": "normal",
         },
         "context": "",
@@ -147,7 +152,7 @@ def _should_stream_token(stream_node: str | None, latest_state: dict[str, Any]) 
     """
     判定某个节点 token 是否应该被推送给前端。
 
-    当前最小实现仅允许 chat/supervisor 两个节点输出 token。
+    当前规则允许所有业务输出节点输出 token（gateway 节点除外）。
     """
 
     _ = latest_state
@@ -830,8 +835,7 @@ def generate_title(question: str) -> str:
         return "未知标题"
 
     llm_model = create_chat_model(
-        model="qwen-flash",
-        temperature=0.3
+        temperature=1.0
     )
     messages = [
         SystemMessage(content=system_prompt),

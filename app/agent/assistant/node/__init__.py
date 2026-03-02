@@ -1,26 +1,25 @@
 """
-Supervisor 工作流节点导出模块。
+管理助手工作流节点导出模块。
 
-统一导出 gateway、supervisor 与可复用子工具，供 `workflow.py` 与节点协作时集中引用。
+统一导出 gateway 与各业务节点，供 `workflow.py` 进行拓扑编排。
 """
 
+from app.agent.assistant.node.after_sale_node import after_sale_agent
+from app.agent.assistant.node.adaptive_agent_node import adaptive_agent
+from app.agent.assistant.node.analytics_node import analytics_agent
 from app.agent.assistant.node.chat_node import chat_agent
 from app.agent.assistant.node.gateway_node import gateway_router
-from app.agent.assistant.node.supervisor_node import supervisor_agent
-from app.agent.assistant.sub_agents.after_sale_sub_agent import after_sale_sub_agent
-from app.agent.assistant.sub_agents.analytics_sub_agent import analytics_sub_agent
-from app.agent.assistant.sub_agents.order_sub_agent import order_sub_agent
-from app.agent.assistant.sub_agents.product_sub_agent import product_sub_agent
-from app.agent.assistant.sub_agents.user_sub_agent import user_sub_agent
+from app.agent.assistant.node.order_node import order_agent
+from app.agent.assistant.node.product_node import product_agent
+from app.agent.assistant.node.user_node import user_agent
 
 __all__ = [
     "gateway_router",
-    "supervisor_agent",
-    "order_sub_agent",
-    "after_sale_sub_agent",
-    "product_sub_agent",
-    "analytics_sub_agent",
-    "user_sub_agent",
-
     "chat_agent",
+    "order_agent",
+    "product_agent",
+    "after_sale_agent",
+    "user_agent",
+    "analytics_agent",
+    "adaptive_agent",
 ]

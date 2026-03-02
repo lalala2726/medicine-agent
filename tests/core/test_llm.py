@@ -179,7 +179,7 @@ def test_create_chat_model_routes_to_aliyun_provider_with_think_enabled(
 def test_create_chat_model_routes_to_aliyun_provider_with_think_disabled(
         monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """测试目的：验证 create_chat_model 在 ALIYUN provider 下关闭 think 时移除 enable_thinking；预期结果：extra_body 不包含 enable_thinking。"""
+    """测试目的：验证 create_chat_model 在 ALIYUN provider 下关闭 think 时显式注入 enable_thinking=False；预期结果：extra_body.enable_thinking=False。"""
 
     captured: dict[str, Any] = {}
 
@@ -200,7 +200,10 @@ def test_create_chat_model_routes_to_aliyun_provider_with_think_disabled(
     )
 
     assert result == "aliyun-model"
-    assert captured["extra_body"] == {"response_format": {"type": "json_object"}}
+    assert captured["extra_body"] == {
+        "response_format": {"type": "json_object"},
+        "enable_thinking": False,
+    }
 
 
 def test_create_chat_model_routes_to_volcengine_provider_with_think_enabled(
@@ -530,7 +533,7 @@ def test_thinking_resolver_keeps_openai_extra_body() -> None:
 
 
 def test_thinking_resolver_applies_aliyun_rules() -> None:
-    """测试目的：验证 think 归一化在 ALIYUN provider 下的开启/关闭规则；预期结果：开启注入 enable_thinking，关闭移除该字段。"""
+    """测试目的：验证 think 归一化在 ALIYUN provider 下的开启/关闭规则；预期结果：开启注入 enable_thinking=True，关闭注入 enable_thinking=False。"""
 
     enabled = llm_common_module.resolve_provider_extra_body(
         provider=LlmProvider.ALIYUN,
@@ -547,7 +550,10 @@ def test_thinking_resolver_applies_aliyun_rules() -> None:
         "response_format": {"type": "json_object"},
         "enable_thinking": True,
     }
-    assert disabled == {"response_format": {"type": "json_object"}}
+    assert disabled == {
+        "response_format": {"type": "json_object"},
+        "enable_thinking": False,
+    }
 
 
 def test_thinking_resolver_applies_volcengine_rules() -> None:
@@ -574,8 +580,8 @@ def test_thinking_resolver_applies_volcengine_rules() -> None:
     }
 
 
-def test_thinking_resolver_returns_none_when_empty() -> None:
-    """测试目的：验证 think 归一化在无有效字段时返回 None；预期结果：`None`。"""
+def test_thinking_resolver_preserves_explicit_disable_for_aliyun() -> None:
+    """测试目的：验证阿里云在 think=False 时会显式下发关闭开关；预期结果：返回 enable_thinking=False。"""
 
     result = llm_common_module.resolve_provider_extra_body(
         provider=LlmProvider.ALIYUN,
@@ -583,7 +589,7 @@ def test_thinking_resolver_returns_none_when_empty() -> None:
         think=False,
     )
 
-    assert result is None
+    assert result == {"enable_thinking": False}
 
 
 def test_resolve_llm_value_priority_explicit_over_env_and_default(

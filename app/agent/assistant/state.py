@@ -43,7 +43,7 @@ class ToolCallTraceState(TypedDict, total=False):
 class ExecutionTraceState(TypedDict, total=False):
     """单个节点执行追踪结构。"""
 
-    # 节点名称（如 gateway_router/chat_agent/supervisor_agent）。
+    # 节点名称（如 gateway_router/chat_agent/order_agent/adaptive_agent）。
     node_name: str
     # 节点调用的模型名称。
     model_name: str
@@ -94,8 +94,8 @@ class TokenUsageState(TypedDict):
 class GatewayRoutingState(TypedDict):
     """Gateway 路由结果结构。"""
 
-    # 目标节点。
-    route_target: str
+    # 目标节点数组。
+    route_targets: list[str]
     # 任务难度。
     task_difficulty: str
 

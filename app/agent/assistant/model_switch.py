@@ -8,7 +8,7 @@ DEFAULT_THINK = False
 # 按任务难度选择模型：普通(normal) -> max，高(high) -> qwen3-plus。
 _DIFFICULTY_MODEL_MAP: dict[str, str] = {
     "normal": "qwen-max",
-    "high": "qwen3-plus",
+    "high": "qwen3.5-plus",
 }
 
 # 按任务难度决定是否开启深度思考：仅 high 开启。

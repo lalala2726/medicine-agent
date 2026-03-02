@@ -105,10 +105,8 @@ def resolve_provider_extra_body(
     resolved_extra_body = dict(extra_body or {})
 
     if resolved_provider is LlmProvider.ALIYUN:
-        if think:
-            resolved_extra_body["enable_thinking"] = True
-        else:
-            resolved_extra_body.pop("enable_thinking", None)
+        # 阿里云结构化输出链路需要显式关闭思考，避免服务端按默认进入 thinking mode。
+        resolved_extra_body["enable_thinking"] = bool(think)
     elif resolved_provider is LlmProvider.VOLCENGINE:
         raw_thinking_payload = resolved_extra_body.get("thinking")
         thinking_payload: dict[str, Any] = (

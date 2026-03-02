@@ -3,60 +3,76 @@ from __future__ import annotations
 from typing import Any
 
 from langchain.agents import create_agent
+from langchain.agents.middleware import ToolCallLimitMiddleware
 from langchain_core.messages import AIMessage, SystemMessage
 
 from app.agent.assistant.state import AgentState, ExecutionTraceState
-from app.agent.assistant.tools import get_safe_user_info
-from app.agent.assistant.tools.base_tools import get_current_time
+from app.agent.assistant.tools.order_tools import (
+    get_order_list,
+    get_order_shipping,
+    get_order_timeline,
+    get_orders_detail,
+)
 from app.core.agent.agent_event_bus import emit_answer_delta
 from app.core.agent.agent_runtime import agent_stream
+from app.core.agent.agent_tool_events import build_tool_status_middleware
 from app.core.agent.agent_tool_trace import record_agent_trace
 from app.core.agent.base_prompt_middleware import BasePromptMiddleware
 from app.core.langsmith import traceable
 from app.core.llms import create_chat_model
-from app.core.skill import SkillMiddleware
 from app.services.token_usage_service import append_trace_and_refresh_token_usage
 from app.utils.prompt_utils import load_prompt
 
-_CHAT_SYSTEM_PROMPT = load_prompt("assistant/chat_system_prompt.md")
+_ORDER_NODE_SYSTEM_PROMPT = load_prompt("assistant/order_node_system_prompt.md")
 
 
-@traceable(name="Assistant Chat Agent Node", run_type="chain")
-def chat_agent(state: AgentState) -> dict[str, Any]:
+@traceable(name="Assistant Order Agent Node", run_type="chain")
+def order_agent(state: AgentState) -> dict[str, Any]:
     """
-    执行 Chat 节点，并透传思考流。
+    功能描述：
+        执行订单业务节点，基于订单域工具完成订单查询、详情、流程与发货相关任务。
 
-    Args:
-        state: LangGraph 节点状态，包含历史消息与执行追踪信息。
+    参数说明：
+        state (AgentState): LangGraph 节点状态；主要读取 `history_messages` 与 `execution_traces`。
 
-    Returns:
-        dict[str, Any]: 节点输出状态增量，包含 `result/messages/execution_traces/token_usage`。
+    返回值：
+        dict[str, Any]:
+            返回节点状态增量，包含：
+            - `result` (str): 节点最终输出文本；
+            - `messages` (list[AIMessage]): 供后续状态消费的 AI 消息；
+            - `execution_traces` (list[ExecutionTraceState]): 追加后的执行追踪；
+            - `token_usage` (dict | None): 刷新后的消息级 token 汇总。
+
+    异常说明：
+        不主动抛出业务异常；模型、工具与中间件链路异常由上层统一捕获与降级处理。
     """
 
     history_messages = list(state.get("history_messages") or [])
-    tools = [
-        get_current_time,
-        get_safe_user_info
-    ]
     llm = create_chat_model(
-        temperature=1.3,
+        temperature=1.0,
+        think=False,
     )
     llm_model_name = str(getattr(llm, "model_name", "") or "").strip()
     agent = create_agent(
         model=llm,
-        tools=tools,
-        system_prompt=SystemMessage(content=_CHAT_SYSTEM_PROMPT),
+        system_prompt=SystemMessage(content=_ORDER_NODE_SYSTEM_PROMPT),
+        tools=[
+            get_order_list,
+            get_orders_detail,
+            get_order_timeline,
+            get_order_shipping,
+        ],
         middleware=[
             BasePromptMiddleware(),
-            SkillMiddleware(scope="chat"),
-        ]
+            build_tool_status_middleware(),
+            ToolCallLimitMiddleware(thread_limit=5, run_limit=5),
+        ],
     )
     stream_result = agent_stream(
         agent,
         history_messages,
         on_model_delta=emit_answer_delta,
     )
-
     trace = record_agent_trace(
         payload=stream_result,
         input_messages=history_messages,
@@ -65,13 +81,13 @@ def chat_agent(state: AgentState) -> dict[str, Any]:
     text = str(trace.get("text") or "").strip()
     trace_model_name = str(trace.get("model_name") or "").strip()
     trace_item = ExecutionTraceState(
-        node_name="chat_agent",
+        node_name="order_agent",
         model_name=llm_model_name or trace_model_name or "unknown",
         output_text=text,
         llm_used=True,
         llm_usage_complete=bool(trace.get("is_usage_complete", False)),
         llm_token_usage=trace.get("usage"),
-        tool_calls=[],
+        tool_calls=list(trace.get("tool_calls") or []),
     )
     execution_traces, token_usage = append_trace_and_refresh_token_usage(
         state.get("execution_traces"),

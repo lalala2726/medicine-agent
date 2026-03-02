@@ -1092,12 +1092,3 @@ def test_conversation_messages_returns_thinking_for_ai_when_present(monkeypatch)
     assert result[0].thinking is None
     assert result[1].thinking == "这是完整思考文本"
 
-
-def test_should_stream_token_only_allows_chat_and_supervisor_nodes():
-    """测试目标：仅 chat/supervisor 节点允许输出 token。"""
-
-    latest_state = {"routing": {"route_target": "chat_agent", "task_difficulty": "normal"}}
-    assert service_module._should_stream_token("chat_agent", latest_state) is True
-    assert service_module._should_stream_token("supervisor_agent", latest_state) is True
-    assert service_module._should_stream_token("order_sub_agent", latest_state) is False
-    assert service_module._should_stream_token("product_sub_agent", latest_state) is False

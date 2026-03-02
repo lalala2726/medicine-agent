@@ -6,82 +6,79 @@ from langchain.agents import create_agent
 from langchain.agents.middleware import ToolCallLimitMiddleware
 from langchain_core.messages import AIMessage, SystemMessage
 
-from app.agent.assistant.model_switch import model_switch
 from app.agent.assistant.state import AgentState, ExecutionTraceState
-from app.agent.assistant.sub_agents.after_sale_sub_agent import after_sale_sub_agent
-from app.agent.assistant.sub_agents.analytics_sub_agent import analytics_sub_agent
-from app.agent.assistant.sub_agents.order_sub_agent import order_sub_agent
-from app.agent.assistant.sub_agents.product_sub_agent import product_sub_agent
-from app.agent.assistant.sub_agents.user_sub_agent import user_sub_agent
-from app.agent.assistant.tools.base_tools import get_current_time
-from app.core.agent.agent_event_bus import emit_answer_delta, emit_thinking_delta
+from app.agent.assistant.tools.after_sale_tools import (
+    get_admin_after_sale_detail,
+    get_admin_after_sale_list,
+)
+from app.core.agent.agent_event_bus import emit_answer_delta
 from app.core.agent.agent_runtime import agent_stream
 from app.core.agent.agent_tool_events import build_tool_status_middleware
 from app.core.agent.agent_tool_trace import record_agent_trace
 from app.core.agent.base_prompt_middleware import BasePromptMiddleware
 from app.core.langsmith import traceable
 from app.core.llms import create_chat_model
-from app.core.skill import SkillMiddleware
 from app.services.token_usage_service import append_trace_and_refresh_token_usage
 from app.utils.prompt_utils import load_prompt
 
-_SUPERVISOR_PROMPT = load_prompt("assistant/supervisor_system_prompt.md")
+_AFTER_SALE_NODE_SYSTEM_PROMPT = load_prompt("assistant/after_sale_node_system_prompt.md")
 
 
-@traceable(name="Supervisor Agent Node", run_type="chain")
-def supervisor_agent(state: AgentState) -> dict[str, Any]:
+@traceable(name="Assistant After Sale Agent Node", run_type="chain")
+def after_sale_agent(state: AgentState) -> dict[str, Any]:
     """
-    执行 Supervisor 主代理节点，并透传思考流。
+    功能描述：
+        执行售后业务节点，处理售后列表筛选与售后详情查询任务。
 
-    Args:
-        state: LangGraph 节点状态，包含历史消息与执行追踪信息。
+    参数说明：
+        state (AgentState): LangGraph 节点状态；主要读取 `history_messages` 与 `execution_traces`。
 
-    Returns:
-        dict[str, Any]: 节点输出状态增量，包含 `result/messages/execution_traces/token_usage`。
+    返回值：
+        dict[str, Any]:
+            返回节点状态增量，包含：
+            - `result` (str): 节点最终输出文本；
+            - `messages` (list[AIMessage]): 供后续状态消费的 AI 消息；
+            - `execution_traces` (list[ExecutionTraceState]): 追加后的执行追踪；
+            - `token_usage` (dict | None): 刷新后的消息级 token 汇总。
+
+    异常说明：
+        不主动抛出业务异常；模型、工具与中间件链路异常由上层统一捕获与降级处理。
     """
 
-    model_name, enable_think = model_switch(state)
     history_messages = list(state.get("history_messages") or [])
     llm = create_chat_model(
-        model=model_name,
         temperature=1.0,
-        think=enable_think,
+        think=False,
     )
-
+    llm_model_name = str(getattr(llm, "model_name", "") or "").strip()
     agent = create_agent(
         model=llm,
-        system_prompt=SystemMessage(content=_SUPERVISOR_PROMPT),
+        system_prompt=SystemMessage(content=_AFTER_SALE_NODE_SYSTEM_PROMPT),
         tools=[
-            get_current_time,
-            order_sub_agent,
-            after_sale_sub_agent,
-            product_sub_agent,
-            analytics_sub_agent,
-            user_sub_agent,
+            get_admin_after_sale_list,
+            get_admin_after_sale_detail,
         ],
         middleware=[
             BasePromptMiddleware(),
-            SkillMiddleware(scope="supervisor"),
             build_tool_status_middleware(),
-            ToolCallLimitMiddleware(thread_limit=20, run_limit=10),
+            ToolCallLimitMiddleware(thread_limit=5, run_limit=5),
         ],
     )
     stream_result = agent_stream(
         agent,
         history_messages,
         on_model_delta=emit_answer_delta,
-        on_thinking_delta=emit_thinking_delta if enable_think else None,
     )
-
     trace = record_agent_trace(
         payload=stream_result,
         input_messages=history_messages,
         fallback_text=str(stream_result.get("streamed_text") or ""),
     )
     text = str(trace.get("text") or "").strip()
+    trace_model_name = str(trace.get("model_name") or "").strip()
     trace_item = ExecutionTraceState(
-        node_name="supervisor_agent",
-        model_name=model_name,
+        node_name="after_sale_agent",
+        model_name=llm_model_name or trace_model_name or "unknown",
         output_text=text,
         llm_used=True,
         llm_usage_complete=bool(trace.get("is_usage_complete", False)),
