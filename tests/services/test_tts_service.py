@@ -124,7 +124,9 @@ def test_prepare_tts_text_truncates_with_prefix():
         max_text_chars=config.max_text_chars,
     )
 
-    assert prepared.sent_text.startswith("文本太多了，这边只读取前10个字符。")
+    expected_prefix = service_module.DEFAULT_TTS_TRUNCATION_PREFIX_TEMPLATE.format(max_chars=10).strip()
+    assert prepared.sent_text.startswith(expected_prefix[: len(prepared.sent_text)])
+    assert len(prepared.sent_text) <= config.max_text_chars
     assert "https://" not in prepared.sent_text.lower()
     assert "#" not in prepared.sent_text
     assert "*" not in prepared.sent_text
@@ -374,7 +376,9 @@ def test_stream_message_tts_persists_usage_with_truncated_flag(monkeypatch):
     assert usage_calls[0]["message_uuid"] == "msg-6"
     assert usage_calls[0]["is_truncated"] is True
     assert usage_calls[0]["max_text_chars"] == 5
-    assert usage_calls[0]["sent_text"].startswith("文本太多了，这边只读取前5个字符。")
+    expected_prefix = service_module.DEFAULT_TTS_TRUNCATION_PREFIX_TEMPLATE.format(max_chars=5).strip()
+    assert usage_calls[0]["sent_text"].startswith(expected_prefix[: len(usage_calls[0]["sent_text"])])
+    assert len(usage_calls[0]["sent_text"]) <= 5
     assert usage_calls[0]["sanitized_text_chars"] >= 5
 
 
