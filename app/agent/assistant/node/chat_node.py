@@ -5,11 +5,10 @@ from typing import Any
 from langchain.agents import create_agent
 from langchain_core.messages import AIMessage, SystemMessage
 
-from app.agent.assistant.model_switch import model_switch
 from app.agent.assistant.state import AgentState, ExecutionTraceState
 from app.agent.assistant.tools import get_safe_user_info
 from app.agent.assistant.tools.base_tools import get_current_time
-from app.core.agent.agent_event_bus import emit_answer_delta, emit_thinking_delta
+from app.core.agent.agent_event_bus import emit_answer_delta
 from app.core.agent.agent_runtime import agent_stream
 from app.core.agent.agent_tool_trace import record_agent_trace
 from app.core.agent.base_prompt_middleware import BasePromptMiddleware
@@ -35,17 +34,14 @@ def chat_agent(state: AgentState) -> dict[str, Any]:
     """
 
     history_messages = list(state.get("history_messages") or [])
-    # 占位开关：当前固定开启 Think，后续处理逻辑由调用方继续扩展。
-
-    model_name, enable_think = model_switch(state)
+    model_name = "qwen-flash"
     tools = [
         get_current_time,
         get_safe_user_info
     ]
     llm = create_chat_model(
-        model="qwen3.5-plus",
+        model=model_name,
         temperature=1.3,
-        think=enable_think,
     )
     agent = create_agent(
         model=llm,
@@ -60,7 +56,6 @@ def chat_agent(state: AgentState) -> dict[str, Any]:
         agent,
         history_messages,
         on_model_delta=emit_answer_delta,
-        on_thinking_delta=emit_thinking_delta if enable_think else None,
     )
 
     trace = record_agent_trace(

@@ -26,11 +26,12 @@
 
 ## 难度判定规则（决定后端模型选择）
 
-| 难度级别        | 判定标准                                             | 推荐模型规格     |
-|:------------|:-------------------------------------------------|:-----------|
-| **simple**  | 仅限 `chat_agent` 的简单寒暄、短句回答或基础功能复述。               | Qwen-Flash |
-| **normal**  | `supervisor_agent` 的单步直查，或 `chat_agent` 的复杂文本总结。 | Qwen-Max   |
-| **complex** | 涉及跨域查询（如查订单后再查商品）、多工具联动、复杂的统计对比或图表生成任务。          | Qwen-Plus  |
+| 难度级别       | 判定标准                                                  |  |
+|:-----------|:------------------------------------------------------|:-|
+| **normal** | 常规任务：`supervisor_agent` 的单步直查，或 `chat_agent` 的复杂文本总结。 |  |
+| **high**   | 高复杂任务：涉及跨域查询、多工具联动、复杂统计对比或图表生成。                       |  |
+
+**深度思考规则**：仅 `high` 档位开启深度思考（think=true）；`normal` 关闭深度思考。
 
 **注意**：凡路由至 `supervisor_agent` 的请求，难度不得低于 `normal`。
 
@@ -41,27 +42,28 @@
 ```json
 {
   "route_target": "chat_agent|supervisor_agent",
-  "task_difficulty": "simple|normal|complex"
+  "task_difficulty": "normal|high"
 }
 ```
 
 ## 典型场景示例（含上下文模拟）
 
 - **场景 1：延续性查询**
+
     - 上文：查询了商品“感冒灵”。
     - 当前输入：“它的用法用量？”
     - 输出：`{"route_target":"supervisor_agent","task_difficulty":"normal"}`（需查询最新药品详情）
-
 - **场景 2：基于结果的总结**
+
     - 上文：返回了 20 条订单列表。
     - 当前输入：“帮我把这几条总结一下，看哪些是还没付款的。”
     - 输出：`{"route_target":"chat_agent","task_difficulty":"normal"}`（仅处理已有数据）
-
 - **场景 3：多步骤复杂任务**
-    - 当前输入：“对比一下本月和上月退货率最高的 5 款商品，并给一份饼图。”
-    - 输出：`{"route_target":"supervisor_agent","task_difficulty":"complex"}`（跨时间统计+排行榜+可视化）
 
+    - 当前输入：“对比一下本月和上月退货率最高的 5 款商品，并给一份饼图。”
+    - 输出：`{"route_target":"supervisor_agent","task_difficulty":"high"}`（跨时间统计+排行榜+可视化）
 - **场景 4：模糊引导**
+
     - 当前输入：“查一下。”
     - 上文：无相关背景。
-    - 输出：`{"route_target":"chat_agent","task_difficulty":"simple"}`（由向导节点进行反问引导）
+    - 输出：`{"route_target":"chat_agent","task_difficulty":"normal"}`（由向导节点进行反问引导）

@@ -18,7 +18,7 @@ from app.core.langsmith import traceable
 from app.core.llms import create_chat_model
 from app.utils.prompt_utils import load_prompt
 
-_ANALYTICS_SYSTEM_PROMPT = load_prompt("assistant/analytics_system_prompt.md")
+_ANALYTICS_SYSTEM_PROMPT = load_prompt("assistant/sub_agents/analytics_sub_agent_system_prompt.md")
 
 
 @tool(

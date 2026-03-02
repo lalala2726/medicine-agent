@@ -17,7 +17,7 @@ from app.core.langsmith import traceable
 from app.core.llms import create_chat_model
 from app.utils.prompt_utils import load_prompt
 
-_USER_SYSTEM_PROMPT = load_prompt("assistant/user_system_prompt.md")
+_USER_SYSTEM_PROMPT = load_prompt("assistant/sub_agents/user_sub_agent_system_prompt.md")
 
 
 @tool(

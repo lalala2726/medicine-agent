@@ -5,18 +5,16 @@ from app.agent.assistant.state import AgentState
 DEFAULT_MODEL = "qwen-max"
 DEFAULT_THINK = False
 
-# 按任务难度选择模型：简单 -> flash，普通 -> max，复杂 -> qwen3-plus。
+# 按任务难度选择模型：普通(normal) -> max，高(high) -> qwen3-plus。
 _DIFFICULTY_MODEL_MAP: dict[str, str] = {
-    "simple": "qwen-flash",
     "normal": "qwen-max",
-    "complex": "qwen3-plus",
+    "high": "qwen3-plus",
 }
 
-# 按任务难度决定是否开启深度思考：仅 complex 开启。
+# 按任务难度决定是否开启深度思考：仅 high 开启。
 _DIFFICULTY_THINK_MAP: dict[str, bool] = {
-    "simple": False,
     "normal": False,
-    "complex": True,
+    "high": True,
 }
 
 
@@ -31,12 +29,11 @@ def model_switch(state: AgentState) -> tuple[str, bool]:
     返回值：
         tuple[str, bool]:
             - 第一个值为模型名称：
-              - simple  -> qwen-flash
               - normal  -> qwen-max
-              - complex -> qwen3-plus
+              - high    -> qwen3-plus
               - 缺省/未知 -> qwen-max
             - 第二个值为 think 开关：
-              - complex -> True
+              - high -> True
               - 其他    -> False
 
     异常说明：

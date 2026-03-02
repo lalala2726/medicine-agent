@@ -58,7 +58,7 @@ def gateway_router(state: AgentState) -> dict[str, Any]:
         route_target = "chat_agent"
 
     task_difficulty = str(parsed.get("task_difficulty") or "").strip().lower()
-    if task_difficulty not in {"simple", "normal", "complex"}:
+    if task_difficulty not in {"normal", "high"}:
         task_difficulty = "normal"
 
     routing: GatewayRoutingState = {
