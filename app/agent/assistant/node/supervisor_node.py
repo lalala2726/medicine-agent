@@ -45,8 +45,8 @@ def supervisor_agent(state: AgentState) -> dict[str, Any]:
     # 占位开关：当前固定开启 Think，后续处理逻辑由调用方继续扩展。
     enable_think = True
     llm = create_chat_model(
-        model=model_name,
-        temperature=1.3,
+        model='qwen3.5-plus',
+        temperature=0.7,
         think=enable_think,
     )
 
@@ -72,7 +72,7 @@ def supervisor_agent(state: AgentState) -> dict[str, Any]:
         agent,
         history_messages,
         on_model_delta=emit_answer_delta,
-        on_thinking_delta=emit_thinking_delta if enable_think else None,
+        on_thinking_delta=emit_thinking_delta
     )
 
     trace = record_agent_trace(
