@@ -20,8 +20,8 @@ from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException
 from app.core.langsmith import build_langsmith_runnable_config
 from app.core.llms import create_chat_model
-from app.core.speech import build_message_tts_stream
 from app.core.security.auth_context import get_user_id
+from app.core.speech import build_message_tts_stream
 from app.schemas.admin_assistant_history import ConversationMessageResponse
 from app.schemas.base_request import PageRequest
 from app.schemas.document.conversation import ConversationListItem
@@ -41,7 +41,7 @@ from app.services.token_usage_service import (
     resolve_persistable_token_usage,
     resolve_persistable_token_usage_detail,
 )
-from app.utils.prompt_utils import PromptUtils, load_prompt
+from app.utils.prompt_utils import load_prompt
 
 ADMIN_WORKFLOW = build_graph()
 STREAM_OUTPUT_NODES = {

@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 from types import SimpleNamespace
 
 import pytest
 
-import app.agent.assistant.tools.after_sale_tool as after_sale_tool
+import app.agent.assistant.tools.after_sale_tools as after_sale_tools
+
+after_sale_sub_agent = importlib.import_module("app.agent.assistant.sub_agents.after_sale_sub_agent")
 
 
 def _install_http_mocks(monkeypatch: pytest.MonkeyPatch, *, parsed_result: str):
@@ -37,7 +40,7 @@ def _install_http_mocks(monkeypatch: pytest.MonkeyPatch, *, parsed_result: str):
             calls.append({"url": url, "params": params, **kwargs})
             return FakeResponse(parsed_result)
 
-    monkeypatch.setattr(after_sale_tool, "HttpClient", FakeHttpClient)
+    monkeypatch.setattr(after_sale_tools, "HttpClient", FakeHttpClient)
     return calls
 
 
@@ -48,7 +51,7 @@ def test_get_admin_after_sale_list_maps_snake_case_to_backend_params(
     calls = _install_http_mocks(monkeypatch, parsed_result=expected)
 
     result = asyncio.run(
-        after_sale_tool.get_admin_after_sale_list.ainvoke(
+        after_sale_tools.get_admin_after_sale_list.ainvoke(
             {
                 "page_num": 2,
                 "page_size": 30,
@@ -84,7 +87,7 @@ def test_get_admin_after_sale_detail_uses_expected_path(
     expected = "code: 200\nmessage: ok\ndata:\n  id: 30001\n"
     calls = _install_http_mocks(monkeypatch, parsed_result=expected)
 
-    result = asyncio.run(after_sale_tool.get_admin_after_sale_detail.ainvoke({"after_sale_id": 30001}))
+    result = asyncio.run(after_sale_tools.get_admin_after_sale_detail.ainvoke({"after_sale_id": 30001}))
 
     assert result == expected
     assert calls == [
@@ -95,7 +98,7 @@ def test_get_admin_after_sale_detail_uses_expected_path(
     ]
 
 
-def test_after_sale_tool_agent_builds_expected_tools_and_returns_agent_output(
+def test_after_sale_sub_agent_builds_expected_tools_and_returns_agent_output(
         monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     captured: dict = {}
@@ -115,11 +118,11 @@ def test_after_sale_tool_agent_builds_expected_tools_and_returns_agent_output(
         captured["history_messages"] = history_messages
         return SimpleNamespace(content="售后子代理结果")
 
-    monkeypatch.setattr(after_sale_tool, "create_chat_model", _fake_create_chat_model)
-    monkeypatch.setattr(after_sale_tool, "create_agent", _fake_create_agent)
-    monkeypatch.setattr(after_sale_tool, "agent_invoke", _fake_agent_invoke)
+    monkeypatch.setattr(after_sale_sub_agent, "create_chat_model", _fake_create_chat_model)
+    monkeypatch.setattr(after_sale_sub_agent, "create_agent", _fake_create_agent)
+    monkeypatch.setattr(after_sale_sub_agent, "agent_invoke", _fake_agent_invoke)
 
-    result = after_sale_tool.after_sale_tool_agent.invoke({"task_description": "  查询售后详情  "})
+    result = after_sale_sub_agent.after_sale_sub_agent.invoke({"task_description": "  查询售后详情  "})
 
     assert result == "售后子代理结果"
     assert captured["agent"] is fake_agent
@@ -127,12 +130,12 @@ def test_after_sale_tool_agent_builds_expected_tools_and_returns_agent_output(
 
     assert captured["create_chat_model_kwargs"] == {
         "model": "qwen-flash",
-        "temperature": 0.2,
+        "temperature": 1.0,
     }
 
     create_agent_kwargs = captured["create_agent_kwargs"]
     assert create_agent_kwargs["model"] is fake_llm
     assert create_agent_kwargs["tools"] == [
-        after_sale_tool.get_admin_after_sale_list,
-        after_sale_tool.get_admin_after_sale_detail,
+        after_sale_tools.get_admin_after_sale_list,
+        after_sale_tools.get_admin_after_sale_detail,
     ]

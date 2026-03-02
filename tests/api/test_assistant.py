@@ -1,5 +1,5 @@
-import json
 import importlib
+import json
 
 import pytest
 from fastapi.responses import StreamingResponse
@@ -11,8 +11,8 @@ import app.main as main_module
 from app.api.routes import admin_assistant as assistant_module
 from app.api.routes import speech_stt as speech_stt_module
 from app.core.codes import ResponseCode
-from app.core.security.auth_context import get_authorization_header
 from app.core.exception.exceptions import ServiceException
+from app.core.security.auth_context import get_authorization_header
 from app.core.security.role_codes import RoleCode
 from app.main import app
 from app.schemas.admin_assistant_history import ConversationMessageResponse, ThoughtNodeResponse
@@ -1323,26 +1323,26 @@ def test_assistant_tts_route_returns_503_when_redis_unavailable(monkeypatch):
 
 def test_voice_tts_rate_limit_rules_match_expected() -> None:
     assert [
-        (rule.window_seconds, rule.limit)
-        for rule in assistant_module.TTS_RATE_LIMIT_RULES
-    ] == [
-        (60, 5),
-        (3600, 60),
-        (18000, 100),
-        (86400, 200),
-    ]
+               (rule.window_seconds, rule.limit)
+               for rule in assistant_module.TTS_RATE_LIMIT_RULES
+           ] == [
+               (60, 5),
+               (3600, 60),
+               (18000, 100),
+               (86400, 200),
+           ]
 
 
 def test_speech_stt_rate_limit_rules_match_expected() -> None:
     assert [
-        (rule.window_seconds, rule.limit)
-        for rule in speech_stt_module.STT_RATE_LIMIT_RULES
-    ] == [
-        (60, 5),
-        (3600, 60),
-        (18000, 100),
-        (86400, 200),
-    ]
+               (rule.window_seconds, rule.limit)
+               for rule in speech_stt_module.STT_RATE_LIMIT_RULES
+           ] == [
+               (60, 5),
+               (3600, 60),
+               (18000, 100),
+               (86400, 200),
+           ]
 
 
 def test_assistant_stt_websocket_rejects_without_authorization(monkeypatch):

@@ -4,6 +4,7 @@ from typing import Any, TypeAlias
 
 from langchain_openai import ChatOpenAI
 
+from app.core.llms.common import resolve_provider_extra_body
 from app.core.llms.provider import LlmProvider, resolve_provider
 from app.core.llms.providers import (
     ChatQwen,
@@ -15,7 +16,6 @@ from app.core.llms.providers import (
     create_volcengine_chat_model,
     create_volcengine_image_model,
 )
-from app.core.llms.common import resolve_provider_extra_body
 
 ChatModel: TypeAlias = ChatOpenAI | ChatQwen | ChatVolcengine
 

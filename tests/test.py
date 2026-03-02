@@ -1,9 +1,9 @@
 import os
+from typing import Any
 
+from langchain_core.messages import AIMessageChunk
 from langchain_core.outputs import ChatGenerationChunk
 from langchain_openai.chat_models.base import BaseChatOpenAI
-from langchain_core.messages import AIMessageChunk
-from typing import Any
 
 
 class ChatQwen(BaseChatOpenAI):

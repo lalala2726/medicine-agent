@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from typing import Optional
 
-from langchain.agents import create_agent
-from langchain_core.messages import SystemMessage
 from langchain_core.tools import tool
 
 from app.agent.assistant.tools.schemas.user import (
@@ -11,13 +9,9 @@ from app.agent.assistant.tools.schemas.user import (
     AdminUserIdRequest,
     AdminUserListQueryRequest,
 )
-from app.core.agent.agent_runtime import agent_invoke
 from app.core.agent.agent_tool_events import tool_call_status
-from app.core.langsmith import traceable
-from app.core.llms import create_chat_model
 from app.schemas.http_response import HttpResponse
 from app.utils.http_client import HttpClient
-from app.utils.prompt_utils import load_prompt
 
 
 @tool(
@@ -173,44 +167,3 @@ async def get_admin_user_consume_info(
             params=params,
         )
         return HttpResponse.parse_data(response)
-
-
-_USER_SYSTEM_PROMPT = load_prompt("assistant/user_system_prompt.md")
-
-
-@tool(
-    description=(
-            "处理管理端用户相关任务：用户列表、用户详情、用户钱包、钱包流水、消费信息。"
-            "输入为自然语言任务描述，内部会自动调用用户域工具并返回结果。"
-    )
-)
-@tool_call_status(
-    tool_name="正在调用用户子代理",
-    start_message="正在执行用户查询",
-    error_message="调用用户子代理失败",
-    timely_message="用户子代理正在持续处理中",
-)
-@traceable(name="Supervisor User Tool Agent", run_type="chain")
-def user_tool_agent(task_description: str) -> str:
-    llm = create_chat_model(
-        model="qwen-flash",
-        temperature=1.0,
-    )
-    agent = create_agent(
-        model=llm,
-        system_prompt=SystemMessage(content=_USER_SYSTEM_PROMPT),
-        tools=[
-            get_admin_user_list,
-            get_admin_user_detail,
-            get_admin_user_wallet,
-            get_admin_user_wallet_flow,
-            get_admin_user_consume_info,
-        ],
-    )
-    input_messages = str(task_description or "").strip()
-    result = agent_invoke(
-        agent,
-        input_messages,
-    )
-    content = str(result.content or "").strip()
-    return content or "暂无数据"

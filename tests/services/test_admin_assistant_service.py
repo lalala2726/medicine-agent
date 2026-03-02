@@ -846,6 +846,7 @@ def test_persist_assistant_message_trace_failure_only_logs_warning(monkeypatch):
             "node_breakdown": [],
         },
     )
+
     class _DummyLogger:
         def warning(self, message: str, **kwargs):
             warning_calls.append({"message": message, "kwargs": kwargs})
@@ -1098,5 +1099,5 @@ def test_should_stream_token_only_allows_chat_and_supervisor_nodes():
     latest_state = {"routing": {"route_target": "chat_agent", "task_difficulty": "simple"}}
     assert service_module._should_stream_token("chat_agent", latest_state) is True
     assert service_module._should_stream_token("supervisor_agent", latest_state) is True
-    assert service_module._should_stream_token("order_tool_agent", latest_state) is False
-    assert service_module._should_stream_token("product_tool_agent", latest_state) is False
+    assert service_module._should_stream_token("order_sub_agent", latest_state) is False
+    assert service_module._should_stream_token("product_sub_agent", latest_state) is False

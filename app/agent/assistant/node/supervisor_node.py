@@ -8,12 +8,12 @@ from langchain_core.messages import AIMessage, SystemMessage
 
 from app.agent.assistant.model_switch import model_switch
 from app.agent.assistant.state import AgentState, ExecutionTraceState
-from app.agent.assistant.tools.after_sale_tool import after_sale_tool_agent
-from app.agent.assistant.tools.analytics_tool import analytics_tool_agent
+from app.agent.assistant.sub_agents.after_sale_sub_agent import after_sale_sub_agent
+from app.agent.assistant.sub_agents.analytics_sub_agent import analytics_sub_agent
+from app.agent.assistant.sub_agents.order_sub_agent import order_sub_agent
+from app.agent.assistant.sub_agents.product_sub_agent import product_sub_agent
+from app.agent.assistant.sub_agents.user_sub_agent import user_sub_agent
 from app.agent.assistant.tools.base_tools import get_current_time
-from app.agent.assistant.tools.order_tool import order_tool_agent
-from app.agent.assistant.tools.product_tool import product_tool_agent
-from app.agent.assistant.tools.user_tool import user_tool_agent
 from app.core.agent.agent_event_bus import emit_answer_delta, emit_thinking_delta
 from app.core.agent.agent_runtime import agent_stream
 from app.core.agent.agent_tool_events import build_tool_status_middleware
@@ -53,11 +53,11 @@ def supervisor_agent(state: AgentState) -> dict[str, Any]:
         system_prompt=SystemMessage(content=_SUPERVISOR_PROMPT),
         tools=[
             get_current_time,
-            order_tool_agent,
-            after_sale_tool_agent,
-            product_tool_agent,
-            analytics_tool_agent,
-            user_tool_agent,
+            order_sub_agent,
+            after_sale_sub_agent,
+            product_sub_agent,
+            analytics_sub_agent,
+            user_sub_agent,
         ],
         middleware=[
             BasePromptMiddleware(),

@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from typing import Optional
 
-from langchain.agents import create_agent
-from langchain_core.messages import SystemMessage
 from langchain_core.tools import tool
 
 from app.agent.assistant.tools.base_tools import _normalize_id_list, format_ids_to_string
@@ -12,13 +10,9 @@ from app.agent.assistant.tools.schemas.product import (
     MallProductListQueryRequest,
     ProductInfoRequest,
 )
-from app.core.agent.agent_runtime import agent_invoke
 from app.core.agent.agent_tool_events import tool_call_status
-from app.core.langsmith import traceable
-from app.core.llms import create_chat_model
 from app.schemas.http_response import HttpResponse
 from app.utils.http_client import HttpClient
-from app.utils.prompt_utils import load_prompt
 
 
 @tool(
@@ -112,38 +106,3 @@ async def get_drug_detail(product_id: list[str]) -> dict:
     async with HttpClient() as client:
         response = await client.get(url=f"/agent/admin/product/drug/{ids_str}")
         return HttpResponse.parse_data(response)
-
-
-_PRODUCT_SYSTEM_PROMPT = load_prompt("assistant/product_system_prompt.md")
-
-
-@tool(
-    description=(
-            "处理商品相关任务：商品列表、商品详情。"
-            "输入为自然语言任务描述，内部会自动调用商品工具并返回结果。"
-    )
-)
-@traceable(name="Supervisor Product Tool Agent", run_type="chain")
-@tool_call_status(
-    tool_name="正在调用商品子代理",
-    start_message="正在执行查询",
-    error_message="调用商品子代理失败",
-    timely_message="商品子代理正在持续处理中",
-)
-def product_tool_agent(task_description: str) -> str:
-    llm = create_chat_model(
-        model="qwen-flash",
-        temperature=1.0,
-    )
-    agent = create_agent(
-        model=llm,
-        system_prompt=SystemMessage(content=_PRODUCT_SYSTEM_PROMPT),
-        tools=[get_product_list, get_product_detail, get_drug_detail],
-    )
-    input_messages = str(task_description or "").strip()
-    result = agent_invoke(
-        agent,
-        input_messages,
-    )
-    content = str(result.content or "").strip()
-    return content or "暂无数据"

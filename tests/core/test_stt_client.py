@@ -5,8 +5,8 @@ import pytest
 
 from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException
-from app.core.speech.stt.config import VolcengineSttConfig
 from app.core.speech.stt import client as stt_client_module
+from app.core.speech.stt.config import VolcengineSttConfig
 
 
 class _DummyWebSocket:

@@ -32,7 +32,7 @@ def test_resolve_volcengine_stt_config_uses_defaults(monkeypatch: pytest.MonkeyP
 
 
 def test_resolve_volcengine_stt_config_raises_when_required_env_missing(
-    monkeypatch: pytest.MonkeyPatch,
+        monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _disable_dotenv_lookup(monkeypatch)
     monkeypatch.delenv("VOLCENGINE_APP_ID", raising=False)

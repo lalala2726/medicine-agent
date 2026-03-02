@@ -13,13 +13,13 @@ from starlette.responses import Response
 from app.api.main import api_router
 from app.core.exception.exception_handlers import ExceptionHandlers
 from app.core.exception.exceptions import ServiceException
+from app.core.security.anonymous_access import is_anonymous_request
 from app.core.security.auth_context import (
     reset_authorization_header,
     reset_current_user,
     set_authorization_header,
     set_current_user,
 )
-from app.core.security.anonymous_access import is_anonymous_request
 from app.core.security.cors import load_cors_config
 from app.core.speech import (
     verify_volcengine_stt_connection_on_startup,
@@ -81,7 +81,6 @@ app.add_exception_handler(ServiceException, ExceptionHandlers.service_exception_
 app.add_exception_handler(StarletteHTTPException, ExceptionHandlers.http_exception_handler)
 app.add_exception_handler(PyMongoError, ExceptionHandlers.pymongo_exception_handler)
 app.add_exception_handler(Exception, ExceptionHandlers.unhandled_exception_handler)
-
 
 AUTH_BYPASS_PATHS = {
     "/docs",

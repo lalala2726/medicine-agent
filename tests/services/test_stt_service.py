@@ -256,7 +256,8 @@ def test_stt_session_returns_error_when_upstream_reports_error() -> None:
     )
 
     class _ErrorSttClient(_FakeSttClient):
-        async def send_full_client_request(self, *, request, user_id: int | None = None) -> None:  # noqa: ANN001, ARG002
+        async def send_full_client_request(self, *, request,
+                                           user_id: int | None = None) -> None:  # noqa: ANN001, ARG002
             self._response_queue.put_nowait(
                 SttServerMessage(
                     message_type=MsgType.Error,

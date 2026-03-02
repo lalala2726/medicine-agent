@@ -1,12 +1,9 @@
 """
-Supervisor 工作流节点导出模块。
+`app.agent.assistant.sub_agents` 子代理导出模块。
 
-统一导出 gateway、supervisor 与可复用子工具，供 `workflow.py` 与节点协作时集中引用。
+统一导出包含模型调用能力的领域子代理入口，供 supervisor 节点调度。
 """
 
-from app.agent.assistant.node.chat_node import chat_agent
-from app.agent.assistant.node.gateway_node import gateway_router
-from app.agent.assistant.node.supervisor_node import supervisor_agent
 from app.agent.assistant.sub_agents.after_sale_sub_agent import after_sale_sub_agent
 from app.agent.assistant.sub_agents.analytics_sub_agent import analytics_sub_agent
 from app.agent.assistant.sub_agents.order_sub_agent import order_sub_agent
@@ -14,13 +11,9 @@ from app.agent.assistant.sub_agents.product_sub_agent import product_sub_agent
 from app.agent.assistant.sub_agents.user_sub_agent import user_sub_agent
 
 __all__ = [
-    "gateway_router",
-    "supervisor_agent",
     "order_sub_agent",
     "after_sale_sub_agent",
     "product_sub_agent",
     "analytics_sub_agent",
     "user_sub_agent",
-
-    "chat_agent",
 ]

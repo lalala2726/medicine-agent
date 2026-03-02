@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 from types import SimpleNamespace
 
 import pytest
 
-import app.agent.assistant.tools.user_tool as user_tool
+import app.agent.assistant.tools.user_tools as user_tools
+
+user_sub_agent = importlib.import_module("app.agent.assistant.sub_agents.user_sub_agent")
 
 
 def _install_http_mocks(monkeypatch: pytest.MonkeyPatch, *, parsed_result: str):
@@ -37,7 +40,7 @@ def _install_http_mocks(monkeypatch: pytest.MonkeyPatch, *, parsed_result: str):
             calls.append({"url": url, "params": params, **kwargs})
             return FakeResponse(parsed_result)
 
-    monkeypatch.setattr(user_tool, "HttpClient", FakeHttpClient)
+    monkeypatch.setattr(user_tools, "HttpClient", FakeHttpClient)
     return calls
 
 
@@ -48,7 +51,7 @@ def test_get_admin_user_list_maps_snake_case_to_backend_params(
     calls = _install_http_mocks(monkeypatch, parsed_result=expected)
 
     result = asyncio.run(
-        user_tool.get_admin_user_list.ainvoke(
+        user_tools.get_admin_user_list.ainvoke(
             {
                 "page_num": 2,
                 "page_size": 50,
@@ -85,8 +88,8 @@ def test_get_admin_user_list_maps_snake_case_to_backend_params(
 @pytest.mark.parametrize(
     ("tool_obj", "expected_url"),
     [
-        (user_tool.get_admin_user_detail, "/agent/admin/user/88/detail"),
-        (user_tool.get_admin_user_wallet, "/agent/admin/user/88/wallet"),
+        (user_tools.get_admin_user_detail, "/agent/admin/user/88/detail"),
+        (user_tools.get_admin_user_wallet, "/agent/admin/user/88/wallet"),
     ],
 )
 def test_user_detail_and_wallet_use_expected_path(
@@ -111,8 +114,8 @@ def test_user_detail_and_wallet_use_expected_path(
 @pytest.mark.parametrize(
     ("tool_obj", "expected_url"),
     [
-        (user_tool.get_admin_user_wallet_flow, "/agent/admin/user/99/wallet_flow"),
-        (user_tool.get_admin_user_consume_info, "/agent/admin/user/99/consume_info"),
+        (user_tools.get_admin_user_wallet_flow, "/agent/admin/user/99/wallet_flow"),
+        (user_tools.get_admin_user_consume_info, "/agent/admin/user/99/consume_info"),
     ],
 )
 def test_wallet_flow_and_consume_info_use_expected_path_and_pagination(
@@ -137,7 +140,7 @@ def test_wallet_flow_and_consume_info_use_expected_path_and_pagination(
     ]
 
 
-def test_user_tool_agent_builds_expected_tools_and_returns_agent_output(
+def test_user_sub_agent_builds_expected_tools_and_returns_agent_output(
         monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     captured: dict = {}
@@ -157,11 +160,11 @@ def test_user_tool_agent_builds_expected_tools_and_returns_agent_output(
         captured["history_messages"] = history_messages
         return SimpleNamespace(content="用户子代理结果")
 
-    monkeypatch.setattr(user_tool, "create_chat_model", _fake_create_chat_model)
-    monkeypatch.setattr(user_tool, "create_agent", _fake_create_agent)
-    monkeypatch.setattr(user_tool, "agent_invoke", _fake_agent_invoke)
+    monkeypatch.setattr(user_sub_agent, "create_chat_model", _fake_create_chat_model)
+    monkeypatch.setattr(user_sub_agent, "create_agent", _fake_create_agent)
+    monkeypatch.setattr(user_sub_agent, "agent_invoke", _fake_agent_invoke)
 
-    result = user_tool.user_tool_agent.invoke({"task_description": "  查询用户列表  "})
+    result = user_sub_agent.user_sub_agent.invoke({"task_description": "  查询用户列表  "})
 
     assert result == "用户子代理结果"
     assert captured["agent"] is fake_agent
@@ -169,15 +172,15 @@ def test_user_tool_agent_builds_expected_tools_and_returns_agent_output(
 
     assert captured["create_chat_model_kwargs"] == {
         "model": "qwen-flash",
-        "temperature": 0.2,
+        "temperature": 1.0,
     }
 
     create_agent_kwargs = captured["create_agent_kwargs"]
     assert create_agent_kwargs["model"] is fake_llm
     assert create_agent_kwargs["tools"] == [
-        user_tool.get_admin_user_list,
-        user_tool.get_admin_user_detail,
-        user_tool.get_admin_user_wallet,
-        user_tool.get_admin_user_wallet_flow,
-        user_tool.get_admin_user_consume_info,
+        user_tools.get_admin_user_list,
+        user_tools.get_admin_user_detail,
+        user_tools.get_admin_user_wallet,
+        user_tools.get_admin_user_wallet_flow,
+        user_tools.get_admin_user_consume_info,
     ]
