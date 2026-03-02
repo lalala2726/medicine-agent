@@ -61,6 +61,15 @@
   when `think=false` to avoid provider default reasoning output.
 - 管理助手对话接口（`POST /admin/assistant/chat`）支持请求参数 `enable_thinking`（默认 `false`），
   仅在显式传 `true` 时透传深度思考流式事件（`type=thinking`）。
+- 管理助手记忆配置（optional）：
+  `ASSISTANT_MEMORY_MODE`（`window|summary`，默认 `window`），
+  `ASSISTANT_MEMORY_WINDOW_LIMIT`（默认 `50`，仅 `window` 模式生效），
+  `ASSISTANT_SUMMARY_TRIGGER_WINDOW`（默认 `100`，可总结消息触发阈值），
+  `ASSISTANT_SUMMARY_TAIL_WINDOW`（默认 `20`，summary 模式原文尾部窗口），
+  `ASSISTANT_SUMMARY_MAX_TOKENS`（默认 `2000`，summary 文本 token 硬上限），
+  `ASSISTANT_SUMMARY_MODEL`（可选全局摘要模型兜底），
+  `OPENAI_SUMMARY_MODEL` / `DASHSCOPE_SUMMARY_MODEL` / `VOLCENGINE_LLM_SUMMARY_MODEL`
+  （可选厂商专属摘要模型，优先于 `ASSISTANT_SUMMARY_MODEL`）。
 - Embedding provider configuration:
   `OPENAI_EMBEDDING_MODEL` / `DASHSCOPE_EMBEDDING_MODEL` / `VOLCENGINE_LLM_EMBEDDING_MODEL`
   （根据 provider 选择，向量模型名称必填；可由函数参数或环境变量提供）。
