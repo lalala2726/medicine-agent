@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 import pytest
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException
@@ -10,6 +11,8 @@ from app.services import memory_service as service_module
 
 
 def test_load_memory_by_window_returns_ordered_memory(monkeypatch):
+    """测试目的：窗口模式按旧到新返回消息；预期结果：输出为 Human -> AI 顺序且不含系统消息。"""
+
     captured: dict = {}
 
     monkeypatch.setattr(
@@ -63,6 +66,8 @@ def test_load_memory_by_window_returns_ordered_memory(monkeypatch):
 
 
 def test_load_memory_by_window_raises_not_found_when_conversation_missing(monkeypatch):
+    """测试目的：会话不存在时返回业务异常；预期结果：抛出 NOT_FOUND。"""
+
     monkeypatch.setattr(service_module, "get_conversation", lambda **_kwargs: None)
 
     with pytest.raises(ServiceException) as exc_info:
@@ -76,6 +81,8 @@ def test_load_memory_by_window_raises_not_found_when_conversation_missing(monkey
 
 
 def test_load_memory_by_window_raises_database_error_when_conversation_id_missing(monkeypatch):
+    """测试目的：会话主键缺失时兜底；预期结果：抛出 DATABASE_ERROR。"""
+
     monkeypatch.setattr(
         service_module,
         "get_conversation",
@@ -92,15 +99,18 @@ def test_load_memory_by_window_raises_database_error_when_conversation_id_missin
     assert exc_info.value.code == ResponseCode.DATABASE_ERROR
 
 
-def test_load_memory_window_dispatches_to_window_loader(monkeypatch):
+def test_load_memory_uses_env_mode_and_dispatches_window(monkeypatch):
+    """测试目的：load_memory 由环境模式驱动；预期结果：ASSISTANT_MEMORY_MODE=window 时调用窗口加载器。"""
+
     monkeypatch.setattr(
         service_module,
         "load_memory_by_window",
         lambda *, conversation_uuid, user_id, limit: Memory(messages=[]),
     )
+    monkeypatch.setenv("ASSISTANT_MEMORY_MODE", "window")
 
     result = service_module.load_memory(
-        memory_type="window",
+        memory_type="summary",
         conversation_uuid="conv-1",
         user_id=100,
         limit=20,
@@ -109,9 +119,68 @@ def test_load_memory_window_dispatches_to_window_loader(monkeypatch):
     assert isinstance(result, Memory)
 
 
-def test_load_memory_summary_not_implemented():
-    with pytest.raises(NotImplementedError):
-        service_module.load_memory_by_summary(
-            conversation_uuid="conv-1",
-            user_id=100,
-        )
+def test_load_memory_by_summary_returns_summary_and_tail(monkeypatch):
+    """测试目的：summary 模式返回摘要+尾部窗口；预期结果：首条为 SystemMessage，后续为尾部原文消息。"""
+
+    monkeypatch.setattr(
+        service_module,
+        "get_conversation",
+        lambda **_kwargs: SimpleNamespace(id="507f1f77bcf86cd799439011"),
+    )
+    monkeypatch.setattr(
+        service_module,
+        "get_conversation_summary",
+        lambda *, conversation_id: SimpleNamespace(
+            summary_content="历史摘要",
+            status="success",
+        ),
+    )
+    monkeypatch.setattr(
+        service_module,
+        "list_summarizable_tail_messages",
+        lambda *, conversation_id, limit: [
+            SimpleNamespace(role=MessageRole.USER, content="用户问题"),
+            SimpleNamespace(role=MessageRole.AI, content="助手回答"),
+        ],
+    )
+    monkeypatch.setattr(service_module, "resolve_assistant_summary_tail_window", lambda: 20)
+
+    memory = service_module.load_memory_by_summary(
+        conversation_uuid="conv-1",
+        user_id=100,
+    )
+
+    assert isinstance(memory, Memory)
+    assert len(memory.messages) == 3
+    assert isinstance(memory.messages[0], SystemMessage)
+    assert isinstance(memory.messages[1], HumanMessage)
+    assert isinstance(memory.messages[2], AIMessage)
+    assert [item.content for item in memory.messages] == [
+        "历史摘要",
+        "用户问题",
+        "助手回答",
+    ]
+
+
+def test_resolve_assistant_summary_model_prefers_provider_specific_env(monkeypatch):
+    """测试目的：摘要模型按厂商独立配置优先；预期结果：命中厂商专属变量时覆盖全局兜底。"""
+
+    monkeypatch.setenv("LLM_PROVIDER", "openai")
+    monkeypatch.setenv("ASSISTANT_SUMMARY_MODEL", "global-summary-model")
+    monkeypatch.setenv("OPENAI_SUMMARY_MODEL", "openai-summary-model")
+
+    resolved_model = service_module.resolve_assistant_summary_model()
+
+    assert resolved_model == "openai-summary-model"
+
+
+def test_resolve_assistant_summary_model_falls_back_to_global_env(monkeypatch):
+    """测试目的：厂商专属未配置时回退全局；预期结果：返回 ASSISTANT_SUMMARY_MODEL。"""
+
+    monkeypatch.setenv("LLM_PROVIDER", "volcengine")
+    monkeypatch.delenv("VOLCENGINE_LLM_SUMMARY_MODEL", raising=False)
+    monkeypatch.setenv("ASSISTANT_SUMMARY_MODEL", "global-summary-model")
+
+    resolved_model = service_module.resolve_assistant_summary_model()
+
+    assert resolved_model == "global-summary-model"

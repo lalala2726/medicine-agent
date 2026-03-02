@@ -35,6 +35,8 @@ from app.services.conversation_service import (
     save_conversation_title,
     update_admin_conversation_title,
 )
+from app.services.memory_summary_service import refresh_conversation_summary_if_needed
+from app.services.memory_service import load_memory, resolve_assistant_memory_mode
 from app.services.message_service import add_message, list_messages
 from app.services.message_trace_service import add_message_trace
 from app.services.token_usage_service import (
@@ -347,12 +349,28 @@ def _persist_assistant_message(
         thinking_text: str | None = None,
 ) -> None:
     """
-    持久化 ai 消息。
+    持久化 AI 消息并触发追踪与摘要刷新。
 
-    流程：
-    1. 主消息表保存基础消息 + token 总量；
-    2. trace 表保存 workflow 汇总 + execution_trace + token 汇总；
-    3. trace 失败仅记录 warning，不影响主消息保存。
+    Args:
+        conversation_id: 会话 ID（Mongo ObjectId 字符串）。
+        message_uuid: 本轮 AI 消息 UUID。
+        answer_text: AI 最终回复文本。
+        execution_trace: workflow 节点执行轨迹。
+        token_usage: workflow 消息级 token 汇总。
+        status: 消息状态（success/error）。
+        thinking_text: 可选深度思考文本。
+
+    Returns:
+        None
+
+    Raises:
+        无。数据库与下游异常由后台任务兜底捕获，不向主链路抛出。
+
+    Notes:
+        1. 主消息表保存基础消息 + token 总量；
+        2. trace 表保存 workflow 汇总 + execution_trace + token 汇总；
+        3. 异步触发会话摘要刷新（summary 模式下按阈值触发）；
+        4. trace 或 summary 失败仅记录 warning，不影响主消息保存。
     """
     resolved_status = MessageStatus(status)
     persistable_token_usage = resolve_persistable_token_usage(
@@ -371,6 +389,13 @@ def _persist_assistant_message(
         thinking=thinking_text,
         token_usage=persistable_token_usage,
         message_uuid=message_uuid,
+    )
+    _schedule_background_task(
+        task_name="refresh_conversation_summary",
+        func=refresh_conversation_summary_if_needed,
+        kwargs={
+            "conversation_id": conversation_id,
+        },
     )
     try:
         add_message_trace(
@@ -505,10 +530,12 @@ def _prepare_existing_conversation(
         conversation_uuid=conversation_uuid,
         user_id=user_id,
     )
-    history_messages = load_history(
-        conversation_id=conversation_id,
-        limit=50,
+    memory = load_memory(
+        memory_type=resolve_assistant_memory_mode(),
+        conversation_uuid=conversation_uuid,
+        user_id=user_id,
     )
+    history_messages = list(memory.messages)
     # 旧会话场景需显式注入本轮用户输入，避免模型只基于上一轮历史作答。
     history_messages = [*history_messages, HumanMessage(content=question)]
     return ConversationContext(

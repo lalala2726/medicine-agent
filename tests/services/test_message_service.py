@@ -54,8 +54,10 @@ class _DummyCollection:
         self.last_inserted: dict | None = None
         self.last_find_query: dict | None = None
         self.last_find_one_query: dict | None = None
+        self.last_count_query: dict | None = None
         self.find_rows: list[dict] = []
         self.find_one_result: dict | None = None
+        self.count_documents_result: int = 0
 
     def insert_one(self, document: dict) -> _DummyInsertResult:
         self.last_inserted = document
@@ -68,6 +70,10 @@ class _DummyCollection:
     def find_one(self, query: dict) -> dict | None:
         self.last_find_one_query = query
         return self.find_one_result
+
+    def count_documents(self, query: dict) -> int:
+        self.last_count_query = query
+        return self.count_documents_result
 
 
 def test_add_message_inserts_expected_document(monkeypatch):
@@ -393,3 +399,62 @@ def test_list_messages_supports_skip_with_descending_order(monkeypatch):
 
     assert len(result) == 1
     assert result[0].uuid == "msg-2"
+
+
+def test_count_summarizable_messages_applies_summary_filter(monkeypatch):
+    """测试目的：统计摘要消息时仅命中 user/ai success；预期结果：查询条件包含 role/status/after 游标。"""
+
+    collection = _DummyCollection()
+    collection.count_documents_result = 7
+    monkeypatch.setattr(service_module, "get_mongo_database", lambda: {"messages": collection})
+    monkeypatch.setattr(service_module, "_resolve_collection_name", lambda: "messages")
+
+    count = service_module.count_summarizable_messages(
+        conversation_id="507f1f77bcf86cd799439011",
+        after_message_id="507f1f77bcf86cd799439010",
+    )
+
+    assert count == 7
+    assert collection.last_count_query is not None
+    assert collection.last_count_query["conversation_id"] == ObjectId("507f1f77bcf86cd799439011")
+    assert collection.last_count_query["status"] == MessageStatus.SUCCESS.value
+    assert collection.last_count_query["role"] == {"$in": [MessageRole.USER.value, MessageRole.AI.value]}
+    assert collection.last_count_query["_id"] == {"$gt": ObjectId("507f1f77bcf86cd799439010")}
+
+
+def test_list_latest_summarizable_messages_returns_ascending(monkeypatch):
+    """测试目的：读取最新可总结消息后返回正序；预期结果：输出顺序为旧到新。"""
+
+    collection = _DummyCollection()
+    collection.find_rows = [
+        {
+            "_id": ObjectId("507f1f77bcf86cd799439022"),
+            "uuid": "msg-2",
+            "conversation_id": ObjectId("507f1f77bcf86cd799439011"),
+            "role": "ai",
+            "status": "success",
+            "content": "B",
+            "created_at": datetime.datetime(2026, 1, 1, 10, 0, 2),
+            "updated_at": datetime.datetime(2026, 1, 1, 10, 0, 2),
+        },
+        {
+            "_id": ObjectId("507f1f77bcf86cd799439021"),
+            "uuid": "msg-1",
+            "conversation_id": ObjectId("507f1f77bcf86cd799439011"),
+            "role": "user",
+            "status": "success",
+            "content": "A",
+            "created_at": datetime.datetime(2026, 1, 1, 10, 0, 1),
+            "updated_at": datetime.datetime(2026, 1, 1, 10, 0, 1),
+        },
+    ]
+    monkeypatch.setattr(service_module, "get_mongo_database", lambda: {"messages": collection})
+    monkeypatch.setattr(service_module, "_resolve_collection_name", lambda: "messages")
+
+    documents = service_module.list_latest_summarizable_messages(
+        conversation_id="507f1f77bcf86cd799439011",
+        limit=2,
+        after_message_id=None,
+    )
+
+    assert [item.uuid for item in documents] == ["msg-1", "msg-2"]

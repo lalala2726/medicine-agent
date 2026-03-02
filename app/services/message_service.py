@@ -241,3 +241,172 @@ def list_messages(
     collection = db[_resolve_collection_name()]
     cursor = collection.find(query).sort("created_at", sort_direction).skip(skip).limit(limit)
     return [_to_message_document(item) for item in cursor]
+
+
+def _build_summarizable_messages_query(
+        *,
+        conversation_id: Annotated[str, Field(min_length=1)],
+        after_message_id: str | None = None,
+) -> dict[str, Any]:
+    """
+    功能描述：
+        构建“可参与摘要”的消息查询条件。
+
+    参数说明：
+        conversation_id (str): 会话 Mongo ObjectId（字符串形式）。
+        after_message_id (str | None): 可选消息游标，仅查询 `_id` 大于该值的消息。
+
+    返回值：
+        dict[str, Any]: MongoDB 查询条件。
+
+    异常说明：
+        ServiceException:
+            - BAD_REQUEST: `conversation_id` 或 `after_message_id` 不是合法 ObjectId。
+    """
+
+    query: dict[str, Any] = {
+        "conversation_id": _to_object_id(conversation_id),
+        "role": {
+            "$in": [
+                MessageRole.USER.value,
+                MessageRole.AI.value,
+            ]
+        },
+        "status": MessageStatus.SUCCESS.value,
+    }
+    normalized_after_message_id = (after_message_id or "").strip()
+    if normalized_after_message_id:
+        try:
+            query["_id"] = {"$gt": ObjectId(normalized_after_message_id)}
+        except Exception as exc:
+            raise ServiceException(
+                code=ResponseCode.BAD_REQUEST,
+                message="after_message_id 格式不正确",
+            ) from exc
+    return query
+
+
+def count_summarizable_messages(
+        *,
+        conversation_id: Annotated[str, Field(min_length=1)],
+        after_message_id: str | None = None,
+) -> int:
+    """
+    功能描述：
+        统计某会话中可参与摘要的消息数量。
+
+    参数说明：
+        conversation_id (str): 会话 Mongo ObjectId（字符串形式）。
+        after_message_id (str | None): 可选消息游标，仅统计 `_id` 更大的消息。
+
+    返回值：
+        int: 命中的消息条数。
+
+    异常说明：
+        ServiceException:
+            - BAD_REQUEST: ID 不是合法 ObjectId。
+    """
+
+    query = _build_summarizable_messages_query(
+        conversation_id=conversation_id,
+        after_message_id=after_message_id,
+    )
+    db = get_mongo_database()
+    collection = db[_resolve_collection_name()]
+    return int(collection.count_documents(query))
+
+
+def list_summarizable_messages(
+        *,
+        conversation_id: Annotated[str, Field(min_length=1)],
+        limit: Annotated[int, Field(ge=1)] = 50,
+        after_message_id: str | None = None,
+        ascending: bool = True,
+) -> list[MessageDocument]:
+    """
+    功能描述：
+        查询某会话中可参与摘要的消息列表。
+
+    参数说明：
+        conversation_id (str): 会话 Mongo ObjectId（字符串形式）。
+        limit (int): 返回条数上限。
+        after_message_id (str | None): 可选消息游标，仅查询 `_id` 更大的消息。
+        ascending (bool): 是否按创建时间升序返回；`True` 表示旧到新。
+
+    返回值：
+        list[MessageDocument]: 满足摘要条件的消息列表。
+
+    异常说明：
+        ServiceException:
+            - BAD_REQUEST: ID 不是合法 ObjectId。
+    """
+
+    query = _build_summarizable_messages_query(
+        conversation_id=conversation_id,
+        after_message_id=after_message_id,
+    )
+    sort_direction = ASCENDING if ascending else DESCENDING
+    db = get_mongo_database()
+    collection = db[_resolve_collection_name()]
+    cursor = collection.find(query).sort("created_at", sort_direction).limit(limit)
+    return [_to_message_document(item) for item in cursor]
+
+
+def list_latest_summarizable_messages(
+        *,
+        conversation_id: Annotated[str, Field(min_length=1)],
+        limit: Annotated[int, Field(ge=1)] = 100,
+        after_message_id: str | None = None,
+) -> list[MessageDocument]:
+    """
+    功能描述：
+        获取“最新 N 条可参与摘要消息”，并按时间正序返回。
+
+    参数说明：
+        conversation_id (str): 会话 Mongo ObjectId（字符串形式）。
+        limit (int): 需要的最新消息数量。
+        after_message_id (str | None): 可选消息游标，仅查询 `_id` 更大的消息。
+
+    返回值：
+        list[MessageDocument]: 最新 N 条消息（旧到新）。
+
+    异常说明：
+        ServiceException:
+            - BAD_REQUEST: ID 不是合法 ObjectId。
+    """
+
+    latest_desc = list_summarizable_messages(
+        conversation_id=conversation_id,
+        limit=limit,
+        after_message_id=after_message_id,
+        ascending=False,
+    )
+    return list(reversed(latest_desc))
+
+
+def list_summarizable_tail_messages(
+        *,
+        conversation_id: Annotated[str, Field(min_length=1)],
+        limit: Annotated[int, Field(ge=1)] = 20,
+) -> list[MessageDocument]:
+    """
+    功能描述：
+        获取会话中可参与摘要的“尾部消息窗口”，并按时间正序返回。
+
+    参数说明：
+        conversation_id (str): 会话 Mongo ObjectId（字符串形式）。
+        limit (int): 尾部窗口大小。
+
+    返回值：
+        list[MessageDocument]: 尾部消息列表（旧到新）。
+
+    异常说明：
+        ServiceException:
+            - BAD_REQUEST: ID 不是合法 ObjectId。
+    """
+
+    return list_latest_summarizable_messages(
+        conversation_id=conversation_id,
+        limit=limit,
+        after_message_id=None,
+    )

@@ -31,7 +31,7 @@ class _DummyCollection:
 
 
 def test_add_message_trace_inserts_expected_document(monkeypatch):
-    """验证 add_message_trace：execution_trace + token 明细可落库。"""
+    """测试目的：message_trace 新结构可正常落库；预期结果：workflow/execution_trace/token_usage 均按新字段写入。"""
 
     collection = _DummyCollection()
     monkeypatch.setattr(
@@ -47,24 +47,18 @@ def test_add_message_trace_inserts_expected_document(monkeypatch):
         conversation_id="507f1f77bcf86cd799439011",
         execution_trace=[
             {
+                "sequence": 1,
                 "node_name": "chat_agent",
                 "model_name": "qwen-max",
-                "input_messages": [{"role": "human", "content": "用户问题"}],
                 "output_text": "AI回复",
                 "tool_calls": [],
             }
         ],
-        token_usage_detail={
+        token_usage={
+            "prompt_tokens": 1,
+            "completion_tokens": 2,
+            "total_tokens": 3,
             "is_complete": True,
-            "node_breakdown": [
-                {
-                    "node_name": "chat_agent",
-                    "model_name": "qwen-max",
-                    "prompt_tokens": 1,
-                    "completion_tokens": 2,
-                    "total_tokens": 3,
-                }
-            ],
         },
     )
 
@@ -73,8 +67,9 @@ def test_add_message_trace_inserts_expected_document(monkeypatch):
     assert collection.last_inserted["message_uuid"] == "msg-1"
     assert collection.last_inserted["conversation_id"] == ObjectId("507f1f77bcf86cd799439011")
     assert collection.last_inserted["provider"] == MessageTraceProvider.OPENAI
+    assert collection.last_inserted["workflow"]["workflow_name"] == "admin_assistant_graph"
     assert collection.last_inserted["execution_trace"][0]["node_name"] == "chat_agent"
-    assert collection.last_inserted["token_usage_detail"]["is_complete"] is True
+    assert collection.last_inserted["token_usage"]["is_complete"] is True
     assert isinstance(collection.last_inserted["created_at"], datetime.datetime)
     assert isinstance(collection.last_inserted["updated_at"], datetime.datetime)
 
@@ -134,8 +129,8 @@ def test_add_message_trace_explicit_provider_overrides_env(monkeypatch):
     assert collection.last_inserted["provider"] == MessageTraceProvider.VOLCENGINE
 
 
-def test_add_message_trace_rejects_legacy_token_usage_payload(monkeypatch):
-    """验证 token_usage_detail 传旧结构时不会落库。"""
+def test_add_message_trace_ignores_invalid_token_usage_payload(monkeypatch):
+    """测试目的：非法 token_usage 不影响 trace 主体落库；预期结果：记录写入但不包含 token_usage 字段。"""
 
     collection = _DummyCollection()
     monkeypatch.setattr(
@@ -148,19 +143,16 @@ def test_add_message_trace_rejects_legacy_token_usage_payload(monkeypatch):
     result = service_module.add_message_trace(
         message_uuid="msg-1",
         conversation_id="507f1f77bcf86cd799439011",
-        token_usage_detail={
-            "prompt_tokens": 10,
-            "completion_tokens": 5,
-            "total_tokens": 15,
-        },
+        token_usage={"invalid": "payload"},
     )
 
-    assert result is None
-    assert collection.last_inserted is None
+    assert result == "507f1f77bcf86cd799439021"
+    assert collection.last_inserted is not None
+    assert "token_usage" not in collection.last_inserted
 
 
 def test_add_message_trace_skips_when_trace_and_detail_are_empty(monkeypatch):
-    """验证 execution_trace 与明细都为空时跳过写入。"""
+    """测试目的：空轨迹也应落库；预期结果：返回文档ID且 execution_trace 为空数组。"""
 
     collection = _DummyCollection()
     monkeypatch.setattr(
@@ -175,8 +167,9 @@ def test_add_message_trace_skips_when_trace_and_detail_are_empty(monkeypatch):
         conversation_id="507f1f77bcf86cd799439011",
     )
 
-    assert result is None
-    assert collection.last_inserted is None
+    assert result == "507f1f77bcf86cd799439021"
+    assert collection.last_inserted is not None
+    assert collection.last_inserted["execution_trace"] == []
 
 
 def test_add_message_trace_rejects_invalid_conversation_id(monkeypatch):
@@ -201,7 +194,7 @@ def test_add_message_trace_rejects_invalid_conversation_id(monkeypatch):
 
 
 def test_get_message_trace_by_message_uuid_returns_typed_model(monkeypatch):
-    """验证 get_message_trace_by_message_uuid：返回 MessageTraceDocument。"""
+    """测试目的：读取接口按新 schema 反序列化；预期结果：workflow/sequence/token_usage 字段解析正确。"""
 
     collection = _DummyCollection()
     collection.find_one_result = {
@@ -209,18 +202,28 @@ def test_get_message_trace_by_message_uuid_returns_typed_model(monkeypatch):
         "message_uuid": "msg-1",
         "conversation_id": ObjectId("507f1f77bcf86cd799439011"),
         "provider": "aliyun",
+        "workflow": {
+            "workflow_name": "admin_assistant_graph",
+            "workflow_status": "success",
+            "execution_path": ["chat_agent"],
+            "final_node": "chat_agent",
+            "route_targets": [],
+            "task_difficulty": None,
+        },
         "execution_trace": [
             {
+                "sequence": 1,
                 "node_name": "chat_agent",
                 "model_name": "qwen-max",
-                "input_messages": [],
                 "output_text": "ok",
                 "tool_calls": [],
             }
         ],
-        "token_usage_detail": {
+        "token_usage": {
+            "prompt_tokens": 1,
+            "completion_tokens": 2,
+            "total_tokens": 3,
             "is_complete": True,
-            "node_breakdown": [],
         },
         "created_at": datetime.datetime(2026, 1, 1, 10, 0, 0),
         "updated_at": datetime.datetime(2026, 1, 1, 10, 0, 0),
@@ -241,4 +244,5 @@ def test_get_message_trace_by_message_uuid_returns_typed_model(monkeypatch):
     assert result.conversation_id == "507f1f77bcf86cd799439011"
     assert result.provider == MessageTraceProvider.ALIYUN
     assert result.execution_trace is not None
+    assert result.workflow.workflow_status == "success"
     assert result.execution_trace[0].node_name == "chat_agent"

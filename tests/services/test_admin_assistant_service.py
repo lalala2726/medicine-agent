@@ -1,6 +1,7 @@
 import asyncio
 import datetime
 import json
+from types import SimpleNamespace
 
 import pytest
 from bson import ObjectId
@@ -294,10 +295,21 @@ def test_prepare_existing_conversation_returns_context_with_history(monkeypatch)
     )
     monkeypatch.setattr(
         service_module,
-        "load_history",
-        lambda *, conversation_id, limit: (
-            captured.update({"conversation_id": conversation_id, "limit": limit}),
-            expected_history,
+        "resolve_assistant_memory_mode",
+        lambda: "summary",
+    )
+    monkeypatch.setattr(
+        service_module,
+        "load_memory",
+        lambda *, memory_type, conversation_uuid, user_id: (
+            captured.update(
+                {
+                    "memory_type": memory_type,
+                    "memory_conversation_uuid": conversation_uuid,
+                    "memory_user_id": user_id,
+                }
+            ),
+            SimpleNamespace(messages=expected_history),
         )[-1],
     )
 
@@ -327,8 +339,9 @@ def test_prepare_existing_conversation_returns_context_with_history(monkeypatch)
     assert captured == {
         "conversation_uuid": "conv-1",
         "user_id": 100,
-        "conversation_id": "507f1f77bcf86cd799439011",
-        "limit": 50,
+        "memory_type": "summary",
+        "memory_conversation_uuid": "conv-1",
+        "memory_user_id": 100,
     }
 
 
@@ -466,10 +479,15 @@ def test_assistant_chat_schedules_user_persist_without_blocking_main_flow(monkey
     )
     monkeypatch.setattr(
         service_module,
-        "load_history",
-        lambda **_kwargs: (
-            call_order.append("load_history"),
-            [HumanMessage(content="历史问题"), AIMessage(content="历史回答")],
+        "resolve_assistant_memory_mode",
+        lambda: "window",
+    )
+    monkeypatch.setattr(
+        service_module,
+        "load_memory",
+        lambda *, memory_type, conversation_uuid, user_id: (
+            call_order.append("load_memory"),
+            SimpleNamespace(messages=[HumanMessage(content="历史问题"), AIMessage(content="历史回答")]),
         )[-1],
     )
     monkeypatch.setattr(
@@ -486,8 +504,8 @@ def test_assistant_chat_schedules_user_persist_without_blocking_main_flow(monkey
         "_schedule_background_task",
         lambda *, task_name, func, kwargs: (
             background_calls.append({"task_name": task_name, "kwargs": kwargs}),
-            func(**kwargs),
-        )[-1],
+            func(**kwargs) if task_name == "persist_user_message" else None,
+        )[-1] if task_name == "persist_user_message" else None,
     )
 
     response = service_module.assistant_chat(question="代理测试", conversation_uuid="conv-1")
@@ -513,7 +531,7 @@ def test_assistant_chat_schedules_user_persist_without_blocking_main_flow(monkey
     assert stream_config.initial_emitted_events[0].type == MessageType.NOTICE
     assert stream_config.initial_emitted_events[0].content.state is None
     assert stream_config.initial_emitted_events[0].meta == {"message_uuid": "assistant-msg-uuid"}
-    assert call_order == ["load_history", "add_user"]
+    assert call_order == ["load_memory", "add_user"]
     assert background_calls == [
         {
             "task_name": "persist_user_message",
@@ -577,8 +595,15 @@ def test_assistant_chat_injects_enable_thinking_flag_into_initial_state(monkeypa
     )
     monkeypatch.setattr(
         service_module,
-        "load_history",
-        lambda **_kwargs: [HumanMessage(content="历史问题"), AIMessage(content="历史回答")],
+        "resolve_assistant_memory_mode",
+        lambda: "window",
+    )
+    monkeypatch.setattr(
+        service_module,
+        "load_memory",
+        lambda *, memory_type, conversation_uuid, user_id: SimpleNamespace(
+            messages=[HumanMessage(content="历史问题"), AIMessage(content="历史回答")]
+        ),
     )
     monkeypatch.setattr(
         service_module,
@@ -612,8 +637,8 @@ def test_answer_completed_schedules_async_persist_with_execution_trace(monkeypat
         "_schedule_background_task",
         lambda *, task_name, func, kwargs: (
             background_calls.append({"task_name": task_name, "kwargs": kwargs}),
-            func(**kwargs),
-        )[-1],
+            func(**kwargs) if task_name == "persist_assistant_message" else None,
+        )[-1] if task_name == "persist_assistant_message" else None,
     )
     monkeypatch.setattr(
         service_module,
@@ -679,7 +704,7 @@ def test_answer_completed_schedules_async_persist_with_execution_trace(monkeypat
     assert "execution_trace" not in saved_messages[-1]
     assert saved_traces[-1]["message_uuid"] == "msg-uuid-1"
     assert saved_traces[-1]["execution_trace"][0]["node_name"] == "chat_agent"
-    assert saved_traces[-1]["token_usage_detail"]["is_complete"] is False
+    assert saved_traces[-1]["token_usage"]["is_complete"] is False
     assert resolve_calls and resolve_calls[-1]["token_usage"] is None
 
 
@@ -692,7 +717,9 @@ def test_answer_completed_marks_error_status_when_stream_failed(monkeypatch):
     monkeypatch.setattr(
         service_module,
         "_schedule_background_task",
-        lambda *, task_name, func, kwargs: func(**kwargs),
+        lambda *, task_name, func, kwargs: (
+            func(**kwargs) if task_name == "persist_assistant_message" else None
+        ),
     )
     monkeypatch.setattr(
         service_module,
@@ -736,7 +763,9 @@ def test_answer_completed_persists_thinking_text(monkeypatch):
     monkeypatch.setattr(
         service_module,
         "_schedule_background_task",
-        lambda *, task_name, func, kwargs: func(**kwargs),
+        lambda *, task_name, func, kwargs: (
+            func(**kwargs) if task_name == "persist_assistant_message" else None
+        ),
     )
     monkeypatch.setattr(
         service_module,
@@ -782,7 +811,9 @@ def test_answer_completed_persists_fallback_when_answer_empty(monkeypatch):
     monkeypatch.setattr(
         service_module,
         "_schedule_background_task",
-        lambda *, task_name, func, kwargs: func(**kwargs),
+        lambda *, task_name, func, kwargs: (
+            func(**kwargs) if task_name == "persist_assistant_message" else None
+        ),
     )
     monkeypatch.setattr(
         service_module,
@@ -845,6 +876,11 @@ def test_persist_assistant_message_trace_failure_only_logs_warning(monkeypatch):
             "is_complete": True,
             "node_breakdown": [],
         },
+    )
+    monkeypatch.setattr(
+        service_module,
+        "_schedule_background_task",
+        lambda **_kwargs: None,
     )
 
     class _DummyLogger:
@@ -1091,4 +1127,3 @@ def test_conversation_messages_returns_thinking_for_ai_when_present(monkeypatch)
     assert [item.id for item in result] == ["msg-user-1", "msg-ai-2"]
     assert result[0].thinking is None
     assert result[1].thinking == "这是完整思考文本"
-
