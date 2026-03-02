@@ -9,14 +9,14 @@ from pydantic import SecretStr
 
 from app.core.llms.common import prepare_chat_client_kwargs, resolve_llm_value
 
-DEFAULT_DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+DEFAULT_VOLCENGINE_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"
 
 
-class ChatQwen(ChatOpenAI):
+class ChatVolcengine(ChatOpenAI):
     """
     功能描述:
-        千问聊天模型客户端，基于 OpenAI 兼容协议封装，
-        额外补齐 `reasoning_content` 在流式/非流式场景下的统一承载。
+        字节（Volcengine/ARK）聊天模型客户端，基于 OpenAI 兼容协议封装，
+        统一补齐 `reasoning_content` 到 `additional_kwargs`，便于上层流式思考透传。
 
     参数说明:
         继承 `ChatOpenAI` 构造参数，主要包括 `model/api_key/base_url/extra_body`。
@@ -36,7 +36,7 @@ class ChatQwen(ChatOpenAI):
     ) -> ChatGenerationChunk | None:
         """
         功能描述:
-            将千问流式响应片段转换为 `ChatGenerationChunk`，并把
+            将 Volcengine 流式响应片段转换为 `ChatGenerationChunk`，并把
             `delta.reasoning_content` 注入到 `message.additional_kwargs`。
 
         参数说明:
@@ -52,7 +52,9 @@ class ChatQwen(ChatOpenAI):
         """
 
         generation_chunk = super()._convert_chunk_to_generation_chunk(
-            chunk, default_chunk_class, base_generation_info
+            chunk,
+            default_chunk_class,
+            base_generation_info,
         )
 
         if generation_chunk and (choices := chunk.get("choices")):
@@ -92,54 +94,54 @@ class ChatQwen(ChatOpenAI):
         return result
 
 
-def create_aliyun_chat_model(
+def create_volcengine_chat_model(
         *,
         model: str | None = None,
         api_key: str | None = None,
         base_url: str | None = None,
         extra_body: dict[str, Any] | None = None,
         **kwargs: Any,
-) -> ChatQwen:
+) -> ChatVolcengine:
     """
     功能描述:
-        创建阿里云（DashScope）聊天模型客户端，返回增强版 `ChatQwen`。
+        创建 Volcengine（ARK）聊天模型客户端，返回增强版 `ChatVolcengine`。
 
     参数说明:
         model (str | None): 模型名称；默认值 `None`。
-            为 `None` 时读取 `DASHSCOPE_CHAT_MODEL`，若仍为空则报错。
+            为 `None` 时读取 `VOLCENGINE_LLM_CHAT_MODEL`，若仍为空则报错。
         api_key (str | None): API 密钥；默认值 `None`。
-            为 `None` 时读取 `load_dotenv` 生效后的环境变量 `DASHSCOPE_API_KEY`。
+            为 `None` 时读取环境变量 `VOLCENGINE_LLM_API_KEY`。
         base_url (str | None): API 基础地址；默认值 `None`。
-            为 `None` 时读取 `DASHSCOPE_BASE_URL`，若未配置则使用默认 DashScope 地址。
+            为 `None` 时读取 `VOLCENGINE_LLM_BASE_URL`，若未配置则使用 ARK 默认地址。
         extra_body (dict[str, Any] | None): 透传扩展参数；默认值 `None`。
-        **kwargs (Any): 其余透传 `ChatQwen` 构造参数。
+        **kwargs (Any): 其余透传 `ChatVolcengine` 构造参数。
 
     返回值:
-        ChatQwen: 千问聊天模型客户端实例。
+        ChatVolcengine: 字节聊天模型客户端实例。
 
     异常说明:
         RuntimeError:
-            - 未提供 `api_key` 且环境变量 `DASHSCOPE_API_KEY` 未设置；
-            - 未传 `model` 且环境变量 `DASHSCOPE_CHAT_MODEL` 未设置。
+            - 未提供 `api_key` 且环境变量 `VOLCENGINE_LLM_API_KEY` 未设置；
+            - 未传 `model` 且环境变量 `VOLCENGINE_LLM_CHAT_MODEL` 未设置。
     """
 
-    key = resolve_llm_value(name="DASHSCOPE_API_KEY", explicit=api_key)
+    key = resolve_llm_value(name="VOLCENGINE_LLM_API_KEY", explicit=api_key)
     if not key:
-        raise RuntimeError("DASHSCOPE_API_KEY is not set")
+        raise RuntimeError("VOLCENGINE_LLM_API_KEY is not set")
 
-    resolved_model = resolve_llm_value(name="DASHSCOPE_CHAT_MODEL", explicit=model)
+    resolved_model = resolve_llm_value(name="VOLCENGINE_LLM_CHAT_MODEL", explicit=model)
     if not resolved_model:
-        raise RuntimeError("DASHSCOPE_CHAT_MODEL is not set")
+        raise RuntimeError("VOLCENGINE_LLM_CHAT_MODEL is not set")
 
     resolved_base_url = resolve_llm_value(
-        name="DASHSCOPE_BASE_URL",
+        name="VOLCENGINE_LLM_BASE_URL",
         explicit=base_url,
-        default=DEFAULT_DASHSCOPE_BASE_URL,
+        default=DEFAULT_VOLCENGINE_BASE_URL,
     )
 
     prepared_kwargs = prepare_chat_client_kwargs(extra_body=extra_body, **kwargs)
 
-    return ChatQwen(
+    return ChatVolcengine(
         model=resolved_model,
         api_key=SecretStr(key),
         base_url=resolved_base_url,
@@ -147,42 +149,42 @@ def create_aliyun_chat_model(
     )
 
 
-def create_aliyun_image_model(
+def create_volcengine_image_model(
         *,
         model: str | None = None,
         api_key: str | None = None,
         base_url: str | None = None,
         extra_body: dict[str, Any] | None = None,
         **kwargs: Any,
-) -> ChatQwen:
+) -> ChatVolcengine:
     """
     功能描述:
-        创建阿里云（DashScope）图像理解模型客户端。
+        创建 Volcengine（ARK）图像理解模型客户端。
 
     参数说明:
         model (str | None): 图像模型名称；默认值 `None`。
-            为 `None` 时读取 `DASHSCOPE_IMAGE_MODEL`，若仍为空则报错。
+            为 `None` 时读取 `VOLCENGINE_LLM_IMAGE_MODEL`，若仍为空则报错。
         api_key (str | None): API 密钥；默认值 `None`。
-            为 `None` 时读取 `load_dotenv` 生效后的环境变量 `DASHSCOPE_API_KEY`。
+            为 `None` 时读取环境变量 `VOLCENGINE_LLM_API_KEY`。
         base_url (str | None): API 基础地址；默认值 `None`。
-            为 `None` 时读取 `DASHSCOPE_BASE_URL`，若未配置则使用默认 DashScope 地址。
+            为 `None` 时读取 `VOLCENGINE_LLM_BASE_URL`，若未配置则使用 ARK 默认地址。
         extra_body (dict[str, Any] | None): 透传扩展参数；默认值 `None`。
         **kwargs (Any): 其余透传模型参数。
 
     返回值:
-        ChatQwen: 图像理解可用的千问模型实例。
+        ChatVolcengine: 图像理解可用的字节模型实例。
 
     异常说明:
         RuntimeError:
-            - 未提供 `api_key` 且环境变量 `DASHSCOPE_API_KEY` 未设置；
-            - 未传 `model` 且环境变量 `DASHSCOPE_IMAGE_MODEL` 未设置。
+            - 未提供 `api_key` 且环境变量 `VOLCENGINE_LLM_API_KEY` 未设置；
+            - 未传 `model` 且环境变量 `VOLCENGINE_LLM_IMAGE_MODEL` 未设置。
     """
 
-    resolved_model = resolve_llm_value(name="DASHSCOPE_IMAGE_MODEL", explicit=model)
+    resolved_model = resolve_llm_value(name="VOLCENGINE_LLM_IMAGE_MODEL", explicit=model)
     if not resolved_model:
-        raise RuntimeError("DASHSCOPE_IMAGE_MODEL is not set")
+        raise RuntimeError("VOLCENGINE_LLM_IMAGE_MODEL is not set")
 
-    return create_aliyun_chat_model(
+    return create_volcengine_chat_model(
         model=resolved_model,
         api_key=api_key,
         base_url=base_url,

@@ -169,7 +169,6 @@ def test_user_tool_agent_builds_expected_tools_and_returns_agent_output(
 
     assert captured["create_chat_model_kwargs"] == {
         "model": "qwen-flash",
-        "provider": user_tool.LlmProvider.ALIYUN,
         "temperature": 0.2,
     }
 

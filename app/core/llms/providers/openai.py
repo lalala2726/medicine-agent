@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-import os
 from typing import Any
 
 from langchain_openai import ChatOpenAI
 from pydantic import SecretStr
+
+from app.core.llms.common import prepare_chat_client_kwargs, resolve_llm_value
 
 DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
 DEFAULT_OPENAI_CHAT_MODEL = "gpt-4o-mini"
@@ -40,29 +41,28 @@ def create_openai_chat_model(
         RuntimeError: 当未提供 `api_key` 且环境变量 `OPENAI_API_KEY` 未设置时抛出。
     """
 
-    key = api_key or os.getenv("OPENAI_API_KEY")
+    key = resolve_llm_value(name="OPENAI_API_KEY", explicit=api_key)
     if not key:
         raise RuntimeError("OPENAI_API_KEY is not set")
 
-    resolved_model = model or os.getenv("OPENAI_CHAT_MODEL", DEFAULT_OPENAI_CHAT_MODEL)
-    resolved_base_url = base_url or os.getenv("OPENAI_BASE_URL", DEFAULT_OPENAI_BASE_URL)
+    resolved_model = resolve_llm_value(
+        name="OPENAI_CHAT_MODEL",
+        explicit=model,
+        default=DEFAULT_OPENAI_CHAT_MODEL,
+    )
+    resolved_base_url = resolve_llm_value(
+        name="OPENAI_BASE_URL",
+        explicit=base_url,
+        default=DEFAULT_OPENAI_BASE_URL,
+    )
 
-    raw_model_kwargs = kwargs.pop("model_kwargs", None)
-    model_kwargs = dict(raw_model_kwargs or {})
-    if model_kwargs:
-        kwargs["model_kwargs"] = model_kwargs
-
-    resolved_extra_body = dict(extra_body or {})
-    if resolved_extra_body:
-        kwargs["extra_body"] = resolved_extra_body
-
-    kwargs.setdefault("stream_usage", True)
+    prepared_kwargs = prepare_chat_client_kwargs(extra_body=extra_body, **kwargs)
 
     return ChatOpenAI(
         model=resolved_model,
         api_key=SecretStr(key),
         base_url=resolved_base_url,
-        **kwargs,
+        **prepared_kwargs,
     )
 
 
@@ -95,7 +95,11 @@ def create_openai_image_model(
         RuntimeError: 当未提供 `api_key` 且环境变量 `OPENAI_API_KEY` 未设置时抛出。
     """
 
-    resolved_model = model or os.getenv("OPENAI_IMAGE_MODEL", DEFAULT_OPENAI_IMAGE_MODEL)
+    resolved_model = resolve_llm_value(
+        name="OPENAI_IMAGE_MODEL",
+        explicit=model,
+        default=DEFAULT_OPENAI_IMAGE_MODEL,
+    )
     return create_openai_chat_model(
         model=resolved_model,
         api_key=api_key,

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from enum import Enum
 
+from app.core.llms.common import resolve_llm_value
+
 
 class LlmProvider(str, Enum):
     """
@@ -21,6 +23,7 @@ class LlmProvider(str, Enum):
 
     OPENAI = "openai"
     ALIYUN = "aliyun"
+    VOLCENGINE = "volcengine"
 
 
 def normalize_provider(provider: LlmProvider | str) -> LlmProvider:
@@ -32,7 +35,8 @@ def normalize_provider(provider: LlmProvider | str) -> LlmProvider:
     参数说明:
         provider (LlmProvider | str): 厂商标识；
             - 当为 `LlmProvider` 时直接返回；
-            - 当为字符串时按枚举值解析（大小写敏感，使用小写值）。
+            - 当为字符串时按枚举值解析（大小写不敏感）；
+            - 兼容 `LlmProvider.ALIYUN` 这类字符串写法。
 
     返回值:
         LlmProvider: 归一化后的厂商枚举值。
@@ -43,4 +47,44 @@ def normalize_provider(provider: LlmProvider | str) -> LlmProvider:
 
     if isinstance(provider, LlmProvider):
         return provider
-    return LlmProvider(provider)
+
+    raw_provider = str(provider).strip()
+    if not raw_provider:
+        raise ValueError("LLM provider is empty; allowed values: openai, aliyun, volcengine")
+
+    # 兼容字符串写法：`LlmProvider.ALIYUN` / `llmprovider.aliyun`
+    if "." in raw_provider:
+        raw_provider = raw_provider.split(".")[-1]
+    normalized = raw_provider.strip().lower()
+
+    try:
+        return LlmProvider(normalized)
+    except ValueError as exc:
+        raise ValueError(
+            f"Unsupported LLM provider: {provider}; allowed values: openai, aliyun, volcengine"
+        ) from exc
+
+
+def resolve_provider(provider: LlmProvider | str | None = None) -> LlmProvider:
+    """
+    功能描述:
+        解析最终 provider，统一遵循优先级：函数参数 > 环境变量（含 python-dotenv 加载结果） > `openai`。
+
+    参数说明:
+        provider (LlmProvider | str | None): 调用方显式 provider；默认值 `None`。
+
+    返回值:
+        LlmProvider: 归一化后的 provider 枚举值。
+
+    异常说明:
+        ValueError: 当 provider 字符串不在支持范围内时抛出。
+    """
+
+    if provider is not None:
+        return normalize_provider(provider)
+
+    configured_provider = resolve_llm_value(name="LLM_PROVIDER")
+    if configured_provider:
+        return normalize_provider(configured_provider)
+
+    return LlmProvider.OPENAI

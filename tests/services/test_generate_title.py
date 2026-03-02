@@ -4,7 +4,7 @@ from langchain_core.messages import AIMessage, SystemMessage, HumanMessage
 from app.services.admin_assistant_service import generate_title
 
 def test_generate_title_with_valid_input(monkeypatch):
-    """测试目的：验证标题生成主流程包含阿里云 provider 参数；预期结果：返回模型标题且 create_chat_model 收到 provider=ALIYUN。"""
+    """测试目的：验证标题生成主流程模型参数透传正确；预期结果：返回模型标题且 create_chat_model 收到模型名与温度。"""
     mock_llm = MagicMock()
     mock_llm.invoke.return_value = AIMessage(content="感冒灵销量查询")
 
@@ -20,8 +20,8 @@ def test_generate_title_with_valid_input(monkeypatch):
     title = generate_title("帮我查查感冒灵卖了多少")
 
     assert title == "感冒灵销量查询"
-    # 验证模型参数
-    assert captured_kwargs["provider"].value == "aliyun"
+    assert captured_kwargs["model"] == "qwen-flash"
+    assert captured_kwargs["temperature"] == 0.3
     mock_llm.invoke.assert_called_once()
     messages = mock_llm.invoke.call_args[0][0]
     assert isinstance(messages[0], SystemMessage)

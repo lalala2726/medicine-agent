@@ -96,14 +96,16 @@ def _resolve_content_from_messages(messages: list[Any]) -> tuple[str, Any]:
 
 def _extract_reasoning_content_from_chunk(message_chunk: Any) -> str:
     """
-    从 LangChain 流式消息分片中提取思考文本。
+    从 LangChain 流式消息分片中提取思考文本（阿里云/火山引擎）。
 
-    兼容多种来源：
+    仅兼容当前主链路真实使用的 `reasoning_content` 字段来源：
     1. 原生属性 `message_chunk.reasoning_content`；
-    2. LangChain 封装位置 `message_chunk.additional_kwargs["reasoning_content"]`；
-    3. Qwen 深度思考模式 `message_chunk.additional_kwargs["reasoning"]["reasoning"]`；
-    4. Qwen 深度思考模式 `message_chunk.additional_kwargs["reasoning"]["summary"]`；
-    5. content 列表中的 reasoning/thinking 类型块（Qwen 流式响应）。
+    2. LangChain 封装位置 `message_chunk.additional_kwargs["reasoning_content"]`。
+
+    处理规则：
+    1. 自动忽略空字符串；
+    2. 两个来源文本相同则去重，避免重复透传；
+    3. 保留原有顺序后拼接返回。
 
     Args:
         message_chunk: 流式消息分片对象（通常为 AIMessageChunk）。
@@ -114,55 +116,31 @@ def _extract_reasoning_content_from_chunk(message_chunk: Any) -> str:
 
     parts: list[str] = []
 
-    # 1. 直接属性 reasoning_content
-    reasoning_content = getattr(message_chunk, "reasoning_content", None)
-    if reasoning_content is not None:
-        parts.append(str(reasoning_content))
+    def _append_part(raw_value: Any) -> None:
+        """
+        追加单段思考文本（去空、去重）。
 
-    # 2. additional_kwargs 中的 reasoning_content
+        Args:
+            raw_value: 待追加的原始字段值。
+
+        Returns:
+            None
+        """
+
+        if not isinstance(raw_value, str):
+            return
+        text = raw_value.strip()
+        if not text:
+            return
+        if text in parts:
+            return
+        parts.append(text)
+
+    _append_part(getattr(message_chunk, "reasoning_content", None))
+
     additional_kwargs = getattr(message_chunk, "additional_kwargs", None)
     if isinstance(additional_kwargs, Mapping):
-        reasoning_content = additional_kwargs.get("reasoning_content")
-        if reasoning_content is not None:
-            parts.append(str(reasoning_content))
-
-        # 3. Qwen 深度思考模式: additional_kwargs["reasoning"]["reasoning"]
-        reasoning_payload = additional_kwargs.get("reasoning")
-        if isinstance(reasoning_payload, Mapping):
-            reasoning_text = reasoning_payload.get("reasoning")
-            if isinstance(reasoning_text, str) and reasoning_text:
-                parts.append(reasoning_text)
-            # 4. Qwen 深度思考模式: additional_kwargs["reasoning"]["summary"]
-            summary = reasoning_payload.get("summary")
-            if isinstance(summary, list):
-                for item in summary:
-                    if isinstance(item, Mapping):
-                        text = item.get("text")
-                        if isinstance(text, str) and text:
-                            parts.append(text)
-
-    # 5. content 列表中的 reasoning/thinking 类型块
-    content = getattr(message_chunk, "content", None)
-    if isinstance(content, list):
-        for block in content:
-            if not isinstance(block, Mapping):
-                continue
-            block_type = str(block.get("type") or "")
-            if block_type not in {"reasoning", "thinking", "reasoning_content"}:
-                continue
-            text = block.get("text")
-            if isinstance(text, str) and text:
-                parts.append(text)
-            reasoning_text = block.get("reasoning")
-            if isinstance(reasoning_text, str) and reasoning_text:
-                parts.append(reasoning_text)
-            summary = block.get("summary")
-            if isinstance(summary, list):
-                for item in summary:
-                    if isinstance(item, Mapping):
-                        summary_text = item.get("text")
-                        if isinstance(summary_text, str) and summary_text:
-                            parts.append(summary_text)
+        _append_part(additional_kwargs.get("reasoning_content"))
 
     return "".join(parts)
 

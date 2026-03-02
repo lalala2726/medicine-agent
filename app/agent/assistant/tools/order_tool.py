@@ -15,7 +15,7 @@ from app.agent.assistant.tools.schemas.order import (
 from app.core.agent.agent_runtime import agent_invoke
 from app.core.agent.agent_tool_events import tool_call_status
 from app.core.langsmith import traceable
-from app.core.llms import LlmProvider, create_chat_model
+from app.core.llms import create_chat_model
 from app.schemas.http_response import HttpResponse
 from app.utils.http_client import HttpClient
 from app.utils.prompt_utils import load_prompt
@@ -160,7 +160,6 @@ _ORDER_SYSTEM_PROMPT = load_prompt("assistant/order_system_prompt.md")
 def order_tool_agent(task_description: str) -> str:
     llm = create_chat_model(
         model="qwen-flash",
-        provider=LlmProvider.ALIYUN,
         temperature=0.2,
     )
     agent = create_agent(

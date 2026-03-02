@@ -1,13 +1,19 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from langchain_core.messages import AIMessageChunk
+from langchain_core.outputs import ChatGenerationChunk
 
 import app.core.llms.chat_factory as chat_factory
+import app.core.llms.common as llm_common_module
 import app.core.llms.embedding_factory as embedding_factory
+import app.core.llms.provider as provider_module
 import app.core.llms.providers.aliyun as aliyun_provider
 import app.core.llms.providers.openai as openai_provider
+import app.core.llms.providers.volcengine as volcengine_provider
 from app.core.llms.provider import LlmProvider
 
 
@@ -44,6 +50,27 @@ class _FakeChatClient:
         self.kwargs = kwargs
 
 
+@pytest.fixture(autouse=True)
+def _isolate_llm_env_loading(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    功能描述:
+        隔离 LLM 配置测试环境，禁止真实 `load_dotenv` 读取本地文件，
+        并在每个用例开始前重置加载状态，避免开发机环境干扰断言。
+
+    参数说明:
+        monkeypatch (pytest.MonkeyPatch): pytest monkeypatch 工具实例。
+
+    返回值:
+        None
+
+    异常说明:
+        无。
+    """
+
+    monkeypatch.setattr(llm_common_module, "_LLM_ENV_LOADED", False)
+    monkeypatch.setattr(llm_common_module, "load_dotenv", lambda **_kwargs: False)
+
+
 def test_create_chat_model_routes_to_openai_provider(monkeypatch: pytest.MonkeyPatch) -> None:
     """测试目的：验证 create_chat_model 在 OPENAI provider 下路由到 OpenAI 工厂；预期结果：返回 OpenAI 工厂产物且参数原样透传。"""
 
@@ -60,6 +87,7 @@ def test_create_chat_model_routes_to_openai_provider(monkeypatch: pytest.MonkeyP
         provider=LlmProvider.OPENAI,
         extra_body={"response_format": {"type": "json_object"}},
         temperature=0.2,
+        think=True,
     )
 
     assert result == "openai-model"
@@ -68,8 +96,62 @@ def test_create_chat_model_routes_to_openai_provider(monkeypatch: pytest.MonkeyP
     assert captured["temperature"] == 0.2
 
 
-def test_create_chat_model_routes_to_aliyun_provider(monkeypatch: pytest.MonkeyPatch) -> None:
-    """测试目的：验证 create_chat_model 在 ALIYUN provider 下路由到阿里云工厂；预期结果：返回阿里云工厂产物且参数原样透传。"""
+def test_create_chat_model_uses_env_provider_when_provider_is_none(
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """测试目的：验证未显式传 provider 时可从环境配置读取默认 provider；预期结果：`LLM_PROVIDER=aliyun` 时路由到阿里云工厂。"""
+
+    monkeypatch.setattr(provider_module, "resolve_llm_value", lambda **_kwargs: "aliyun")
+    monkeypatch.setattr(chat_factory, "create_aliyun_chat_model", lambda **_kwargs: "aliyun-model")
+
+    result = chat_factory.create_chat_model(model="qwen-test")
+
+    assert result == "aliyun-model"
+
+
+def test_create_chat_model_defaults_to_openai_when_provider_missing(
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """测试目的：验证未显式传 provider 且环境未配置时默认走 openai；预期结果：路由到 OpenAI 工厂。"""
+
+    monkeypatch.setattr(provider_module, "resolve_llm_value", lambda **_kwargs: None)
+    monkeypatch.setattr(chat_factory, "create_openai_chat_model", lambda **_kwargs: "openai-model")
+
+    result = chat_factory.create_chat_model(model="gpt-test")
+
+    assert result == "openai-model"
+
+
+def test_create_chat_model_explicit_provider_overrides_env_provider(
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """测试目的：验证显式 provider 优先级高于环境配置；预期结果：显式 `openai` 覆盖环境 `aliyun`。"""
+
+    monkeypatch.setattr(provider_module, "resolve_llm_value", lambda **_kwargs: "aliyun")
+    monkeypatch.setattr(chat_factory, "create_openai_chat_model", lambda **_kwargs: "openai-model")
+
+    result = chat_factory.create_chat_model(provider=LlmProvider.OPENAI, model="gpt-test")
+
+    assert result == "openai-model"
+
+
+def test_create_chat_model_accepts_enum_style_provider_from_env(
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """测试目的：验证 `LLM_PROVIDER=LlmProvider.ALIYUN` 可被正确解析；预期结果：未显式传 provider 时路由到阿里云工厂。"""
+
+    monkeypatch.setattr(provider_module, "resolve_llm_value", lambda **_kwargs: "LlmProvider.ALIYUN")
+    monkeypatch.setattr(chat_factory, "create_aliyun_chat_model", lambda **_kwargs: "aliyun-model")
+
+    result = chat_factory.create_chat_model(model="qwen-test")
+
+    assert result == "aliyun-model"
+
+
+def test_create_chat_model_routes_to_aliyun_provider_with_think_enabled(
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """测试目的：验证 create_chat_model 在 ALIYUN provider 下开启 think 时注入 enable_thinking；预期结果：extra_body.enable_thinking=True 且保留其他字段。"""
 
     captured: dict[str, Any] = {}
 
@@ -82,14 +164,99 @@ def test_create_chat_model_routes_to_aliyun_provider(monkeypatch: pytest.MonkeyP
     result = chat_factory.create_chat_model(
         model="qwen-test",
         provider=LlmProvider.ALIYUN,
-        extra_body={"enable_thinking": True},
+        extra_body={"response_format": {"type": "json_object"}},
         think=True,
     )
 
     assert result == "aliyun-model"
     assert captured["model"] == "qwen-test"
-    assert captured["extra_body"] == {"enable_thinking": True}
-    assert captured["think"] is True
+    assert captured["extra_body"] == {
+        "response_format": {"type": "json_object"},
+        "enable_thinking": True,
+    }
+
+
+def test_create_chat_model_routes_to_aliyun_provider_with_think_disabled(
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """测试目的：验证 create_chat_model 在 ALIYUN provider 下关闭 think 时移除 enable_thinking；预期结果：extra_body 不包含 enable_thinking。"""
+
+    captured: dict[str, Any] = {}
+
+    def _fake_aliyun_chat_model(**kwargs: Any) -> str:
+        captured.update(kwargs)
+        return "aliyun-model"
+
+    monkeypatch.setattr(chat_factory, "create_aliyun_chat_model", _fake_aliyun_chat_model)
+
+    result = chat_factory.create_chat_model(
+        model="qwen-test",
+        provider=LlmProvider.ALIYUN,
+        extra_body={
+            "enable_thinking": True,
+            "response_format": {"type": "json_object"},
+        },
+        think=False,
+    )
+
+    assert result == "aliyun-model"
+    assert captured["extra_body"] == {"response_format": {"type": "json_object"}}
+
+
+def test_create_chat_model_routes_to_volcengine_provider_with_think_enabled(
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """测试目的：验证 create_chat_model 在 VOLCENGINE provider 下开启 think 时注入 thinking.enabled；预期结果：extra_body.thinking.type=enabled。"""
+
+    captured: dict[str, Any] = {}
+
+    def _fake_volcengine_chat_model(**kwargs: Any) -> str:
+        captured.update(kwargs)
+        return "volcengine-model"
+
+    monkeypatch.setattr(chat_factory, "create_volcengine_chat_model", _fake_volcengine_chat_model)
+
+    result = chat_factory.create_chat_model(
+        model="doubao-test",
+        provider=LlmProvider.VOLCENGINE,
+        extra_body={"response_format": {"type": "json_object"}},
+        think=True,
+        temperature=0.1,
+    )
+
+    assert result == "volcengine-model"
+    assert captured["model"] == "doubao-test"
+    assert captured["temperature"] == 0.1
+    assert captured["extra_body"] == {
+        "response_format": {"type": "json_object"},
+        "thinking": {"type": "enabled"},
+    }
+
+
+def test_create_chat_model_routes_to_volcengine_provider_with_think_disabled(
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """测试目的：验证 create_chat_model 在 VOLCENGINE provider 下关闭 think 时显式注入 thinking.disabled；预期结果：extra_body.thinking.type=disabled。"""
+
+    captured: dict[str, Any] = {}
+
+    def _fake_volcengine_chat_model(**kwargs: Any) -> str:
+        captured.update(kwargs)
+        return "volcengine-model"
+
+    monkeypatch.setattr(chat_factory, "create_volcengine_chat_model", _fake_volcengine_chat_model)
+
+    result = chat_factory.create_chat_model(
+        model="doubao-test",
+        provider=LlmProvider.VOLCENGINE,
+        extra_body={"thinking": {"type": "enabled", "debug": True}},
+        think=False,
+    )
+
+    assert result == "volcengine-model"
+    assert captured["extra_body"] == {
+        "thinking": {"type": "disabled", "debug": True},
+    }
 
 
 def test_create_chat_model_accepts_provider_string(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -102,11 +269,46 @@ def test_create_chat_model_accepts_provider_string(monkeypatch: pytest.MonkeyPat
     assert result == "aliyun-model"
 
 
+def test_create_chat_model_accepts_enum_style_provider_string(monkeypatch: pytest.MonkeyPatch) -> None:
+    """测试目的：验证 create_chat_model 支持 `LlmProvider.ALIYUN` 风格字符串；预期结果：可正确解析并路由。"""
+
+    monkeypatch.setattr(chat_factory, "create_aliyun_chat_model", lambda **_: "aliyun-model")
+
+    result = chat_factory.create_chat_model(provider="LlmProvider.ALIYUN")
+
+    assert result == "aliyun-model"
+
+
 def test_create_chat_model_raises_for_invalid_provider() -> None:
     """测试目的：验证 create_chat_model 对非法 provider 输入报错；预期结果：抛出 ValueError。"""
 
     with pytest.raises(ValueError):
         chat_factory.create_chat_model(provider="unknown")
+
+
+def test_create_image_model_routes_to_volcengine_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    """测试目的：验证 create_image_model 在 VOLCENGINE provider 下正确路由；预期结果：返回字节图像工厂产物且注入 thinking.disabled。"""
+
+    captured: dict[str, Any] = {}
+
+    def _fake_volcengine_image_model(**kwargs: Any) -> str:
+        captured.update(kwargs)
+        return "volcengine-image-model"
+
+    monkeypatch.setattr(chat_factory, "create_volcengine_image_model", _fake_volcengine_image_model)
+
+    result = chat_factory.create_image_model(
+        model="doubao-vision-test",
+        provider=LlmProvider.VOLCENGINE,
+        extra_body={"response_format": {"type": "json_object"}},
+    )
+
+    assert result == "volcengine-image-model"
+    assert captured["model"] == "doubao-vision-test"
+    assert captured["extra_body"] == {
+        "response_format": {"type": "json_object"},
+        "thinking": {"type": "disabled"},
+    }
 
 
 def test_create_openai_chat_model_reads_env_and_enables_stream_usage(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -161,28 +363,257 @@ def test_create_aliyun_chat_model_raises_without_api_key(monkeypatch: pytest.Mon
         aliyun_provider.create_aliyun_chat_model(model="qwen-test")
 
 
-def test_create_image_model_routes_to_aliyun_provider(monkeypatch: pytest.MonkeyPatch) -> None:
-    """测试目的：验证 create_image_model 在 ALIYUN provider 下正确路由；预期结果：返回阿里云图像工厂产物且参数原样透传。"""
+def test_create_aliyun_chat_model_raises_without_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    """测试目的：验证阿里云聊天工厂在未显式传模型且环境无默认模型时失败；预期结果：抛出 RuntimeError。"""
 
-    captured: dict[str, Any] = {}
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "dashscope-key")
+    monkeypatch.delenv("DASHSCOPE_CHAT_MODEL", raising=False)
 
-    def _fake_aliyun_image_model(**kwargs: Any) -> str:
-        captured.update(kwargs)
-        return "aliyun-image-model"
+    with pytest.raises(RuntimeError, match="DASHSCOPE_CHAT_MODEL is not set"):
+        aliyun_provider.create_aliyun_chat_model()
 
-    monkeypatch.setattr(chat_factory, "create_aliyun_image_model", _fake_aliyun_image_model)
 
-    result = chat_factory.create_image_model(
-        model="qwen3-vl-plus",
-        provider=LlmProvider.ALIYUN,
+def test_create_aliyun_image_model_raises_without_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    """测试目的：验证阿里云图像工厂在未显式传模型且环境无默认模型时失败；预期结果：抛出 RuntimeError。"""
+
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "dashscope-key")
+    monkeypatch.delenv("DASHSCOPE_IMAGE_MODEL", raising=False)
+
+    with pytest.raises(RuntimeError, match="DASHSCOPE_IMAGE_MODEL is not set"):
+        aliyun_provider.create_aliyun_image_model()
+
+
+def test_create_volcengine_chat_model_reads_env_and_enables_stream_usage(
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """测试目的：验证字节聊天工厂读取 VOLCENGINE_LLM 环境变量并默认启用 stream_usage；预期结果：构造参数包含环境值且 `stream_usage=True`。"""
+
+    monkeypatch.setenv("VOLCENGINE_LLM_API_KEY", "volc-key")
+    monkeypatch.setenv("VOLCENGINE_LLM_CHAT_MODEL", "doubao-chat-env")
+    monkeypatch.setenv("VOLCENGINE_LLM_BASE_URL", "https://volc.example.com/api/v3")
+    monkeypatch.setattr(volcengine_provider, "ChatVolcengine", _FakeChatClient)
+
+    model = volcengine_provider.create_volcengine_chat_model(
+        extra_body={"thinking": {"type": "enabled"}},
+    )
+
+    assert isinstance(model, _FakeChatClient)
+    assert model.kwargs["model"] == "doubao-chat-env"
+    assert model.kwargs["base_url"] == "https://volc.example.com/api/v3"
+    assert model.kwargs["extra_body"] == {"thinking": {"type": "enabled"}}
+    assert model.kwargs["stream_usage"] is True
+
+
+def test_create_volcengine_chat_model_raises_without_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """测试目的：验证字节聊天工厂在缺少 API Key 时失败；预期结果：抛出 RuntimeError。"""
+
+    monkeypatch.delenv("VOLCENGINE_LLM_API_KEY", raising=False)
+
+    with pytest.raises(RuntimeError, match="VOLCENGINE_LLM_API_KEY is not set"):
+        volcengine_provider.create_volcengine_chat_model(model="doubao-chat")
+
+
+def test_create_volcengine_chat_model_raises_when_model_not_provided(monkeypatch: pytest.MonkeyPatch) -> None:
+    """测试目的：验证字节聊天工厂在未传模型且环境无默认模型时失败；预期结果：抛出 RuntimeError。"""
+
+    monkeypatch.setenv("VOLCENGINE_LLM_API_KEY", "volc-key")
+    monkeypatch.delenv("VOLCENGINE_LLM_CHAT_MODEL", raising=False)
+
+    with pytest.raises(RuntimeError, match="VOLCENGINE_LLM_CHAT_MODEL is not set"):
+        volcengine_provider.create_volcengine_chat_model()
+
+
+def test_create_volcengine_image_model_raises_when_model_not_provided(monkeypatch: pytest.MonkeyPatch) -> None:
+    """测试目的：验证字节图像工厂在未传模型且环境无默认模型时失败；预期结果：抛出 RuntimeError。"""
+
+    monkeypatch.setenv("VOLCENGINE_LLM_API_KEY", "volc-key")
+    monkeypatch.delenv("VOLCENGINE_LLM_IMAGE_MODEL", raising=False)
+
+    with pytest.raises(RuntimeError, match="VOLCENGINE_LLM_IMAGE_MODEL is not set"):
+        volcengine_provider.create_volcengine_image_model()
+
+
+def test_create_volcengine_image_model_reads_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """测试目的：验证字节图像工厂在环境提供默认模型时可正常创建；预期结果：返回模型实例并使用 `VOLCENGINE_LLM_IMAGE_MODEL`。"""
+
+    monkeypatch.setenv("VOLCENGINE_LLM_API_KEY", "volc-key")
+    monkeypatch.setenv("VOLCENGINE_LLM_IMAGE_MODEL", "doubao-image-env")
+    monkeypatch.setenv("VOLCENGINE_LLM_BASE_URL", "https://volc.example.com/api/v3")
+    monkeypatch.setattr(volcengine_provider, "ChatVolcengine", _FakeChatClient)
+
+    model = volcengine_provider.create_volcengine_image_model(extra_body={"thinking": {"type": "disabled"}})
+
+    assert isinstance(model, _FakeChatClient)
+    assert model.kwargs["model"] == "doubao-image-env"
+    assert model.kwargs["base_url"] == "https://volc.example.com/api/v3"
+    assert model.kwargs["extra_body"] == {"thinking": {"type": "disabled"}}
+
+
+def test_thinking_resolver_keeps_openai_extra_body() -> None:
+    """测试目的：验证 think 归一化在 OPENAI provider 下不注入特殊字段；预期结果：仅保留原 extra_body。"""
+
+    extra = llm_common_module.resolve_provider_extra_body(
+        provider=LlmProvider.OPENAI,
         extra_body={"response_format": {"type": "json_object"}},
         think=True,
     )
 
-    assert result == "aliyun-image-model"
-    assert captured["model"] == "qwen3-vl-plus"
-    assert captured["extra_body"] == {"response_format": {"type": "json_object"}}
-    assert captured["think"] is True
+    assert extra == {"response_format": {"type": "json_object"}}
+
+
+def test_thinking_resolver_applies_aliyun_rules() -> None:
+    """测试目的：验证 think 归一化在 ALIYUN provider 下的开启/关闭规则；预期结果：开启注入 enable_thinking，关闭移除该字段。"""
+
+    enabled = llm_common_module.resolve_provider_extra_body(
+        provider=LlmProvider.ALIYUN,
+        extra_body={"response_format": {"type": "json_object"}},
+        think=True,
+    )
+    disabled = llm_common_module.resolve_provider_extra_body(
+        provider=LlmProvider.ALIYUN,
+        extra_body={"enable_thinking": True, "response_format": {"type": "json_object"}},
+        think=False,
+    )
+
+    assert enabled == {
+        "response_format": {"type": "json_object"},
+        "enable_thinking": True,
+    }
+    assert disabled == {"response_format": {"type": "json_object"}}
+
+
+def test_thinking_resolver_applies_volcengine_rules() -> None:
+    """测试目的：验证 think 归一化在 VOLCENGINE provider 下的开启/关闭规则；预期结果：分别注入 thinking.enabled 与 thinking.disabled 并保留非思考字段。"""
+
+    enabled = llm_common_module.resolve_provider_extra_body(
+        provider=LlmProvider.VOLCENGINE,
+        extra_body={"response_format": {"type": "json_object"}},
+        think=True,
+    )
+    disabled = llm_common_module.resolve_provider_extra_body(
+        provider=LlmProvider.VOLCENGINE,
+        extra_body={"response_format": {"type": "json_object"}},
+        think=False,
+    )
+
+    assert enabled == {
+        "response_format": {"type": "json_object"},
+        "thinking": {"type": "enabled"},
+    }
+    assert disabled == {
+        "response_format": {"type": "json_object"},
+        "thinking": {"type": "disabled"},
+    }
+
+
+def test_thinking_resolver_returns_none_when_empty() -> None:
+    """测试目的：验证 think 归一化在无有效字段时返回 None；预期结果：`None`。"""
+
+    result = llm_common_module.resolve_provider_extra_body(
+        provider=LlmProvider.ALIYUN,
+        extra_body={"enable_thinking": True},
+        think=False,
+    )
+
+    assert result is None
+
+
+def test_resolve_llm_value_priority_explicit_over_env_and_default(
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """测试目的：验证配置优先级中显式参数最高；预期结果：同键同时存在时返回 explicit 值。"""
+
+    monkeypatch.setenv("LLM_TEST_KEY", "env-value")
+
+    resolved = llm_common_module.resolve_llm_value(
+        name="LLM_TEST_KEY",
+        explicit="explicit-value",
+        default="default-value",
+    )
+
+    assert resolved == "explicit-value"
+
+
+def test_resolve_llm_value_priority_env_over_default(
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """测试目的：验证配置优先级中环境变量高于默认值；预期结果：explicit 缺失时返回 env 值。"""
+
+    monkeypatch.setenv("LLM_TEST_KEY", "env-value")
+
+    resolved = llm_common_module.resolve_llm_value(
+        name="LLM_TEST_KEY",
+        explicit=None,
+        default="default-value",
+    )
+
+    assert resolved == "env-value"
+
+
+def test_resolve_llm_value_returns_default_when_missing(
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """测试目的：验证配置缺失时返回默认值；预期结果：未提供 explicit 且环境无值时返回 default。"""
+
+    monkeypatch.delenv("LLM_TEST_KEY", raising=False)
+
+    resolved = llm_common_module.resolve_llm_value(
+        name="LLM_TEST_KEY",
+        explicit=None,
+        default="default-value",
+    )
+
+    assert resolved == "default-value"
+
+
+def test_chat_volcengine_streaming_injects_reasoning_content(monkeypatch: pytest.MonkeyPatch) -> None:
+    """测试目的：验证 ChatVolcengine 流式片段会注入 reasoning_content；预期结果：返回 chunk.message.additional_kwargs 包含 reasoning_content。"""
+
+    def _fake_super_convert(_self, _chunk, _default_chunk_class, _base_generation_info):
+        return ChatGenerationChunk(
+            message=AIMessageChunk(content=""),
+            text="",
+        )
+
+    monkeypatch.setattr(
+        volcengine_provider.ChatOpenAI,
+        "_convert_chunk_to_generation_chunk",
+        _fake_super_convert,
+    )
+
+    model = volcengine_provider.ChatVolcengine.model_construct()
+    result = model._convert_chunk_to_generation_chunk(
+        chunk={"choices": [{"delta": {"reasoning_content": "思考分片"}}]},
+        default_chunk_class=AIMessageChunk,
+        base_generation_info=None,
+    )
+
+    assert result is not None
+    assert result.message.additional_kwargs["reasoning_content"] == "思考分片"
+
+
+def test_chat_volcengine_non_streaming_injects_reasoning_content(monkeypatch: pytest.MonkeyPatch) -> None:
+    """测试目的：验证 ChatVolcengine 非流式结果会注入 reasoning_content；预期结果：result.generations[0].message.additional_kwargs 包含 reasoning_content。"""
+
+    def _fake_super_create_result(_self, _response, _generation_info=None):
+        return SimpleNamespace(
+            generations=[SimpleNamespace(message=AIMessageChunk(content=""))],
+        )
+
+    monkeypatch.setattr(
+        volcengine_provider.ChatOpenAI,
+        "_create_chat_result",
+        _fake_super_create_result,
+    )
+
+    response = SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(reasoning_content="思考正文"))],
+    )
+
+    model = volcengine_provider.ChatVolcengine.model_construct()
+    result = model._create_chat_result(response)
+
+    assert result.generations[0].message.additional_kwargs["reasoning_content"] == "思考正文"
 
 
 def test_create_embedding_model_validates_dimensions_and_api_key(monkeypatch: pytest.MonkeyPatch) -> None:

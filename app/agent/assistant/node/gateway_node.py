@@ -11,7 +11,7 @@ from app.core.agent.agent_runtime import agent_invoke
 from app.core.agent.agent_tool_trace import record_agent_trace
 from app.core.agent.base_prompt_middleware import BasePromptMiddleware
 from app.core.langsmith import traceable
-from app.core.llms import LlmProvider, create_chat_model
+from app.core.llms import create_chat_model
 from app.services.token_usage_service import append_trace_and_refresh_token_usage
 from app.utils.prompt_utils import load_prompt
 
@@ -22,9 +22,9 @@ _GATEWAY_PROMPT = load_prompt("assistant/gateway_prompt.md")
 def gateway_router(state: AgentState) -> dict[str, Any]:
     llm = create_chat_model(
         model="qwen-flash",
-        provider=LlmProvider.ALIYUN,
         temperature=0.0,
         extra_body={"response_format": {"type": "json_object"}},
+        think=False,
     )
     agent = create_agent(
         model=llm,

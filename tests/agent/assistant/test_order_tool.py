@@ -157,7 +157,6 @@ def test_order_tool_agent_builds_expected_tools_and_returns_agent_output(
 
     assert captured["create_chat_model_kwargs"] == {
         "model": "qwen-flash",
-        "provider": order_tool.LlmProvider.ALIYUN,
         "temperature": 0.2,
     }
 

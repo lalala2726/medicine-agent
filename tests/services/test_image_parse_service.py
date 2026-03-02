@@ -38,7 +38,6 @@ def test_parse_drug_images_normalizes_and_parses(monkeypatch):
 
     assert result == {"ok": True}
     assert kwargs_capture["model"] == "qwen3-vl-plus"
-    assert kwargs_capture["provider"] == image_parse_service.LlmProvider.ALIYUN
     assert kwargs_capture["extra_body"]["response_format"] == {"type": "json_object"}
 
     messages = capture["messages"]

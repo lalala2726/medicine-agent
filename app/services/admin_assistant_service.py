@@ -19,7 +19,7 @@ from app.core.agent.agent_orchestrator import (
 from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException
 from app.core.langsmith import build_langsmith_runnable_config
-from app.core.llms import LlmProvider, create_chat_model
+from app.core.llms import create_chat_model
 from app.core.speech import build_message_tts_stream
 from app.core.security.auth_context import get_user_id
 from app.schemas.admin_assistant_history import ConversationMessageResponse
@@ -824,7 +824,6 @@ def generate_title(question: str) -> str:
 
     llm_model = create_chat_model(
         model="qwen-flash",
-        provider=LlmProvider.ALIYUN,
         temperature=0.3
     )
     messages = [

@@ -127,7 +127,6 @@ def test_after_sale_tool_agent_builds_expected_tools_and_returns_agent_output(
 
     assert captured["create_chat_model_kwargs"] == {
         "model": "qwen-flash",
-        "provider": after_sale_tool.LlmProvider.ALIYUN,
         "temperature": 0.2,
     }
 

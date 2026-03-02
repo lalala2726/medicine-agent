@@ -184,3 +184,37 @@ def test_agent_stream_emits_thinking_from_additional_kwargs_reasoning_content():
     assert model_deltas == ["答案分片"]
     assert result["streamed_thinking"] == "思考-扩展字段"
     assert result["streamed_text"] == "答案分片"
+
+
+def test_agent_stream_deduplicates_reasoning_content_between_two_sources():
+    """测试目的：验证 reasoning_content 在属性与 additional_kwargs 同时出现时不会重复透传；预期结果：thinking 仅收到一次该分片。"""
+
+    model_deltas: list[str] = []
+    thinking_deltas: list[str] = []
+    events = [
+        (
+            "messages",
+            (
+                _FakeChunk(
+                    reasoning_content="思考去重分片",
+                    additional_kwargs={"reasoning_content": "思考去重分片"},
+                ),
+                {"langgraph_node": "model"},
+            ),
+        ),
+        ("messages", (_FakeChunk(content="答案分片"), {"langgraph_node": "model"})),
+        ("values", {"messages": [AIMessage(content="最终答案")]}),
+    ]
+    agent = _FakeStreamAgent(events)
+
+    result = agent_stream(
+        agent,
+        [HumanMessage(content="用户问题")],
+        on_model_delta=model_deltas.append,
+        on_thinking_delta=thinking_deltas.append,
+    )
+
+    assert thinking_deltas == ["思考去重分片"]
+    assert model_deltas == ["答案分片"]
+    assert result["streamed_thinking"] == "思考去重分片"
+    assert result["streamed_text"] == "答案分片"
