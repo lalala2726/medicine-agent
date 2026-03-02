@@ -9,11 +9,13 @@ from pydantic import Field
 
 from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException
+from app.core.llms.provider import LlmProvider, resolve_provider
 from app.core.mongodb import DEFAULT_MESSAGE_TRACES_COLLECTION, get_mongo_database
 from app.schemas.document.message_trace import (
     ExecutionTraceItem,
     MessageTraceCreate,
     MessageTraceDocument,
+    MessageTraceProvider,
     MessageTraceTokenDetail,
 )
 
@@ -79,10 +81,36 @@ def _normalize_token_usage_detail(
         return None
 
 
+def _resolve_message_trace_provider(
+        provider: MessageTraceProvider | LlmProvider | str | None = None,
+) -> MessageTraceProvider:
+    """
+    功能描述:
+        解析 message_trace 落库时使用的模型厂家，统一遵循
+        “显式参数 > 环境配置（LLM_PROVIDER）> openai” 的规则。
+
+    参数说明:
+        provider (MessageTraceProvider | LlmProvider | str | None):
+            调用方显式传入的厂家；默认值 `None`。
+            支持 `openai/aliyun/volcengine` 及 `LlmProvider.ALIYUN` 风格字符串。
+
+    返回值:
+        MessageTraceProvider: 归一化后的厂家枚举值。
+
+    异常说明:
+        ValueError:
+            当 provider 取值不在支持范围时，由 `resolve_provider` 抛出。
+    """
+
+    resolved = resolve_provider(provider)
+    return MessageTraceProvider(resolved.value)
+
+
 def add_message_trace(
         *,
         message_uuid: Annotated[str, Field(min_length=1)],
         conversation_id: Annotated[str, Field(min_length=1)],
+        provider: MessageTraceProvider | LlmProvider | str | None = None,
         execution_trace: list[ExecutionTraceItem | dict[str, Any]] | None = None,
         token_usage_detail: MessageTraceTokenDetail | dict[str, Any] | None = None,
 ) -> str | None:
@@ -100,9 +128,11 @@ def add_message_trace(
     if normalized_execution_trace is None and normalized_token_usage_detail is None:
         return None
 
+    normalized_provider = _resolve_message_trace_provider(provider)
     payload = MessageTraceCreate(
         message_uuid=message_uuid,
         conversation_id=conversation_id,
+        provider=normalized_provider,
         execution_trace=normalized_execution_trace,
         token_usage_detail=normalized_token_usage_detail,
     )

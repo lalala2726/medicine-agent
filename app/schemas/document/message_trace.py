@@ -1,10 +1,19 @@
 from __future__ import annotations
 
 from datetime import datetime
+from enum import Enum
 from typing import Any
 
 from bson import ObjectId
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+class MessageTraceProvider(str, Enum):
+    """消息追踪使用的模型厂家。"""
+
+    OPENAI = "openai"
+    ALIYUN = "aliyun"
+    VOLCENGINE = "volcengine"
 
 
 class TokenCounter(BaseModel):
@@ -75,6 +84,7 @@ class MessageTraceCreate(BaseModel):
 
     message_uuid: str = Field(..., min_length=1, description="消息 UUID")
     conversation_id: str = Field(..., min_length=1, description="所属会话 ID")
+    provider: MessageTraceProvider = Field(..., description="模型厂家")
     execution_trace: list[ExecutionTraceItem] | None = Field(default=None, description="节点执行追踪")
     token_usage_detail: MessageTraceTokenDetail | None = Field(default=None, description="token 明细")
 
@@ -87,6 +97,7 @@ class MessageTraceDocument(BaseModel):
     id: str | None = Field(default=None, alias="_id", description="MongoDB 主键")
     message_uuid: str = Field(..., description="消息 UUID")
     conversation_id: str = Field(..., description="所属会话 ID")
+    provider: MessageTraceProvider = Field(..., description="模型厂家")
     execution_trace: list[ExecutionTraceItem] | None = Field(default=None, description="节点执行追踪")
     token_usage_detail: MessageTraceTokenDetail | None = Field(default=None, description="token 明细")
     created_at: datetime = Field(..., description="创建时间")
