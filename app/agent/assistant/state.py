@@ -24,41 +24,33 @@ class ToolCallTraceState(TypedDict, total=False):
 
     # 工具名称。
     tool_name: str
-    # 工具输入参数（仅保留输入，不保留输出）。
+    # 工具调用 ID。
+    tool_call_id: str | None
+    # 工具输入参数。
     tool_input: Any
-    # 是否调用失败。
-    is_error: bool
-    # 失败信息。
-    error_message: str | None
-    # 工具内部是否触发了 LLM。
-    llm_used: bool
-    # 工具内部 LLM usage 是否完整。
-    llm_usage_complete: bool
-    # 工具内部 LLM token 使用量。
-    llm_token_usage: TokenCounterState | None
-    # 子工具调用轨迹。
-    children: list["ToolCallTraceState"]
 
 
 class ExecutionTraceState(TypedDict, total=False):
     """单个节点执行追踪结构。"""
 
+    # 节点执行顺序（从 1 开始）。
+    sequence: int
     # 节点名称（如 gateway_router/chat_agent/order_agent/adaptive_agent）。
     node_name: str
     # 节点调用的模型名称。
     model_name: str
-    # 节点输入消息（序列化后结构）。
-    input_messages: list[Any]
+    # 节点状态（success/error）。
+    status: str
     # 节点输出文本。
     output_text: str
-    # 节点是否触发了 LLM。
-    llm_used: bool
     # 节点 LLM usage 是否完整。
     llm_usage_complete: bool
     # 节点自身 LLM token 使用量。
     llm_token_usage: TokenCounterState | None
     # 节点下发生的工具调用轨迹。
     tool_calls: list[ToolCallTraceState]
+    # 节点扩展上下文（路由结果等）。
+    node_context: dict[str, Any] | None
 
 
 class NodeTokenBreakdownState(TypedDict):

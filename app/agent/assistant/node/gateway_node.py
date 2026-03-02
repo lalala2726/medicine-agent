@@ -235,18 +235,24 @@ def gateway_router(state: AgentState) -> dict[str, Any]:
         input_messages=history_messages,
         fallback_text=result.content,
     )
+    current_execution_traces = list(state.get("execution_traces") or [])
 
     trace_item = ExecutionTraceState(
+        sequence=len(current_execution_traces) + 1,
         node_name="gateway_router",
         model_name=gateway_model_name or str(trace.get("model_name") or "unknown"),
+        status="success",
         output_text=str(trace.get("text") or ""),
-        llm_used=True,
         llm_usage_complete=bool(trace.get("is_usage_complete", False)),
         llm_token_usage=trace.get("usage"),
         tool_calls=[],
+        node_context={
+            "route_targets": list(routing.get("route_targets") or []),
+            "task_difficulty": routing.get("task_difficulty"),
+        },
     )
     execution_traces, token_usage = append_trace_and_refresh_token_usage(
-        state.get("execution_traces"),
+        current_execution_traces,
         trace_item,
     )
     return {

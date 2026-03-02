@@ -286,25 +286,29 @@ def resolve_persistable_token_usage(
     }
 
 
-def resolve_persistable_token_usage_detail(
+def resolve_persistable_trace_token_usage(
         state_token_usage: Mapping[str, Any] | None,
         execution_traces: Sequence[Mapping[str, Any]] | None,
 ) -> dict[str, Any] | None:
     """
-    生成可持久化的 token 明细（用于 message_trace）。
+    功能描述：
+        生成可持久化的 trace token 汇总（用于 message_trace）。
+        优先使用 state 中已有 token_usage，缺失时基于 execution_traces 兜底重建。
 
-    规则：
-    1. 优先使用 state 中已有的 `token_usage`；
-    2. 若 state 缺失或非法，则基于 `execution_traces` 兜底重建。
+    参数说明：
+        state_token_usage (Mapping[str, Any] | None):
+            state 中缓存的消息级 token_usage。
+        execution_traces (Sequence[Mapping[str, Any]] | None):
+            state 中累计的 execution_traces（用于兜底重建）。
 
-    Args:
-        state_token_usage: state 中缓存的消息级 token_usage。
-        execution_traces: state 中累计的 execution_traces（用于兜底重建）。
-
-    Returns:
+    返回值：
         dict[str, Any] | None:
-            可直接传给 `add_message_trace(..., token_usage_detail=...)` 的结构，
-            仅包含 `is_complete/node_breakdown`。
+            可直接传给 `add_message_trace(..., token_usage=...)` 的结构，
+            包含 `prompt_tokens/completion_tokens/total_tokens/is_complete`；
+            无有效 usage 时返回 `None`。
+
+    异常说明：
+        无。
     """
 
     normalized_state_usage = (
@@ -314,16 +318,20 @@ def resolve_persistable_token_usage_detail(
     )
     if normalized_state_usage is not None:
         return {
+            "prompt_tokens": normalized_state_usage["prompt_tokens"],
+            "completion_tokens": normalized_state_usage["completion_tokens"],
+            "total_tokens": normalized_state_usage["total_tokens"],
             "is_complete": normalized_state_usage["is_complete"],
-            "node_breakdown": normalized_state_usage["node_breakdown"],
         }
 
     rebuilt = build_token_usage_from_execution_traces(execution_traces)
     if rebuilt is None:
         return None
     return {
+        "prompt_tokens": rebuilt["prompt_tokens"],
+        "completion_tokens": rebuilt["completion_tokens"],
+        "total_tokens": rebuilt["total_tokens"],
         "is_complete": rebuilt["is_complete"],
-        "node_breakdown": rebuilt["node_breakdown"],
     }
 
 

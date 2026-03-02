@@ -39,7 +39,7 @@ from app.services.message_service import add_message, list_messages
 from app.services.message_trace_service import add_message_trace
 from app.services.token_usage_service import (
     resolve_persistable_token_usage,
-    resolve_persistable_token_usage_detail,
+    resolve_persistable_trace_token_usage,
 )
 from app.utils.prompt_utils import load_prompt
 
@@ -351,7 +351,7 @@ def _persist_assistant_message(
 
     流程：
     1. 主消息表保存基础消息 + token 总量；
-    2. trace 表保存 execution_trace + token 明细；
+    2. trace 表保存 workflow 汇总 + execution_trace + token 汇总；
     3. trace 失败仅记录 warning，不影响主消息保存。
     """
     resolved_status = MessageStatus(status)
@@ -359,7 +359,7 @@ def _persist_assistant_message(
         token_usage,
         execution_trace,
     )
-    persistable_token_usage_detail = resolve_persistable_token_usage_detail(
+    persistable_trace_token_usage = resolve_persistable_trace_token_usage(
         token_usage,
         execution_trace,
     )
@@ -377,7 +377,8 @@ def _persist_assistant_message(
             message_uuid=message_uuid,
             conversation_id=conversation_id,
             execution_trace=execution_trace,
-            token_usage_detail=persistable_token_usage_detail,
+            token_usage=persistable_trace_token_usage,
+            has_error=resolved_status == MessageStatus.ERROR,
         )
     except Exception as exc:  # pragma: no cover - 防御性兜底
         logger.opt(exception=exc).warning(

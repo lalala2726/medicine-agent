@@ -312,15 +312,21 @@ def _normalize_initial_event_payload(event: InitialEmittedEvent) -> dict[str, An
     return None
 
 
-def _normalize_execution_trace_item(raw_item: Any) -> dict[str, Any] | None:
+def _normalize_execution_trace_item(
+        raw_item: Any,
+        *,
+        fallback_sequence: int,
+) -> dict[str, Any] | None:
     """
     归一化单条 execution_trace 记录。
 
     Args:
         raw_item: 原始执行追踪项。
+        fallback_sequence: 当上游未提供合法 `sequence` 时使用的兜底顺序值。
 
     Returns:
-        dict[str, Any] | None: 合法记录返回标准化字典；非法记录返回 None。
+        dict[str, Any] | None:
+            合法记录返回标准化字典；非法记录返回 None。
     """
 
     if not isinstance(raw_item, dict):
@@ -330,23 +336,27 @@ def _normalize_execution_trace_item(raw_item: Any) -> dict[str, Any] | None:
     if not node_name:
         return None
 
+    raw_sequence = _to_non_negative_int(raw_item.get("sequence"))
+    sequence = raw_sequence if raw_sequence is not None and raw_sequence >= 1 else fallback_sequence
     model_name = str(raw_item.get("model_name") or UNKNOWN_MODEL_NAME).strip() or UNKNOWN_MODEL_NAME
-    input_messages = raw_item.get("input_messages")
-    if not isinstance(input_messages, list):
-        input_messages = []
+    status = str(raw_item.get("status") or "success").strip().lower()
+    normalized_status = status if status in {"success", "error"} else "success"
     tool_calls = raw_item.get("tool_calls")
     if not isinstance(tool_calls, list):
         tool_calls = []
+    raw_node_context = raw_item.get("node_context")
+    node_context = raw_node_context if isinstance(raw_node_context, dict) else None
 
     return {
+        "sequence": sequence,
         "node_name": node_name,
         "model_name": model_name,
-        "input_messages": input_messages,
+        "status": normalized_status,
         "output_text": str(raw_item.get("output_text") or ""),
-        "llm_used": bool(raw_item.get("llm_used", True)),
         "llm_usage_complete": bool(raw_item.get("llm_usage_complete", True)),
         "llm_token_usage": raw_item.get("llm_token_usage"),
         "tool_calls": tool_calls,
+        "node_context": node_context,
     }
 
 
@@ -366,8 +376,11 @@ def _build_execution_trace_summary(latest_state: dict[str, Any]) -> list[dict[st
         return None
 
     normalized_items: list[dict[str, Any]] = []
-    for item in raw_items:
-        normalized_item = _normalize_execution_trace_item(item)
+    for index, item in enumerate(raw_items, start=1):
+        normalized_item = _normalize_execution_trace_item(
+            item,
+            fallback_sequence=index,
+        )
         if normalized_item is not None:
             normalized_items.append(normalized_item)
     return normalized_items or None

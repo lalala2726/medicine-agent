@@ -232,19 +232,22 @@ def adaptive_agent(state: AgentState) -> dict[str, Any]:
         input_messages=history_messages,
         fallback_text=str(stream_result.get("streamed_text") or ""),
     )
+    current_execution_traces = list(state.get("execution_traces") or [])
     text = str(trace.get("text") or "").strip()
     trace_model_name = str(trace.get("model_name") or "").strip()
     trace_item = ExecutionTraceState(
+        sequence=len(current_execution_traces) + 1,
         node_name="adaptive_agent",
         model_name=llm_model_name or trace_model_name or model_name or "unknown",
+        status="success",
         output_text=text,
-        llm_used=True,
         llm_usage_complete=bool(trace.get("is_usage_complete", False)),
         llm_token_usage=trace.get("usage"),
         tool_calls=list(trace.get("tool_calls") or []),
+        node_context={"route_targets": adaptive_route_targets},
     )
     execution_traces, token_usage = append_trace_and_refresh_token_usage(
-        state.get("execution_traces"),
+        current_execution_traces,
         trace_item,
     )
     return {

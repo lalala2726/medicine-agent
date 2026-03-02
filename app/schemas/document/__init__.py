@@ -23,10 +23,10 @@ from .message_trace import (
     MessageTraceCreate,
     MessageTraceDocument,
     MessageTraceProvider,
-    MessageTraceTokenDetail,
-    NodeTokenBreakdown,
+    TraceTokenUsage,
     TokenCounter,
     ToolCallTraceItem,
+    WorkflowTraceSummary,
 )
 from .message_tts_usage import (
     MessageTtsUsageCreate,
@@ -53,13 +53,13 @@ __all__ = [
     "MessageTraceCreate",
     "MessageTraceDocument",
     "MessageTraceProvider",
-    "MessageTraceTokenDetail",
     "MessageTtsUsageCreate",
     "MessageTtsUsageDocument",
-    "NodeTokenBreakdown",
+    "TraceTokenUsage",
     "TokenCounter",
     "TokenUsage",
     "TtsUsageProvider",
     "TtsUsageStatus",
     "ToolCallTraceItem",
+    "WorkflowTraceSummary",
 ]
