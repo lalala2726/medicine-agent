@@ -133,7 +133,7 @@ _PRODUCT_SYSTEM_PROMPT = load_prompt("assistant/product_system_prompt.md")
 def product_tool_agent(task_description: str) -> str:
     llm = create_chat_model(
         model="qwen-flash",
-        temperature=0.2,
+        temperature=1.0,
     )
     agent = create_agent(
         model=llm,

@@ -160,7 +160,7 @@ _ORDER_SYSTEM_PROMPT = load_prompt("assistant/order_system_prompt.md")
 def order_tool_agent(task_description: str) -> str:
     llm = create_chat_model(
         model="qwen-flash",
-        temperature=0.2,
+        temperature=1.0,
     )
     agent = create_agent(
         model=llm,
