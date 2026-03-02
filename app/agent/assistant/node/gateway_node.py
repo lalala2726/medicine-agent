@@ -11,6 +11,8 @@ from app.core.agent.agent_runtime import agent_invoke
 from app.core.agent.agent_tool_trace import record_agent_trace
 from app.core.agent.base_prompt_middleware import BasePromptMiddleware
 from app.core.langsmith import traceable
+from app.core.llms.common import resolve_llm_value
+from app.core.llms.provider import LlmProvider, resolve_provider
 from app.core.llms import create_chat_model
 from app.services.token_usage_service import append_trace_and_refresh_token_usage
 from app.utils.prompt_utils import load_prompt
@@ -18,11 +20,64 @@ from app.utils.prompt_utils import load_prompt
 _GATEWAY_PROMPT = load_prompt("assistant/gateway_prompt.md")
 
 
+def _resolve_gateway_router_model_name() -> str:
+    """
+    功能描述：
+        解析 Gateway 路由节点专用模型名称。
+
+    参数说明：
+        无。
+
+    返回值：
+        str: Gateway 路由节点最终模型名称。
+
+    异常说明：
+        RuntimeError: 当 provider 对应的“专用模型配置 + 通用 chat 模型配置”均缺失时抛出。
+    """
+
+    resolved_provider = resolve_provider(None)
+    if resolved_provider is LlmProvider.ALIYUN:
+        dedicated_key = "DASHSCOPE_GATEWAY_ROUTER_MODEL"
+        fallback_key = "DASHSCOPE_CHAT_MODEL"
+    elif resolved_provider is LlmProvider.VOLCENGINE:
+        dedicated_key = "VOLCENGINE_LLM_GATEWAY_ROUTER_MODEL"
+        fallback_key = "VOLCENGINE_LLM_CHAT_MODEL"
+    else:
+        dedicated_key = "OPENAI_GATEWAY_ROUTER_MODEL"
+        fallback_key = "OPENAI_CHAT_MODEL"
+
+    gateway_model_name = resolve_llm_value(name=dedicated_key)
+    if gateway_model_name:
+        return gateway_model_name
+
+    fallback_model_name = resolve_llm_value(name=fallback_key)
+    if fallback_model_name:
+        return fallback_model_name
+
+    raise RuntimeError(f"{dedicated_key} and {fallback_key} are not set")
+
+
 @traceable(name="Supervisor Gateway Router Node", run_type="chain")
 def gateway_router(state: AgentState) -> dict[str, Any]:
+    """
+    功能描述：
+        执行 Gateway 路由节点，输出路由目标与任务难度。
+
+    参数说明：
+        state (AgentState): LangGraph 节点状态，包含历史消息与执行追踪信息。
+
+    返回值：
+        dict[str, Any]: 节点输出状态增量，包含 `routing/execution_traces/token_usage`。
+
+    异常说明：
+        RuntimeError:
+            - 当路由节点专用模型与通用模型均未配置时由 `_resolve_gateway_router_model_name` 抛出。
+    """
+
+    gateway_model_name = _resolve_gateway_router_model_name()
     llm = create_chat_model(
-        model="qwen-flash",
-        temperature=1.0,
+        model=gateway_model_name,
+        temperature=0.0,
         # todo 适配不同模型之前的输出 JSON 格式
         extra_body={"response_format": {"type": "json_object"}},
         think=False,
@@ -69,7 +124,7 @@ def gateway_router(state: AgentState) -> dict[str, Any]:
 
     trace_item = ExecutionTraceState(
         node_name="gateway_router",
-        model_name=str(trace.get("model_name") or "unknown"),
+        model_name=gateway_model_name or str(trace.get("model_name") or "unknown"),
         output_text=str(trace.get("text") or ""),
         llm_used=True,
         llm_usage_complete=bool(trace.get("is_usage_complete", False)),

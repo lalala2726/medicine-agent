@@ -41,16 +41,19 @@
 - LLM config priority: function args > environment values after `python-dotenv` (`load_dotenv`) > defaults.
 - OpenAI chat provider configuration (optional): `OPENAI_API_KEY` (required when provider is `openai`),
   `OPENAI_BASE_URL` (defaults to `https://api.openai.com/v1`), `OPENAI_CHAT_MODEL` (required when chat model name is not passed explicitly),
+  `OPENAI_GATEWAY_ROUTER_MODEL` (optional gateway 路由专用模型，未配置时回退 `OPENAI_CHAT_MODEL`),
   `OPENAI_IMAGE_MODEL` (required when image model name is not passed explicitly),
   `OPENAI_EMBEDDING_MODEL` (required when embedding model name is not passed explicitly).
 - Aliyun LLM provider configuration (optional): `DASHSCOPE_API_KEY` (required when provider is `aliyun`),
   `DASHSCOPE_BASE_URL` (defaults to `https://dashscope.aliyuncs.com/compatible-mode/v1`),
   `DASHSCOPE_CHAT_MODEL` (required when chat model name is not passed explicitly),
+  `DASHSCOPE_GATEWAY_ROUTER_MODEL` (optional gateway 路由专用模型，未配置时回退 `DASHSCOPE_CHAT_MODEL`),
   `DASHSCOPE_IMAGE_MODEL` (required when image model name is not passed explicitly),
   `DASHSCOPE_EMBEDDING_MODEL` (required when embedding model name is not passed explicitly).
 - Volcengine LLM provider configuration (optional): `VOLCENGINE_LLM_API_KEY` (required when provider is `volcengine`),
   `VOLCENGINE_LLM_BASE_URL` (defaults to `https://ark.cn-beijing.volces.com/api/v3`),
   `VOLCENGINE_LLM_CHAT_MODEL` (required when chat model name is not passed explicitly),
+  `VOLCENGINE_LLM_GATEWAY_ROUTER_MODEL` (optional gateway 路由专用模型，未配置时回退 `VOLCENGINE_LLM_CHAT_MODEL`),
   `VOLCENGINE_LLM_IMAGE_MODEL` (required when image model name is not passed explicitly),
   `VOLCENGINE_LLM_EMBEDDING_MODEL` (required when embedding model name is not passed explicitly).
 - LLM thinking switch semantics: `think=true` enables provider-specific deep thinking payload;
