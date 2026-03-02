@@ -48,7 +48,6 @@ def order_sub_agent(task_description: str) -> str:
     """
 
     llm = create_chat_model(
-        model="qwen-flash",
         temperature=1.0,
     )
     agent = create_agent(

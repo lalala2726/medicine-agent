@@ -159,7 +159,6 @@ def test_order_sub_agent_builds_expected_tools_and_returns_agent_output(
     assert captured["history_messages"] == "查询订单发货记录"
 
     assert captured["create_chat_model_kwargs"] == {
-        "model": "qwen-flash",
         "temperature": 1.0,
     }
 

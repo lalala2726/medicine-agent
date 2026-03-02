@@ -171,7 +171,6 @@ def test_user_sub_agent_builds_expected_tools_and_returns_agent_output(
     assert captured["history_messages"] == "查询用户列表"
 
     assert captured["create_chat_model_kwargs"] == {
-        "model": "qwen-flash",
         "temperature": 1.0,
     }
 

@@ -36,7 +36,7 @@ def create_chat_model(
 
     参数说明:
         model (str | None): 模型名称；默认值 `None`。
-            为 `None` 时使用对应 provider 的默认模型。
+            为 `None` 时读取对应 provider 的环境变量模型配置，若仍为空则报错。
         provider (LlmProvider | str | None): 模型厂商；默认值 `None`。
             优先使用显式入参；未传时读取 `LLM_PROVIDER`，再回退到 `openai`。
         api_key (str | None): 覆盖厂商 API 密钥；默认值 `None`。
@@ -103,7 +103,7 @@ def create_image_model(
 
     参数说明:
         model (str | None): 模型名称；默认值 `None`。
-            为 `None` 时使用对应 provider 的默认图像模型。
+            为 `None` 时读取对应 provider 的图像模型环境配置，若仍为空则报错。
         provider (LlmProvider | str | None): 模型厂商；默认值 `None`。
             优先使用显式入参；未传时读取 `LLM_PROVIDER`，再回退到 `openai`。
         api_key (str | None): 覆盖厂商 API 密钥；默认值 `None`。

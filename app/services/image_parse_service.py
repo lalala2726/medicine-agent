@@ -5,7 +5,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException
-from app.core.llms import create_chat_model
+from app.core.llms import create_image_model
 from app.utils.file_utils import FileUtils
 from app.utils.prompt_utils import load_prompt
 
@@ -27,7 +27,7 @@ def parse_drug_images(images: List[str]) -> dict:
         for img in images
     ]
 
-    model = create_chat_model(
+    model = create_image_model(
         model="qwen3-vl-plus",
         extra_body={"response_format": {"type": "json_object"}},
     )

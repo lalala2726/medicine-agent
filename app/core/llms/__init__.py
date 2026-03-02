@@ -4,6 +4,9 @@ from app.core.llms.provider import LlmProvider
 from app.core.llms.providers import (
     ChatQwen,
     ChatVolcengine,
+    create_aliyun_embedding_model,
+    create_openai_embedding_model,
+    create_volcengine_embedding_model,
     create_volcengine_chat_model,
     create_volcengine_image_model,
 )
@@ -13,9 +16,12 @@ __all__ = [
     "ChatQwen",
     "ChatVolcengine",
     "LlmProvider",
+    "create_aliyun_embedding_model",
     "create_chat_model",
     "create_embedding_model",
     "create_image_model",
+    "create_openai_embedding_model",
     "create_volcengine_chat_model",
+    "create_volcengine_embedding_model",
     "create_volcengine_image_model",
 ]

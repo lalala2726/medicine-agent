@@ -4,7 +4,7 @@ from typing import Any
 
 from langchain_core.messages import AIMessageChunk
 from langchain_core.outputs import ChatGenerationChunk
-from langchain_openai import ChatOpenAI
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from pydantic import SecretStr
 
 from app.core.llms.common import prepare_chat_client_kwargs, resolve_llm_value
@@ -188,4 +188,63 @@ def create_aliyun_image_model(
         base_url=base_url,
         extra_body=extra_body,
         **kwargs,
+    )
+
+
+def create_aliyun_embedding_model(
+        *,
+        model: str | None = None,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        dimensions: int | None = 1024,
+        **kwargs: Any,
+) -> OpenAIEmbeddings:
+    """
+    功能描述:
+        创建阿里云（DashScope）向量嵌入模型客户端。
+
+    参数说明:
+        model (str | None): 嵌入模型名称；默认值 `None`。
+            为 `None` 时读取 `DASHSCOPE_EMBEDDING_MODEL`，若仍为空则报错。
+        api_key (str | None): API 密钥；默认值 `None`。
+            为 `None` 时读取 `load_dotenv` 生效后的环境变量 `DASHSCOPE_API_KEY`。
+        base_url (str | None): API 基础地址；默认值 `None`。
+            为 `None` 时读取 `DASHSCOPE_BASE_URL`，若未配置则使用默认 DashScope 地址。
+        dimensions (int | None): 向量维度；默认值 `1024`。
+            传 `None` 时不向底层客户端设置该参数。
+        **kwargs (Any): 其余透传 `OpenAIEmbeddings` 构造参数。
+
+    返回值:
+        OpenAIEmbeddings: 可直接用于文本向量化的嵌入模型实例。
+
+    异常说明:
+        RuntimeError:
+            - 未提供 `api_key` 且环境变量 `DASHSCOPE_API_KEY` 未设置；
+            - 未传 `model` 且环境变量 `DASHSCOPE_EMBEDDING_MODEL` 未设置。
+    """
+
+    key = resolve_llm_value(name="DASHSCOPE_API_KEY", explicit=api_key)
+    if not key:
+        raise RuntimeError("DASHSCOPE_API_KEY is not set")
+
+    resolved_model = resolve_llm_value(name="DASHSCOPE_EMBEDDING_MODEL", explicit=model)
+    if not resolved_model:
+        raise RuntimeError("DASHSCOPE_EMBEDDING_MODEL is not set")
+
+    resolved_base_url = resolve_llm_value(
+        name="DASHSCOPE_BASE_URL",
+        explicit=base_url,
+        default=DEFAULT_DASHSCOPE_BASE_URL,
+    )
+
+    embedding_kwargs = dict(kwargs)
+    if dimensions is not None:
+        embedding_kwargs["dimensions"] = dimensions
+
+    return OpenAIEmbeddings(
+        model=resolved_model,
+        check_embedding_ctx_length=False,
+        api_key=SecretStr(key),
+        base_url=resolved_base_url,
+        **embedding_kwargs,
     )

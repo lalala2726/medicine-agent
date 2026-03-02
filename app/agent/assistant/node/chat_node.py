@@ -34,15 +34,14 @@ def chat_agent(state: AgentState) -> dict[str, Any]:
     """
 
     history_messages = list(state.get("history_messages") or [])
-    model_name = "qwen-flash"
     tools = [
         get_current_time,
         get_safe_user_info
     ]
     llm = create_chat_model(
-        model=model_name,
         temperature=1.3,
     )
+    llm_model_name = str(getattr(llm, "model_name", "") or "").strip()
     agent = create_agent(
         model=llm,
         tools=tools,
@@ -64,9 +63,10 @@ def chat_agent(state: AgentState) -> dict[str, Any]:
         fallback_text=str(stream_result.get("streamed_text") or ""),
     )
     text = str(trace.get("text") or "").strip()
+    trace_model_name = str(trace.get("model_name") or "").strip()
     trace_item = ExecutionTraceState(
         node_name="chat_agent",
-        model_name=model_name,
+        model_name=llm_model_name or trace_model_name or "unknown",
         output_text=text,
         llm_used=True,
         llm_usage_complete=bool(trace.get("is_usage_complete", False)),

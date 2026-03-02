@@ -337,6 +337,52 @@ def test_create_openai_chat_model_raises_without_api_key(monkeypatch: pytest.Mon
         openai_provider.create_openai_chat_model(model="gpt-test")
 
 
+def test_create_openai_chat_model_raises_without_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    """测试目的：验证 OpenAI 聊天工厂在未传模型且环境无默认模型时失败；预期结果：抛出 RuntimeError。"""
+
+    monkeypatch.setenv("OPENAI_API_KEY", "openai-key")
+    monkeypatch.delenv("OPENAI_CHAT_MODEL", raising=False)
+
+    with pytest.raises(RuntimeError, match="OPENAI_CHAT_MODEL is not set"):
+        openai_provider.create_openai_chat_model()
+
+
+def test_create_openai_image_model_raises_without_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    """测试目的：验证 OpenAI 图像工厂在未传模型且环境无默认模型时失败；预期结果：抛出 RuntimeError。"""
+
+    monkeypatch.setenv("OPENAI_API_KEY", "openai-key")
+    monkeypatch.delenv("OPENAI_IMAGE_MODEL", raising=False)
+
+    with pytest.raises(RuntimeError, match="OPENAI_IMAGE_MODEL is not set"):
+        openai_provider.create_openai_image_model()
+
+
+def test_create_openai_embedding_model_reads_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """测试目的：验证 OpenAI 嵌入工厂读取 OPENAI 环境变量；预期结果：构造参数包含环境值且维度正确透传。"""
+
+    monkeypatch.setenv("OPENAI_API_KEY", "openai-key")
+    monkeypatch.setenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-large")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://openai.example.com/v1")
+    monkeypatch.setattr(openai_provider, "OpenAIEmbeddings", _FakeChatClient)
+
+    model = openai_provider.create_openai_embedding_model(dimensions=1536)
+
+    assert isinstance(model, _FakeChatClient)
+    assert model.kwargs["model"] == "text-embedding-3-large"
+    assert model.kwargs["base_url"] == "https://openai.example.com/v1"
+    assert model.kwargs["dimensions"] == 1536
+
+
+def test_create_openai_embedding_model_raises_without_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    """测试目的：验证 OpenAI 嵌入工厂在未传模型且环境无默认模型时失败；预期结果：抛出 RuntimeError。"""
+
+    monkeypatch.setenv("OPENAI_API_KEY", "openai-key")
+    monkeypatch.delenv("OPENAI_EMBEDDING_MODEL", raising=False)
+
+    with pytest.raises(RuntimeError, match="OPENAI_EMBEDDING_MODEL is not set"):
+        openai_provider.create_openai_embedding_model()
+
+
 def test_create_aliyun_chat_model_reads_env_and_enables_stream_usage(monkeypatch: pytest.MonkeyPatch) -> None:
     """测试目的：验证阿里云聊天工厂读取 DASHSCOPE 环境变量并默认启用 stream_usage；预期结果：构造参数包含环境值且 `stream_usage=True`。"""
 
@@ -381,6 +427,16 @@ def test_create_aliyun_image_model_raises_without_model(monkeypatch: pytest.Monk
 
     with pytest.raises(RuntimeError, match="DASHSCOPE_IMAGE_MODEL is not set"):
         aliyun_provider.create_aliyun_image_model()
+
+
+def test_create_aliyun_embedding_model_raises_without_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    """测试目的：验证阿里云嵌入工厂在未传模型且环境无默认模型时失败；预期结果：抛出 RuntimeError。"""
+
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "dashscope-key")
+    monkeypatch.delenv("DASHSCOPE_EMBEDDING_MODEL", raising=False)
+
+    with pytest.raises(RuntimeError, match="DASHSCOPE_EMBEDDING_MODEL is not set"):
+        aliyun_provider.create_aliyun_embedding_model()
 
 
 def test_create_volcengine_chat_model_reads_env_and_enables_stream_usage(
@@ -447,6 +503,18 @@ def test_create_volcengine_image_model_reads_env(monkeypatch: pytest.MonkeyPatch
     assert model.kwargs["model"] == "doubao-image-env"
     assert model.kwargs["base_url"] == "https://volc.example.com/api/v3"
     assert model.kwargs["extra_body"] == {"thinking": {"type": "disabled"}}
+
+
+def test_create_volcengine_embedding_model_raises_when_model_not_provided(
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """测试目的：验证字节嵌入工厂在未传模型且环境无默认模型时失败；预期结果：抛出 RuntimeError。"""
+
+    monkeypatch.setenv("VOLCENGINE_LLM_API_KEY", "volc-key")
+    monkeypatch.delenv("VOLCENGINE_LLM_EMBEDDING_MODEL", raising=False)
+
+    with pytest.raises(RuntimeError, match="VOLCENGINE_LLM_EMBEDDING_MODEL is not set"):
+        volcengine_provider.create_volcengine_embedding_model()
 
 
 def test_thinking_resolver_keeps_openai_extra_body() -> None:
@@ -616,13 +684,112 @@ def test_chat_volcengine_non_streaming_injects_reasoning_content(monkeypatch: py
     assert result.generations[0].message.additional_kwargs["reasoning_content"] == "思考正文"
 
 
+def test_create_embedding_model_routes_to_openai_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    """测试目的：验证 create_embedding_model 在 OPENAI provider 下正确路由；预期结果：调用 OpenAI 嵌入工厂并透传参数。"""
+
+    captured: dict[str, Any] = {}
+
+    def _fake_openai_embedding_model(**kwargs: Any) -> str:
+        captured.update(kwargs)
+        return "openai-embedding"
+
+    monkeypatch.setattr(embedding_factory, "create_openai_embedding_model", _fake_openai_embedding_model)
+
+    result = embedding_factory.create_embedding_model(
+        provider=LlmProvider.OPENAI,
+        model="text-embedding-3-large",
+        dimensions=1536,
+    )
+
+    assert result == "openai-embedding"
+    assert captured["model"] == "text-embedding-3-large"
+    assert captured["dimensions"] == 1536
+
+
+def test_create_embedding_model_routes_to_aliyun_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    """测试目的：验证 create_embedding_model 在 ALIYUN provider 下正确路由；预期结果：调用阿里云嵌入工厂并透传参数。"""
+
+    captured: dict[str, Any] = {}
+
+    def _fake_aliyun_embedding_model(**kwargs: Any) -> str:
+        captured.update(kwargs)
+        return "aliyun-embedding"
+
+    monkeypatch.setattr(embedding_factory, "create_aliyun_embedding_model", _fake_aliyun_embedding_model)
+
+    result = embedding_factory.create_embedding_model(
+        provider=LlmProvider.ALIYUN,
+        model="text-embedding-v4",
+        dimensions=1024,
+    )
+
+    assert result == "aliyun-embedding"
+    assert captured["model"] == "text-embedding-v4"
+    assert captured["dimensions"] == 1024
+
+
+def test_create_embedding_model_routes_to_volcengine_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    """测试目的：验证 create_embedding_model 在 VOLCENGINE provider 下正确路由；预期结果：调用字节嵌入工厂并透传参数。"""
+
+    captured: dict[str, Any] = {}
+
+    def _fake_volcengine_embedding_model(**kwargs: Any) -> str:
+        captured.update(kwargs)
+        return "volcengine-embedding"
+
+    monkeypatch.setattr(embedding_factory, "create_volcengine_embedding_model", _fake_volcengine_embedding_model)
+
+    result = embedding_factory.create_embedding_model(
+        provider=LlmProvider.VOLCENGINE,
+        model="doubao-embedding-test",
+        dimensions=1024,
+    )
+
+    assert result == "volcengine-embedding"
+    assert captured["model"] == "doubao-embedding-test"
+    assert captured["dimensions"] == 1024
+
+
+def test_create_embedding_model_uses_env_provider_when_provider_is_none(
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """测试目的：验证未显式传 embedding provider 时可从环境读取；预期结果：`LLM_PROVIDER=aliyun` 时路由阿里云工厂。"""
+
+    monkeypatch.setenv("LLM_PROVIDER", "aliyun")
+    monkeypatch.setattr(embedding_factory, "create_aliyun_embedding_model", lambda **_kwargs: "aliyun-embedding")
+
+    result = embedding_factory.create_embedding_model(model="text-embedding-v4")
+
+    assert result == "aliyun-embedding"
+
+
+def test_create_embedding_model_defaults_to_openai_when_provider_missing(
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """测试目的：验证 embedding provider 未显式传且环境缺失时默认 openai；预期结果：路由 OpenAI 工厂。"""
+
+    monkeypatch.delenv("LLM_PROVIDER", raising=False)
+    monkeypatch.setattr(embedding_factory, "create_openai_embedding_model", lambda **_kwargs: "openai-embedding")
+
+    result = embedding_factory.create_embedding_model(model="text-embedding-3-large")
+
+    assert result == "openai-embedding"
+
+
 def test_create_embedding_model_validates_dimensions_and_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
     """测试目的：验证嵌入模型工厂参数校验逻辑；预期结果：缺少 API Key 抛 RuntimeError，非法 dimensions 抛 ValueError。"""
 
     monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
     with pytest.raises(RuntimeError, match="DASHSCOPE_API_KEY is not set"):
-        embedding_factory.create_embedding_model()
+        embedding_factory.create_embedding_model(
+            provider=LlmProvider.ALIYUN,
+            model="text-embedding-v4",
+        )
 
-    monkeypatch.setenv("DASHSCOPE_API_KEY", "dashscope-key")
     with pytest.raises(ValueError, match="Dimensions must be between 128 and 4096 and a multiple of 2"):
-        embedding_factory.create_embedding_model(dimensions=127)
+        embedding_factory.create_embedding_model(
+            provider=LlmProvider.ALIYUN,
+            model="text-embedding-v4",
+            api_key="dashscope-key",
+            dimensions=127,
+        )
