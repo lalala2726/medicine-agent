@@ -4,34 +4,18 @@ from typing import Literal
 
 from langchain_core.messages import SystemMessage
 from langchain_core.tools import tool
-from pydantic import BaseModel, Field
 
+from app.agent.assistant.tools.schemas.analytics import (
+    AnalyticsOrderTrendRequest,
+    AnalyticsTopLimitRequest,
+)
 from app.core.agent.agent_runtime import agent_invoke
 from app.core.agent.agent_tool_events import tool_call_status
 from app.core.langsmith import traceable
 from app.core.llm import create_agent
+from app.schemas.http_response import HttpResponse
 from app.utils.http_client import HttpClient
 from app.utils.prompt_utils import load_prompt
-
-
-class AnalyticsOrderTrendRequest(BaseModel):
-    """订单趋势查询请求。"""
-
-    period: Literal["DAY", "WEEK", "MONTH"] = Field(
-        default="DAY",
-        description="时间周期，支持 DAY(日)、WEEK(周)、MONTH(月)",
-    )
-
-
-class AnalyticsTopLimitRequest(BaseModel):
-    """排行榜/统计 TopN 查询请求。"""
-
-    limit: int = Field(
-        default=10,
-        ge=1,
-        le=200,
-        description="返回数量限制，默认10，范围1-200",
-    )
 
 
 @tool(
@@ -46,14 +30,12 @@ class AnalyticsTopLimitRequest(BaseModel):
     error_message="获取运营总览失败",
     timely_message="运营总览正在持续处理中",
 )
-async def get_analytics_overview() -> str:
+async def get_analytics_overview() -> dict:
     """获取运营总览。"""
 
     async with HttpClient() as client:
-        return await client.get(
-            url="/agent/analytics/overview",
-            include_envelope=True,
-        )
+        response = await client.get(url="/agent/admin/analytics/overview")
+        return HttpResponse.parse_data(response)
 
 
 @tool(
@@ -70,15 +52,15 @@ async def get_analytics_overview() -> str:
     error_message="获取订单趋势失败",
     timely_message="订单趋势正在持续处理中",
 )
-async def get_analytics_order_trend(period: Literal["DAY", "WEEK", "MONTH"] = "DAY") -> str:
+async def get_analytics_order_trend(period: Literal["DAY", "WEEK", "MONTH"] = "DAY") -> dict:
     """获取订单趋势。"""
 
     async with HttpClient() as client:
-        return await client.get(
-            url="/agent/analytics/order/trend",
+        response = await client.get(
+            url="/agent/admin/analytics/order/trend",
             params={"period": period},
-            include_envelope=True,
         )
+        return HttpResponse.parse_data(response)
 
 
 @tool(
@@ -93,14 +75,12 @@ async def get_analytics_order_trend(period: Literal["DAY", "WEEK", "MONTH"] = "D
     error_message="获取订单状态分布失败",
     timely_message="订单状态分布正在持续处理中",
 )
-async def get_analytics_order_status_distribution() -> str:
+async def get_analytics_order_status_distribution() -> dict:
     """获取订单状态分布。"""
 
     async with HttpClient() as client:
-        return await client.get(
-            url="/agent/analytics/order/status-distribution",
-            include_envelope=True,
-        )
+        response = await client.get(url="/agent/admin/analytics/order/status-distribution")
+        return HttpResponse.parse_data(response)
 
 
 @tool(
@@ -115,14 +95,12 @@ async def get_analytics_order_status_distribution() -> str:
     error_message="获取支付方式分布失败",
     timely_message="支付方式分布正在持续处理中",
 )
-async def get_analytics_payment_distribution() -> str:
+async def get_analytics_payment_distribution() -> dict:
     """获取支付方式分布。"""
 
     async with HttpClient() as client:
-        return await client.get(
-            url="/agent/analytics/order/payment-distribution",
-            include_envelope=True,
-        )
+        response = await client.get(url="/agent/admin/analytics/order/payment-distribution")
+        return HttpResponse.parse_data(response)
 
 
 @tool(
@@ -139,15 +117,15 @@ async def get_analytics_payment_distribution() -> str:
     error_message="获取热销商品排行失败",
     timely_message="热销商品排行正在持续处理中",
 )
-async def get_analytics_hot_products(limit: int = 10) -> str:
+async def get_analytics_hot_products(limit: int = 10) -> dict:
     """获取热销商品排行榜。"""
 
     async with HttpClient() as client:
-        return await client.get(
-            url="/agent/analytics/product/hot",
+        response = await client.get(
+            url="/agent/admin/analytics/product/hot",
             params={"limit": limit},
-            include_envelope=True,
         )
+        return HttpResponse.parse_data(response)
 
 
 @tool(
@@ -164,15 +142,15 @@ async def get_analytics_hot_products(limit: int = 10) -> str:
     error_message="获取商品退货率失败",
     timely_message="商品退货率正在持续处理中",
 )
-async def get_analytics_product_return_rates(limit: int = 10) -> str:
+async def get_analytics_product_return_rates(limit: int = 10) -> dict:
     """获取商品退货率统计。"""
 
     async with HttpClient() as client:
-        return await client.get(
-            url="/agent/analytics/product/return-rate",
+        response = await client.get(
+            url="/agent/admin/analytics/product/return-rate",
             params={"limit": limit},
-            include_envelope=True,
         )
+        return HttpResponse.parse_data(response)
 
 
 _ANALYTICS_SYSTEM_PROMPT = load_prompt("assistant/analytics_system_prompt.md")

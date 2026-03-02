@@ -27,6 +27,12 @@ from .message_trace import (
     TokenCounter,
     ToolCallTraceItem,
 )
+from .message_tts_usage import (
+    MessageTtsUsageCreate,
+    MessageTtsUsageDocument,
+    TtsUsageProvider,
+    TtsUsageStatus,
+)
 
 __all__ = [
     "ConversationCreate",
@@ -46,8 +52,12 @@ __all__ = [
     "MessageTraceCreate",
     "MessageTraceDocument",
     "MessageTraceTokenDetail",
+    "MessageTtsUsageCreate",
+    "MessageTtsUsageDocument",
     "NodeTokenBreakdown",
     "TokenCounter",
     "TokenUsage",
+    "TtsUsageProvider",
+    "TtsUsageStatus",
     "ToolCallTraceItem",
 ]

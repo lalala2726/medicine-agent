@@ -4,38 +4,18 @@ from typing import Optional
 
 from langchain_core.messages import SystemMessage
 from langchain_core.tools import tool
-from pydantic import BaseModel, Field
 
+from app.agent.assistant.tools.schemas.after_sale import (
+    AdminAfterSaleIdRequest,
+    AdminAfterSaleListQueryRequest,
+)
 from app.core.agent.agent_runtime import agent_invoke
 from app.core.agent.agent_tool_events import tool_call_status
 from app.core.langsmith import traceable
 from app.core.llm import create_agent
+from app.schemas.http_response import HttpResponse
 from app.utils.http_client import HttpClient
 from app.utils.prompt_utils import load_prompt
-
-
-class AdminAfterSaleListQueryRequest(BaseModel):
-    """管理端售后列表查询请求参数。"""
-
-    page_num: int = Field(default=1, ge=1, description="页码，从 1 开始")
-    page_size: int = Field(default=10, ge=1, le=200, description="每页数量，范围 1-200")
-    after_sale_type: Optional[str] = Field(
-        default=None,
-        description="售后类型，例如 REFUND_ONLY/RETURN_REFUND/EXCHANGE",
-    )
-    after_sale_status: Optional[str] = Field(
-        default=None,
-        description="售后状态，例如 PENDING/APPROVED/REJECTED/PROCESSING/COMPLETED/CANCELLED",
-    )
-    order_no: Optional[str] = Field(default=None, description="订单编号，精确匹配")
-    user_id: Optional[int] = Field(default=None, ge=1, description="用户 ID")
-    apply_reason: Optional[str] = Field(default=None, description="申请原因，例如 DAMAGED")
-
-
-class AdminAfterSaleIdRequest(BaseModel):
-    """按售后申请 ID 查询请求参数。"""
-
-    after_sale_id: int = Field(ge=1, description="售后申请 ID")
 
 
 @tool(
@@ -59,7 +39,7 @@ async def get_admin_after_sale_list(
         order_no: Optional[str] = None,
         user_id: Optional[int] = None,
         apply_reason: Optional[str] = None,
-) -> str:
+) -> dict:
     """分页查询管理端售后申请列表。"""
 
     async with HttpClient() as client:
@@ -72,11 +52,11 @@ async def get_admin_after_sale_list(
             "userId": user_id,
             "applyReason": apply_reason,
         }
-        return await client.get(
+        response = await client.get(
             url="/agent/admin/after-sale/list",
             params=params,
-            include_envelope=True,
         )
+        return HttpResponse.parse_data(response)
 
 
 @tool(
@@ -92,14 +72,14 @@ async def get_admin_after_sale_list(
     error_message="查询售后详情失败",
     timely_message="售后详情正在持续处理中",
 )
-async def get_admin_after_sale_detail(after_sale_id: int) -> str:
+async def get_admin_after_sale_detail(after_sale_id: int) -> dict:
     """根据售后申请 ID 查询售后详情。"""
 
     async with HttpClient() as client:
-        return await client.get(
+        response = await client.get(
             url=f"/agent/admin/after-sale/detail/{after_sale_id}",
-            include_envelope=True,
         )
+        return HttpResponse.parse_data(response)
 
 
 _AFTER_SALE_SYSTEM_PROMPT = load_prompt("assistant/after_sale_system_prompt.md")

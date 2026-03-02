@@ -1,3 +1,5 @@
+import asyncio
+from contextlib import asynccontextmanager
 from typing import Awaitable, Callable
 
 from dotenv import load_dotenv
@@ -17,7 +19,12 @@ from app.core.security.auth_context import (
     set_authorization_header,
     set_current_user,
 )
+from app.core.security.anonymous_access import is_anonymous_request
 from app.core.security.cors import load_cors_config
+from app.core.speech import (
+    verify_volcengine_stt_connection_on_startup,
+    verify_volcengine_tts_connection_on_startup,
+)
 from app.services.auth_service import verify_authorization
 
 # 加载 .env 配置，确保本地开发环境变量生效
@@ -30,17 +37,38 @@ OPENAPI_DESCRIPTION = """
 
 ## 认证说明
 
-除 `/docs`、`/redoc`、`/openapi.json` 外，其他接口均需要认证。
+除 `/docs`、`/redoc`、`/openapi.json` 以及显式标注 `allow_anonymous` 的接口外，
+其他接口均需要认证。
 
 请由药品服务端提供访问令牌，并在请求头中携带：
 
 - `Authorization: Bearer <token>`
 """
 
+_speech_startup_probe_done = False
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    global _speech_startup_probe_done
+    if not _speech_startup_probe_done:
+        probe_results = await asyncio.gather(
+            verify_volcengine_stt_connection_on_startup(),
+            verify_volcengine_tts_connection_on_startup(),
+            return_exceptions=True,
+        )
+        for result in probe_results:
+            if isinstance(result, Exception):
+                raise result
+        _speech_startup_probe_done = True
+    yield
+
+
 app = FastAPI(
     title="Medicine AI Agent API",
     description=OPENAPI_DESCRIPTION,
     version="0.1.0",
+    lifespan=lifespan,
 )
 app.add_middleware(CORSMiddleware, **load_cors_config())
 app.include_router(api_router)
@@ -53,6 +81,7 @@ app.add_exception_handler(ServiceException, ExceptionHandlers.service_exception_
 app.add_exception_handler(StarletteHTTPException, ExceptionHandlers.http_exception_handler)
 app.add_exception_handler(PyMongoError, ExceptionHandlers.pymongo_exception_handler)
 app.add_exception_handler(Exception, ExceptionHandlers.unhandled_exception_handler)
+
 
 AUTH_BYPASS_PATHS = {
     "/docs",
@@ -70,6 +99,8 @@ def _should_skip_authorization(request: Request) -> bool:
     if path in AUTH_BYPASS_PATHS:
         return True
     if path.startswith("/docs/") or path.startswith("/redoc/"):
+        return True
+    if is_anonymous_request(request):
         return True
     return False
 

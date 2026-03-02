@@ -2,6 +2,7 @@ import datetime
 import os
 from typing import Annotated, Any, Mapping
 
+from bson import ObjectId
 from bson.int64 import Int64
 from pydantic import Field
 from pymongo import DESCENDING
@@ -40,6 +41,15 @@ def _to_mongo_long(value: int) -> Int64:
     """
 
     return Int64(value)
+
+
+def _to_object_id(value: str) -> ObjectId | None:
+    """将字符串转换为 ObjectId，转换失败返回 None。"""
+
+    try:
+        return ObjectId(value)
+    except Exception:
+        return None
 
 
 def _to_conversation_document(document: Mapping[str, Any]) -> ConversationDocument:
@@ -115,6 +125,40 @@ def get_admin_conversation(
         conversation_type=_ADMIN_MARK,
         user_id=user_id,
     )
+
+
+def get_admin_conversation_by_id(
+        *,
+        conversation_id: Annotated[str, Field(min_length=1)],
+        user_id: Annotated[int, Field(ge=1)],
+) -> ConversationDocument | None:
+    """
+    按会话主键 `_id` 查询管理端会话，并校验用户归属。
+
+    Args:
+        conversation_id: 会话 Mongo ObjectId（字符串）。
+        user_id: 当前用户 ID。
+
+    Returns:
+        ConversationDocument | None: 命中返回会话模型，否则返回 None。
+    """
+
+    object_id = _to_object_id(conversation_id)
+    if object_id is None:
+        return None
+
+    db = get_mongo_database()
+    collection = db[_TABLE_NAME]
+    query = {
+        "_id": object_id,
+        "conversation_type": _ADMIN_MARK,
+        "user_id": _to_mongo_long(user_id),
+        "is_deleted": _NOT_DELETED_FILTER,
+    }
+    document = collection.find_one(query)
+    if document is None:
+        return None
+    return _to_conversation_document(document)
 
 
 def get_client_conversation(

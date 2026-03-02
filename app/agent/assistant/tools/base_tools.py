@@ -11,8 +11,9 @@ import datetime
 
 from langchain_core.tools import tool
 
+from app.agent.assistant.tools.schemas.base import UserInfo
 from app.core.agent.agent_tool_events import tool_call_status
-from app.utils.http_client import HttpClient
+from app.core.security import get_current_user
 
 
 def format_ids_to_string(ids: list[str]) -> str:
@@ -31,8 +32,8 @@ def _normalize_id_list(ids: list[str], *, field_name: str) -> list[str]:
 
 
 @tool(
-    description="获取当前登录用户的基本信息。"
-                "调用时机：用户询问「我是谁」「我的账户信息」，或需要用户ID进行后续操作时。"
+    description="获取当前聊天用户的基本信息。"
+                "何时使用？ 当用户需要获取自己的基本信息时。或者需要查询当前用户的个人信息时，"
 )
 @tool_call_status(
     tool_name="获取用户信息",
@@ -40,15 +41,10 @@ def _normalize_id_list(ids: list[str], *, field_name: str) -> list[str]:
     error_message="获取用户信息失败",
     timely_message="用户信息正在持续处理中",
 )
-async def get_user_info() -> str:
-    """获取当前登录用户的基本信息。"""
-
-    async with HttpClient() as client:
-        return await client.get(
-            url="/agent/info",
-            response_format="yaml",
-            include_envelope=True,
-        )
+def get_safe_user_info() -> UserInfo:
+    """获取当前登录用户的基本信息（已过滤敏感信息）。"""
+    auth_user = get_current_user()
+    return UserInfo.from_auth_user(auth_user)
 
 
 @tool(
@@ -71,6 +67,6 @@ def get_current_time() -> dict:
 
 
 ADMIN_TOOLS = [
-    get_user_info,
+    get_safe_user_info,
     get_current_time,
 ]

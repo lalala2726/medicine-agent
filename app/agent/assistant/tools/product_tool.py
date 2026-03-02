@@ -4,75 +4,20 @@ from typing import Optional
 
 from langchain_core.messages import SystemMessage
 from langchain_core.tools import tool
-from pydantic import BaseModel, Field
 
 from app.agent.assistant.tools.base_tools import _normalize_id_list, format_ids_to_string
+from app.agent.assistant.tools.schemas.product import (
+    DrugDetailRequest,
+    MallProductListQueryRequest,
+    ProductInfoRequest,
+)
 from app.core.agent.agent_runtime import agent_invoke
 from app.core.agent.agent_tool_events import tool_call_status
 from app.core.langsmith import traceable
 from app.core.llm import create_agent
+from app.schemas.http_response import HttpResponse
 from app.utils.http_client import HttpClient
 from app.utils.prompt_utils import load_prompt
-
-
-class MallProductListQueryRequest(BaseModel):
-    """
-    商城商品列表查询请求参数。
-
-    传参说明：
-    1. 至少传分页参数 `page_num/page_size`；
-    2. 其余筛选参数按需传，不需要的字段不要传空字符串；
-    3. 推荐示例：
-       `{"page_num": 1, "page_size": 10, "name": "感冒", "status": 1}`。
-    """
-
-    page_num: Optional[int] = Field(default=1, description="页码，从 1 开始，默认为 1")
-    page_size: Optional[int] = Field(default=10, description="每页数量，建议 10-50，默认为 10")
-    id: Optional[int] = Field(default=None, description="商品ID，精确匹配单个商品")
-    name: Optional[str] = Field(
-        default=None,
-        description="商品名称关键词，支持模糊搜索，例如 '感冒' 可匹配 '感冒灵颗粒'",
-    )
-    category_id: Optional[int] = Field(default=None, description="商品分类ID，用于筛选特定分类下的商品")
-    status: Optional[int] = Field(default=None, description="商品状态筛选：1 表示上架商品，0 表示下架商品")
-    min_price: Optional[float] = Field(default=None, description="最低价格，用于价格区间筛选，单位：元")
-    max_price: Optional[float] = Field(default=None, description="最高价格，用于价格区间筛选，单位：元")
-
-
-class ProductInfoRequest(BaseModel):
-    """
-    商品详情查询请求参数。
-
-    传参示例：
-    `{"product_id": ["2001", "2003"]}`
-    """
-
-    product_id: list[str] = Field(
-        min_length=1,
-        description=(
-            "商品ID字符串数组（List[str]），支持批量查询。"
-            "必须传 JSON 数组，不能传 '2001,2003' 这种逗号字符串。"
-        ),
-        examples=[["2001"], ["2001", "2003"]],
-    )
-
-
-class DrugDetailRequest(BaseModel):
-    """
-    药品详情查询请求参数。
-
-    传参示例：
-    `{"product_id": ["2001", "2003"]}`
-    """
-
-    product_id: list[str] = Field(
-        min_length=1,
-        description=(
-            "药品商品ID字符串数组（List[str]），支持批量查询。"
-            "必须传 JSON 数组，不能传逗号拼接字符串。"
-        ),
-        examples=[["2001"], ["2001", "2003"]],
-    )
 
 
 @tool(
@@ -98,7 +43,7 @@ async def get_product_list(
         status: Optional[int] = None,
         min_price: Optional[float] = None,
         max_price: Optional[float] = None,
-) -> str:
+) -> dict:
     """搜索商城商品列表。"""
 
     async with HttpClient() as client:
@@ -112,11 +57,8 @@ async def get_product_list(
             "minPrice": min_price,
             "maxPrice": max_price,
         }
-        return await client.get(
-            url="/agent/product/list",
-            params=params,
-            include_envelope=True,
-        )
+        response = await client.get(url="/agent/admin/product/list", params=params)
+        return HttpResponse.parse_data(response)
 
 
 @tool(
@@ -135,16 +77,14 @@ async def get_product_list(
     error_message="获取商品详情失败",
     timely_message="商品详情正在持续处理中",
 )
-async def get_product_detail(product_id: list[str]) -> str:
+async def get_product_detail(product_id: list[str]) -> dict:
     """根据商品ID获取详细信息，支持批量查询。"""
 
     normalized_ids = _normalize_id_list(product_id, field_name="product_id")
     ids_str = format_ids_to_string(normalized_ids)
     async with HttpClient() as client:
-        return await client.get(
-            url=f"/agent/product/{ids_str}",
-            include_envelope=True,
-        )
+        response = await client.get(url=f"/agent/admin/product/{ids_str}")
+        return HttpResponse.parse_data(response)
 
 
 @tool(
@@ -163,16 +103,14 @@ async def get_product_detail(product_id: list[str]) -> str:
     error_message="获取药品详情失败",
     timely_message="药品详情正在持续处理中",
 )
-async def get_drug_detail(product_id: list[str]) -> str:
+async def get_drug_detail(product_id: list[str]) -> dict:
     """根据药品商品ID获取详细药品信息。"""
 
     normalized_ids = _normalize_id_list(product_id, field_name="product_id")
     ids_str = format_ids_to_string(normalized_ids)
     async with HttpClient() as client:
-        return await client.get(
-            url=f"/agent/product/drug/{ids_str}",
-            include_envelope=True,
-        )
+        response = await client.get(url=f"/agent/admin/product/drug/{ids_str}")
+        return HttpResponse.parse_data(response)
 
 
 _PRODUCT_SYSTEM_PROMPT = load_prompt("assistant/product_system_prompt.md")

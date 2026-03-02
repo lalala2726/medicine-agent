@@ -4,72 +4,20 @@ from typing import Optional
 
 from langchain_core.messages import SystemMessage
 from langchain_core.tools import tool
-from pydantic import BaseModel, Field
 
 from app.agent.assistant.tools.base_tools import _normalize_id_list, format_ids_to_string
+from app.agent.assistant.tools.schemas.order import (
+    MallOrderListRequest,
+    OrderDetailRequest,
+    OrderIdRequest,
+)
 from app.core.agent.agent_runtime import agent_invoke
 from app.core.agent.agent_tool_events import tool_call_status
 from app.core.langsmith import traceable
 from app.core.llm import create_agent
+from app.schemas.http_response import HttpResponse
 from app.utils.http_client import HttpClient
 from app.utils.prompt_utils import load_prompt
-
-
-class MallOrderListRequest(BaseModel):
-    """
-    商城订单列表查询请求参数。
-
-    传参说明：
-    1. 至少传分页参数 `page_num/page_size`；
-    2. 其余筛选字段按需传，不要构造无意义空值；
-    3. 推荐示例：
-       `{"page_num": 1, "page_size": 10, "receiver_name": "张三"}`。
-    """
-
-    page_num: Optional[int] = Field(default=1, description="页码，从 1 开始，默认为 1")
-    page_size: Optional[int] = Field(default=10, description="每页数量，建议 10-50，默认为 10")
-    order_no: Optional[str] = Field(
-        default=None,
-        description="订单编号，精确匹配，例如 'O2024010112345678'",
-    )
-    pay_type: Optional[str] = Field(
-        default=None,
-        description="支付方式编码，例如 'wechat' 表示微信支付，'alipay' 表示支付宝",
-    )
-    order_status: Optional[str] = Field(
-        default=None,
-        description="订单状态编码，例如 'pending' 待支付，'paid' 已支付，'shipped' 已发货，'completed' 已完成，'cancelled' 已取消",
-    )
-    delivery_type: Optional[str] = Field(
-        default=None,
-        description="配送方式编码，例如 'express' 快递配送，'pickup' 到店自提",
-    )
-    receiver_name: Optional[str] = Field(default=None, description="收货人姓名，支持模糊搜索")
-    receiver_phone: Optional[str] = Field(default=None, description="收货人手机号码，精确匹配")
-
-
-class OrderDetailRequest(BaseModel):
-    """
-    订单详情查询请求参数。
-
-    传参示例：
-    `{"order_id": ["O20260101", "O20260102"]}`
-    """
-
-    order_id: list[str] = Field(
-        min_length=1,
-        description=(
-            "订单ID字符串数组（List[str]），支持批量查询。"
-            "必须传 JSON 数组，不能传 'O1,O2' 这种字符串。"
-        ),
-        examples=[["O20260101"], ["O20260101", "O20260102"]],
-    )
-
-
-class OrderIdRequest(BaseModel):
-    """按订单 ID 查询请求参数。"""
-
-    order_id: int = Field(ge=1, description="订单 ID")
 
 
 @tool(
@@ -97,7 +45,7 @@ async def get_order_list(
         delivery_type: Optional[str] = None,
         receiver_name: Optional[str] = None,
         receiver_phone: Optional[str] = None,
-) -> str:
+) -> dict:
     """获取订单列表。"""
 
     async with HttpClient() as client:
@@ -111,11 +59,11 @@ async def get_order_list(
             "receiverName": receiver_name,
             "receiverPhone": receiver_phone,
         }
-        return await client.get(
+        response = await client.get(
             url="/agent/admin/order/list",
             params=params,
-            include_envelope=True,
         )
+        return HttpResponse.parse_data(response)
 
 
 @tool(
@@ -134,16 +82,16 @@ async def get_order_list(
     error_message="获取订单详情失败",
     timely_message="订单详情正在持续处理中",
 )
-async def get_orders_detail(order_id: list[str]) -> str:
+async def get_orders_detail(order_id: list[str]) -> dict:
     """获取订单详情，支持批量查询。"""
 
     normalized_ids = _normalize_id_list(order_id, field_name="order_id")
     ids_str = format_ids_to_string(normalized_ids)
     async with HttpClient() as client:
-        return await client.get(
+        response = await client.get(
             url=f"/agent/admin/order/{ids_str}",
-            include_envelope=True,
         )
+        return HttpResponse.parse_data(response)
 
 
 @tool(
@@ -159,14 +107,14 @@ async def get_orders_detail(order_id: list[str]) -> str:
     error_message="获取订单流程失败",
     timely_message="订单流程正在持续处理中",
 )
-async def get_order_timeline(order_id: int) -> str:
+async def get_order_timeline(order_id: int) -> dict:
     """根据订单 ID 查询订单流程（时间线）。"""
 
     async with HttpClient() as client:
-        return await client.get(
+        response = await client.get(
             url=f"/agent/admin/order/timeline/{order_id}",
-            include_envelope=True,
         )
+        return HttpResponse.parse_data(response)
 
 
 @tool(
@@ -182,14 +130,14 @@ async def get_order_timeline(order_id: int) -> str:
     error_message="获取发货记录失败",
     timely_message="发货记录正在持续处理中",
 )
-async def get_order_shipping(order_id: int) -> str:
+async def get_order_shipping(order_id: int) -> dict:
     """根据订单 ID 查询发货记录。"""
 
     async with HttpClient() as client:
-        return await client.get(
+        response = await client.get(
             url=f"/agent/admin/order/shipping/{order_id}",
-            include_envelope=True,
         )
+        return HttpResponse.parse_data(response)
 
 
 _ORDER_SYSTEM_PROMPT = load_prompt("assistant/order_system_prompt.md")

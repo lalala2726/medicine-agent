@@ -62,7 +62,6 @@ def test_get_admin_after_sale_list_maps_snake_case_to_backend_params(
                 "userId": 1001,
                 "applyReason": "DAMAGED",
             },
-            "response_format": "yaml",
             "include_envelope": True,
         }
     ]
@@ -81,7 +80,6 @@ def test_get_admin_after_sale_detail_uses_expected_path(
         {
             "url": "/agent/admin/after-sale/detail/30001",
             "params": None,
-            "response_format": "yaml",
             "include_envelope": True,
         }
     ]

@@ -2,7 +2,6 @@ import asyncio
 
 import httpx
 import pytest
-import yaml
 
 import app.utils.http_client as http_client_module
 from app.core.exception.exceptions import ServiceException
@@ -179,43 +178,6 @@ def test_http_client_returns_json_envelope_when_enabled(monkeypatch):
     }
 
 
-def test_http_client_returns_yaml_envelope_with_timestamp(monkeypatch):
-    client = HttpClient(base_url="http://example.com")
-
-    async def _fake_request(**kwargs):
-        return _build_response(
-            kwargs["method"],
-            str(kwargs["url"]),
-            json_body={
-                "code": 200,
-                "message": "OK",
-                "data": {"rows": [{"id": 1}], "total": 1},
-                "timestamp": 1730000000000,
-            },
-        )
-
-    monkeypatch.setattr(client._client, "request", _fake_request)
-
-    result = asyncio.run(
-        client.get(
-            "/yaml-envelope",
-            headers={"Authorization": "Bearer test"},
-            response_format="yaml",
-            include_envelope=True,
-        )
-    )
-    asyncio.run(client.close())
-
-    assert isinstance(result, str)
-    parsed = yaml.safe_load(result)
-    assert parsed == {
-        "code": 200,
-        "message": "OK",
-        "data": {"rows": [{"id": 1}], "total": 1},
-        "timestamp": 1730000000000,
-    }
-
-
 def test_http_client_raises_service_exception_for_non_success_business_code(monkeypatch):
     client = HttpClient(base_url="http://example.com")
 
@@ -233,7 +195,7 @@ def test_http_client_raises_service_exception_for_non_success_business_code(monk
             client.get(
                 "/biz-error",
                 headers={"Authorization": "Bearer test"},
-                response_format="yaml",
+                response_format="json",
                 include_envelope=True,
             )
         )

@@ -64,7 +64,6 @@ def test_get_order_list_maps_query_params_to_backend_params(
                 "receiverName": "张三",
                 "receiverPhone": "13800138000",
             },
-            "response_format": "yaml",
             "include_envelope": True,
         }
     ]
@@ -85,7 +84,6 @@ def test_get_orders_detail_formats_order_ids_into_path(
         {
             "url": "/agent/admin/order/O202601010001,O202601010002",
             "params": None,
-            "response_format": "yaml",
             "include_envelope": True,
         }
     ]
@@ -113,7 +111,6 @@ def test_order_timeline_and_shipping_use_expected_path(
         {
             "url": expected_url,
             "params": None,
-            "response_format": "yaml",
             "include_envelope": True,
         }
     ]

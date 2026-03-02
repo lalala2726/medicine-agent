@@ -4,41 +4,19 @@ from typing import Optional
 
 from langchain_core.messages import SystemMessage
 from langchain_core.tools import tool
-from pydantic import BaseModel, Field
 
+from app.agent.assistant.tools.schemas.user import (
+    AdminUserIdPageRequest,
+    AdminUserIdRequest,
+    AdminUserListQueryRequest,
+)
 from app.core.agent.agent_runtime import agent_invoke
 from app.core.agent.agent_tool_events import tool_call_status
 from app.core.langsmith import traceable
 from app.core.llm import create_agent
+from app.schemas.http_response import HttpResponse
 from app.utils.http_client import HttpClient
 from app.utils.prompt_utils import load_prompt
-
-
-class AdminUserListQueryRequest(BaseModel):
-    """管理端用户列表查询请求参数。"""
-
-    page_num: int = Field(default=1, ge=1, description="页码，从 1 开始")
-    page_size: int = Field(default=10, ge=1, le=200, description="每页数量，范围 1-200")
-    id: Optional[int] = Field(default=None, ge=1, description="用户 ID，精确匹配")
-    username: Optional[str] = Field(default=None, description="用户名，支持模糊查询")
-    nickname: Optional[str] = Field(default=None, description="昵称，支持模糊查询")
-    avatar: Optional[str] = Field(default=None, description="头像 URL，精确匹配")
-    roles: Optional[str] = Field(default=None, description="角色编码，例如 admin")
-    status: Optional[int] = Field(default=None, description="用户状态，例如 1 启用、0 禁用")
-    create_by: Optional[str] = Field(default=None, description="创建人")
-
-
-class AdminUserIdRequest(BaseModel):
-    """按用户 ID 查询请求参数。"""
-
-    user_id: int = Field(ge=1, description="用户 ID")
-
-
-class AdminUserIdPageRequest(AdminUserIdRequest):
-    """按用户 ID + 分页查询请求参数。"""
-
-    page_num: int = Field(default=1, ge=1, description="页码，从 1 开始")
-    page_size: int = Field(default=10, ge=1, le=200, description="每页数量，范围 1-200")
 
 
 @tool(
@@ -64,7 +42,7 @@ async def get_admin_user_list(
         roles: Optional[str] = None,
         status: Optional[int] = None,
         create_by: Optional[str] = None,
-) -> str:
+) -> dict:
     """分页查询管理端用户列表。"""
 
     async with HttpClient() as client:
@@ -79,11 +57,11 @@ async def get_admin_user_list(
             "status": status,
             "createBy": create_by,
         }
-        return await client.get(
+        response = await client.get(
             url="/agent/admin/user/list",
             params=params,
-            include_envelope=True,
         )
+        return HttpResponse.parse_data(response)
 
 
 @tool(
@@ -99,14 +77,14 @@ async def get_admin_user_list(
     error_message="查询用户详情失败",
     timely_message="用户详情正在持续处理中",
 )
-async def get_admin_user_detail(user_id: int) -> str:
+async def get_admin_user_detail(user_id: int) -> dict:
     """根据用户 ID 查询用户详情。"""
 
     async with HttpClient() as client:
-        return await client.get(
+        response = await client.get(
             url=f"/agent/admin/user/{user_id}/detail",
-            include_envelope=True,
         )
+        return HttpResponse.parse_data(response)
 
 
 @tool(
@@ -122,14 +100,14 @@ async def get_admin_user_detail(user_id: int) -> str:
     error_message="查询用户钱包失败",
     timely_message="用户钱包正在持续处理中",
 )
-async def get_admin_user_wallet(user_id: int) -> str:
+async def get_admin_user_wallet(user_id: int) -> dict:
     """根据用户 ID 查询钱包信息。"""
 
     async with HttpClient() as client:
-        return await client.get(
+        response = await client.get(
             url=f"/agent/admin/user/{user_id}/wallet",
-            include_envelope=True,
         )
+        return HttpResponse.parse_data(response)
 
 
 @tool(
@@ -149,7 +127,7 @@ async def get_admin_user_wallet_flow(
         user_id: int,
         page_num: int = 1,
         page_size: int = 10,
-) -> str:
+) -> dict:
     """根据用户 ID 分页查询钱包流水。"""
 
     async with HttpClient() as client:
@@ -157,11 +135,11 @@ async def get_admin_user_wallet_flow(
             "pageNum": page_num,
             "pageSize": page_size,
         }
-        return await client.get(
+        response = await client.get(
             url=f"/agent/admin/user/{user_id}/wallet_flow",
             params=params,
-            include_envelope=True,
         )
+        return HttpResponse.parse_data(response)
 
 
 @tool(
@@ -181,7 +159,7 @@ async def get_admin_user_consume_info(
         user_id: int,
         page_num: int = 1,
         page_size: int = 10,
-) -> str:
+) -> dict:
     """根据用户 ID 分页查询消费信息。"""
 
     async with HttpClient() as client:
@@ -189,11 +167,11 @@ async def get_admin_user_consume_info(
             "pageNum": page_num,
             "pageSize": page_size,
         }
-        return await client.get(
+        response = await client.get(
             url=f"/agent/admin/user/{user_id}/consume_info",
             params=params,
-            include_envelope=True,
         )
+        return HttpResponse.parse_data(response)
 
 
 _USER_SYSTEM_PROMPT = load_prompt("assistant/user_system_prompt.md")

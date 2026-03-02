@@ -43,10 +43,14 @@
   `MONGODB_DB_NAME` (defaults to `medicine_ai_agent`), `MONGODB_TIMEOUT_MS` (defaults to `3000`),
   `MONGODB_CONVERSATIONS_COLLECTION` (defaults to `conversations`), `MONGODB_MESSAGES_COLLECTION`
   (defaults to `messages`), `MONGODB_MESSAGE_TRACES_COLLECTION` (defaults to `message_traces`),
+  `MONGODB_MESSAGE_TTS_USAGES_COLLECTION` (defaults to `message_tts_usages`),
   `MONGODB_CONVERSATION_SUMMARIES_COLLECTION` (defaults to `conversation_summaries`),
   `MONGODB_STARTUP_PING_ENABLED` (default false, set true to fail fast
   on startup when MongoDB is unreachable/unauthorized).
 - Redis configuration (optional): `REDIS_URL`, `REDIS_HOST`, `REDIS_PORT`, `REDIS_DB`, `REDIS_PASSWORD`, `REDIS_SSL`.
+- Rate limit configuration (optional): `RATE_LIMIT_KEY_PREFIX` (defaults to `rate_limit`),
+  `RATE_LIMIT_TRUST_X_FORWARDED_FOR` (default false; when true, fallback to `X-Forwarded-For`
+  only if `request.client.host` is unavailable).
 - RQ configuration (optional): `RQ_QUEUE_NAME`, `RQ_DEFAULT_TIMEOUT`.
 - HTTP client configuration (optional): `HTTP_BASE_URL` (defaults to `http://localhost:8080`).
 - HTTP client logging (optional): `HTTP_CLIENT_LOG_ENABLED` (default false, set true to log request/response details).
@@ -60,4 +64,17 @@
   production.
 - LangSmith tracing (optional): `LANGSMITH_TRACING` (or legacy `LANGCHAIN_TRACING_V2`), `LANGSMITH_API_KEY`,
   `LANGSMITH_PROJECT`, `LANGSMITH_ENDPOINT`.
+- Volcengine shared speech auth configuration: `VOLCENGINE_APP_ID` (required),
+  `VOLCENGINE_ACCESS_TOKEN` (required) for both STT and TTS.
+- Volcengine bidirectional TTS configuration: `VOLCENGINE_TTS_ENDPOINT` (defaults to
+  `wss://openspeech.bytedance.com/api/v3/tts/bidirection`), `VOLCENGINE_TTS_RESOURCE_ID` (optional override),
+  `VOLCENGINE_TTS_VOICE_TYPE` (optional default voice), `VOLCENGINE_TTS_ENCODING` (defaults to `mp3`),
+  `VOLCENGINE_TTS_SAMPLE_RATE` (defaults to `24000`), `VOLCENGINE_TTS_MAX_TEXT_CHARS` (defaults to `300`,
+  max chars after sanitizer), `VOLCENGINE_TTS_STARTUP_CONNECT_ENABLED`
+  (default true, run startup pre-connect check), `VOLCENGINE_TTS_STARTUP_FAIL_FAST` (default false,
+  fail service startup when pre-connect check fails).
+- Volcengine streaming STT configuration: `VOLCENGINE_STT_RESOURCE_ID` (required),
+  `VOLCENGINE_STT_ENDPOINT` (defaults to `wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async`),
+  `VOLCENGINE_STT_MAX_DURATION_SECONDS` (defaults to `600`, server-side allowed max duration cap;
+  business code may pass shorter `session_duration_seconds`, default session duration is 60s).
 - Document new config values in this file when you introduce them.

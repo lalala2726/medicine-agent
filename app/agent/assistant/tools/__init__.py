@@ -16,7 +16,7 @@ from app.agent.assistant.tools.analytics_tool import (
     get_analytics_payment_distribution,
     get_analytics_product_return_rates,
 )
-from app.agent.assistant.tools.base_tools import get_user_info
+from app.agent.assistant.tools.base_tools import get_safe_user_info
 from app.agent.assistant.tools.order_tool import (
     get_order_list,
     get_order_shipping,
@@ -33,7 +33,7 @@ from app.agent.assistant.tools.user_tool import (
 )
 
 ADMIN_TOOLS = [
-    get_user_info,
+    get_safe_user_info,
     get_product_list,
     get_product_detail,
     get_order_list,
@@ -58,7 +58,7 @@ ADMIN_TOOLS = [
 
 __all__ = [
     "ADMIN_TOOLS",
-    "get_user_info",
+    "get_safe_user_info",
     "get_product_list",
     "get_product_detail",
     "get_order_list",
