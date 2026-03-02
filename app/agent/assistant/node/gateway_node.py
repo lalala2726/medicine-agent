@@ -22,7 +22,8 @@ _GATEWAY_PROMPT = load_prompt("assistant/gateway_prompt.md")
 def gateway_router(state: AgentState) -> dict[str, Any]:
     llm = create_chat_model(
         model="qwen-flash",
-        temperature=0.0,
+        temperature=1.0,
+        # todo 适配不同模型之前的输出 JSON 格式
         extra_body={"response_format": {"type": "json_object"}},
         think=False,
     )
