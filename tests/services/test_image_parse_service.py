@@ -21,6 +21,8 @@ class DummyModel:
 
 
 def test_parse_drug_images_normalizes_and_parses(monkeypatch):
+    """测试目的：验证图片解析调用按 extra_body 传递 JSON 格式；预期结果：模型参数包含 extra_body.response_format 且解析成功。"""
+
     capture = {}
     kwargs_capture = {}
 
@@ -36,7 +38,8 @@ def test_parse_drug_images_normalizes_and_parses(monkeypatch):
 
     assert result == {"ok": True}
     assert kwargs_capture["model"] == "qwen3-vl-plus"
-    assert kwargs_capture["response_format"] == {"type": "json_object"}
+    assert kwargs_capture["provider"] == image_parse_service.LlmProvider.ALIYUN
+    assert kwargs_capture["extra_body"]["response_format"] == {"type": "json_object"}
 
     messages = capture["messages"]
     assert len(messages) == 2
@@ -46,6 +49,8 @@ def test_parse_drug_images_normalizes_and_parses(monkeypatch):
 
 
 def test_parse_drug_images_raises_on_invalid_json(monkeypatch):
+    """测试目的：验证模型返回非法 JSON 时抛出业务异常；预期结果：抛出 INTERNAL_ERROR 且提示模型返回非 JSON。"""
+
     def fake_create_chat_model(**kwargs):
         return DummyModel("not-json", {})
 

@@ -36,6 +36,11 @@
 ## Security and Configuration
 
 - Do not commit secrets. The app expects `DASHSCOPE_API_KEY` in the environment for model calls.
+- OpenAI chat provider configuration (optional): `OPENAI_API_KEY` (required when provider is `openai`),
+  `OPENAI_BASE_URL` (defaults to `https://api.openai.com/v1`), `OPENAI_CHAT_MODEL` (defaults to `gpt-4o-mini`),
+  `OPENAI_IMAGE_MODEL` (defaults to `gpt-4o-mini`).
+- 管理助手对话接口（`POST /admin/assistant/chat`）支持请求参数 `enable_thinking`（默认 `false`），
+  仅在显式传 `true` 时透传深度思考流式事件（`type=thinking`）。
 - Embedding 配置：`DASHSCOPE_EMBEDDING_MODEL`（向量模型名称，必填）。
 - Milvus configuration (optional): `MILVUS_URI`, `MILVUS_USER`, `MILVUS_PASSWORD`, `MILVUS_TOKEN`, `MILVUS_DB_NAME`,
   `MILVUS_TIMEOUT`.

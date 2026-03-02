@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Literal
 
+from langchain.agents import create_agent
 from langchain_core.messages import SystemMessage
 from langchain_core.tools import tool
 
@@ -12,7 +13,7 @@ from app.agent.assistant.tools.schemas.analytics import (
 from app.core.agent.agent_runtime import agent_invoke
 from app.core.agent.agent_tool_events import tool_call_status
 from app.core.langsmith import traceable
-from app.core.llm import create_agent
+from app.core.llms import LlmProvider, create_chat_model
 from app.schemas.http_response import HttpResponse
 from app.utils.http_client import HttpClient
 from app.utils.prompt_utils import load_prompt
@@ -170,9 +171,13 @@ _ANALYTICS_SYSTEM_PROMPT = load_prompt("assistant/analytics_system_prompt.md")
 )
 @traceable(name="Supervisor Analytics Tool Agent", run_type="chain")
 def analytics_tool_agent(task_description: str) -> str:
-    agent = create_agent(
+    llm = create_chat_model(
         model="qwen-flash",
-        llm_kwargs={"temperature": 0.2},
+        provider=LlmProvider.ALIYUN,
+        temperature=0.2,
+    )
+    agent = create_agent(
+        model=llm,
         system_prompt=SystemMessage(content=_ANALYTICS_SYSTEM_PROMPT),
         tools=[
             get_analytics_overview,

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from langchain.agents import create_agent
 from langchain_core.messages import SystemMessage
 
 from app.agent.assistant.state import AgentState, ExecutionTraceState, GatewayRoutingState
@@ -10,7 +11,7 @@ from app.core.agent.agent_runtime import agent_invoke
 from app.core.agent.agent_tool_trace import record_agent_trace
 from app.core.agent.base_prompt_middleware import BasePromptMiddleware
 from app.core.langsmith import traceable
-from app.core.llm import create_agent
+from app.core.llms import LlmProvider, create_chat_model
 from app.services.token_usage_service import append_trace_and_refresh_token_usage
 from app.utils.prompt_utils import load_prompt
 
@@ -19,12 +20,14 @@ _GATEWAY_PROMPT = load_prompt("assistant/gateway_prompt.md")
 
 @traceable(name="Supervisor Gateway Router Node", run_type="chain")
 def gateway_router(state: AgentState) -> dict[str, Any]:
-    agent = create_agent(
+    llm = create_chat_model(
         model="qwen-flash",
-        llm_kwargs={
-            "temperature": 0.0,
-            "response_format": {"type": "json_object"},
-        },
+        provider=LlmProvider.ALIYUN,
+        temperature=0.0,
+        extra_body={"response_format": {"type": "json_object"}},
+    )
+    agent = create_agent(
+        model=llm,
         system_prompt=SystemMessage(content=_GATEWAY_PROMPT),
         middleware=[BasePromptMiddleware()],
     )

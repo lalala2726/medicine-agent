@@ -22,8 +22,15 @@ def test_sub_agent_tool_returns_tool_message_with_trace_artifact(
         tool_obj,
         response_text: str,
 ) -> None:
+    captured: dict[str, object] = {}
     fake_agent = object()
-    monkeypatch.setattr(module, "create_agent", lambda **_kwargs: fake_agent)
+    fake_llm = object()
+    monkeypatch.setattr(module, "create_chat_model", lambda **_kwargs: fake_llm)
+    monkeypatch.setattr(
+        module,
+        "create_agent",
+        lambda **kwargs: (captured.setdefault("create_agent_kwargs", kwargs), fake_agent)[1],
+    )
     monkeypatch.setattr(
         module,
         "agent_invoke",
@@ -34,13 +41,21 @@ def test_sub_agent_tool_returns_tool_message_with_trace_artifact(
 
     assert isinstance(result, str)
     assert result == response_text
+    assert captured["create_agent_kwargs"]["model"] is fake_llm
 
 
 def test_order_sub_agent_returns_fallback_message_when_result_empty(
         monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    captured: dict[str, object] = {}
     fake_agent = object()
-    monkeypatch.setattr(order_tool, "create_agent", lambda **_kwargs: fake_agent)
+    fake_llm = object()
+    monkeypatch.setattr(order_tool, "create_chat_model", lambda **_kwargs: fake_llm)
+    monkeypatch.setattr(
+        order_tool,
+        "create_agent",
+        lambda **kwargs: (captured.setdefault("create_agent_kwargs", kwargs), fake_agent)[1],
+    )
     monkeypatch.setattr(
         order_tool,
         "agent_invoke",
@@ -51,3 +66,4 @@ def test_order_sub_agent_returns_fallback_message_when_result_empty(
 
     assert isinstance(result, str)
     assert result == "暂无数据"
+    assert captured["create_agent_kwargs"]["model"] is fake_llm

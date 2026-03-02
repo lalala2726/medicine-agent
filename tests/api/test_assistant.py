@@ -290,6 +290,67 @@ def test_assistant_request_defaults_conversation_uuid_to_none(monkeypatch):
     assert captured["conversation_uuid"] is None
 
 
+def test_assistant_route_passes_enable_thinking_when_true(monkeypatch):
+    """测试目的：验证路由在开启深度思考时透传开关；预期结果：service 收到 enable_thinking=True。"""
+
+    captured: dict = {}
+    _mock_auth(monkeypatch)
+
+    def _fake_assistant_chat(
+            *,
+            question: str,
+            conversation_uuid: str | None = None,
+            enable_thinking: bool = False,
+    ):
+        captured["question"] = question
+        captured["conversation_uuid"] = conversation_uuid
+        captured["enable_thinking"] = enable_thinking
+        return _build_streaming_response("ok")
+
+    monkeypatch.setattr(assistant_module, "assistant_chat", _fake_assistant_chat)
+    client = TestClient(app)
+
+    response = client.post(
+        "/admin/assistant/chat",
+        headers=_auth_headers(),
+        json={"question": "思考开关", "enable_thinking": True},
+    )
+
+    assert response.status_code == 200
+    assert captured == {
+        "question": "思考开关",
+        "conversation_uuid": None,
+        "enable_thinking": True,
+    }
+
+
+def test_assistant_route_keeps_backward_signature_when_thinking_disabled(monkeypatch):
+    """测试目的：验证默认不开启时不传额外参数；预期结果：旧签名 service 仍可正常调用。"""
+
+    captured: dict = {}
+    _mock_auth(monkeypatch)
+
+    def _fake_assistant_chat(*, question: str, conversation_uuid: str | None = None):
+        captured["question"] = question
+        captured["conversation_uuid"] = conversation_uuid
+        return _build_streaming_response("ok")
+
+    monkeypatch.setattr(assistant_module, "assistant_chat", _fake_assistant_chat)
+    client = TestClient(app)
+
+    response = client.post(
+        "/admin/assistant/chat",
+        headers=_auth_headers(),
+        json={"question": "默认不开启", "enable_thinking": False},
+    )
+
+    assert response.status_code == 200
+    assert captured == {
+        "question": "默认不开启",
+        "conversation_uuid": None,
+    }
+
+
 def test_assistant_route_new_conversation_stream_first_notice_contains_conversation_and_message_uuid(monkeypatch):
     captured: dict = {}
     _mock_auth(monkeypatch)

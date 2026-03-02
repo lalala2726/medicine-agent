@@ -498,6 +498,7 @@ def test_assistant_chat_schedules_user_persist_without_blocking_main_flow(monkey
     initial_state = stream_config.build_initial_state("x")
     assert "context" in initial_state
     assert "messages" in initial_state
+    assert initial_state["enable_thinking"] is False
     assert [message.content for message in initial_state["history_messages"]] == [
         "历史问题",
         "历史回答",
@@ -529,6 +530,73 @@ def test_assistant_chat_schedules_user_persist_without_blocking_main_flow(monkey
             "content": "代理测试",
         }
     ]
+
+
+def test_assistant_chat_injects_enable_thinking_flag_into_initial_state(monkeypatch):
+    """测试目的：验证开启深度思考时状态透传生效；预期结果：initial_state.enable_thinking 为 True。"""
+
+    captured: dict = {}
+
+    def _fake_create_streaming_response(question: str, config: AssistantStreamConfig):
+        captured["question"] = question
+        captured["config"] = config
+
+        async def _stream():
+            yield (
+                    "data: "
+                    + json.dumps(
+                {
+                    "content": {"text": ""},
+                    "type": "answer",
+                    "is_end": True,
+                    "timestamp": 1,
+                },
+                ensure_ascii=False,
+            )
+                    + "\n\n"
+            )
+
+        return StreamingResponse(_stream(), media_type="text/event-stream")
+
+    monkeypatch.setattr(service_module, "create_streaming_response", _fake_create_streaming_response)
+    monkeypatch.setattr(service_module, "get_user_id", lambda: 100)
+    monkeypatch.setattr(service_module.uuid, "uuid4", lambda: "assistant-msg-uuid")
+    monkeypatch.setattr(
+        service_module,
+        "get_admin_conversation",
+        lambda *, conversation_uuid, user_id: ConversationDocument(
+            _id=ObjectId("507f1f77bcf86cd799439011"),
+            uuid=conversation_uuid,
+            conversation_type=ConversationType.ADMIN,
+            user_id=user_id,
+            title="会话标题",
+            create_time=datetime.datetime(2026, 1, 1, 10, 0, 0),
+            update_time=datetime.datetime(2026, 1, 1, 10, 0, 0),
+            is_deleted=0,
+        ),
+    )
+    monkeypatch.setattr(
+        service_module,
+        "load_history",
+        lambda **_kwargs: [HumanMessage(content="历史问题"), AIMessage(content="历史回答")],
+    )
+    monkeypatch.setattr(
+        service_module,
+        "_schedule_background_task",
+        lambda *, task_name, func, kwargs: None,
+    )
+
+    response = service_module.assistant_chat(
+        question="开启思考",
+        conversation_uuid="conv-1",
+        enable_thinking=True,
+    )
+
+    assert isinstance(response, StreamingResponse)
+    assert captured["question"] == "开启思考"
+    stream_config = captured["config"]
+    initial_state = stream_config.build_initial_state("x")
+    assert initial_state["enable_thinking"] is True
 
 
 def test_answer_completed_schedules_async_persist_with_execution_trace(monkeypatch):

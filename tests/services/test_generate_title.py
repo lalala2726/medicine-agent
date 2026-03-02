@@ -1,20 +1,27 @@
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 from langchain_core.messages import AIMessage, SystemMessage, HumanMessage
 from app.services.admin_assistant_service import generate_title
 
 def test_generate_title_with_valid_input(monkeypatch):
-    """测试正常生成标题的情况"""
+    """测试目的：验证标题生成主流程包含阿里云 provider 参数；预期结果：返回模型标题且 create_chat_model 收到 provider=ALIYUN。"""
     mock_llm = MagicMock()
     mock_llm.invoke.return_value = AIMessage(content="感冒灵销量查询")
-    
-    monkeypatch.setattr("app.services.admin_assistant_service.create_chat_model", lambda **kwargs: mock_llm)
+
+    captured_kwargs = {}
+
+    def _fake_create_chat_model(**kwargs):
+        captured_kwargs.update(kwargs)
+        return mock_llm
+
+    monkeypatch.setattr("app.services.admin_assistant_service.create_chat_model", _fake_create_chat_model)
     monkeypatch.setattr("app.services.admin_assistant_service.load_prompt", lambda path: "# 模拟提示词")
-    
+
     title = generate_title("帮我查查感冒灵卖了多少")
-    
+
     assert title == "感冒灵销量查询"
     # 验证模型参数
+    assert captured_kwargs["provider"].value == "aliyun"
     mock_llm.invoke.assert_called_once()
     messages = mock_llm.invoke.call_args[0][0]
     assert isinstance(messages[0], SystemMessage)
@@ -22,12 +29,12 @@ def test_generate_title_with_valid_input(monkeypatch):
     assert messages[1].content == "帮我查查感冒灵卖了多少"
 
 def test_generate_title_empty_input():
-    """测试空输入返回兜底标题"""
+    """测试目的：验证空输入走兜底标题逻辑；预期结果：返回“未知标题”。"""
     assert generate_title("") == "未知标题"
     assert generate_title(None) == "未知标题"
 
 def test_generate_title_llm_returns_empty(monkeypatch):
-    """测试模型返回为空的情况"""
+    """测试目的：验证模型返回空文本时走兜底标题；预期结果：返回“未知标题”。"""
     mock_llm = MagicMock()
     mock_llm.invoke.return_value = AIMessage(content="")
     
@@ -38,7 +45,7 @@ def test_generate_title_llm_returns_empty(monkeypatch):
     assert title == "未知标题"
 
 def test_generate_title_strips_whitespace(monkeypatch):
-    """测试自动去除首尾空格"""
+    """测试目的：验证标题结果会去除首尾空白；预期结果：返回去空格后的标题文本。"""
     mock_llm = MagicMock()
     mock_llm.invoke.return_value = AIMessage(content="  有空格的标题  ")
     

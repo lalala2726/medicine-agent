@@ -19,7 +19,7 @@ from app.core.agent.agent_orchestrator import (
 from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException
 from app.core.langsmith import build_langsmith_runnable_config
-from app.core.llm import create_chat_model
+from app.core.llms import LlmProvider, create_chat_model
 from app.core.speech import build_message_tts_stream
 from app.core.security.auth_context import get_user_id
 from app.schemas.admin_assistant_history import ConversationMessageResponse
@@ -108,11 +108,20 @@ def _build_initial_state(
         question: str,
         *,
         history_messages: list[ChatHistoryMessage] | None = None,
+        enable_thinking: bool = False,
 ) -> dict[str, Any]:
     """
     构造管理助手的初始状态。
 
     所有节点共享该状态结构，避免执行过程中出现缺失键导致的分支判断复杂化。
+
+    Args:
+        question: 当前用户问题文本；当前实现仅用于接口语义占位，不参与状态构造。
+        history_messages: 会话历史消息列表；为空时默认空列表。
+        enable_thinking: 是否开启深度思考透传；默认 `False`。
+
+    Returns:
+        dict[str, Any]: LangGraph 初始状态字典，包含路由、历史、消息与透传开关等字段。
     """
 
     _ = question
@@ -125,6 +134,7 @@ def _build_initial_state(
         },
         "context": "",
         "history_messages": base_history,
+        "enable_thinking": bool(enable_thinking),
         "execution_traces": [],
         "token_usage": None,
         "result": "",
@@ -541,7 +551,12 @@ def _prepare_conversation_context(
     )
 
 
-def assistant_chat(*, question: str, conversation_uuid: str | None = None) -> StreamingResponse:
+def assistant_chat(
+        *,
+        question: str,
+        conversation_uuid: str | None = None,
+        enable_thinking: bool = False,
+) -> StreamingResponse:
     """
     管理助手聊天入口（SSE 流式返回）。
 
@@ -553,6 +568,14 @@ def assistant_chat(*, question: str, conversation_uuid: str | None = None) -> St
     5. AI 回复会在流结束后后台写入消息表（空输出也会落库 error 兜底文案）；
     6. 标题生成与保存在后台并行执行，不阻塞当前流式响应。
     7. 会话准备逻辑由 `_prepare_conversation_context` 统一处理。
+
+    Args:
+        question: 用户输入问题文本。
+        conversation_uuid: 可选会话 UUID；为空时创建新会话。
+        enable_thinking: 是否开启深度思考流式透传；默认 `False`。
+
+    Returns:
+        StreamingResponse: 标准 SSE 流式响应对象。
     """
 
     current_user_id = get_user_id()
@@ -578,6 +601,7 @@ def assistant_chat(*, question: str, conversation_uuid: str | None = None) -> St
         build_initial_state=lambda q: _build_initial_state(
             q,
             history_messages=context.history_messages,
+            enable_thinking=enable_thinking,
         ),
         extract_final_content=lambda state: str(state.get("result") or ""),
         should_stream_token=_should_stream_token,
@@ -800,6 +824,7 @@ def generate_title(question: str) -> str:
 
     llm_model = create_chat_model(
         model="qwen-flash",
+        provider=LlmProvider.ALIYUN,
         temperature=0.3
     )
     messages = [

@@ -11,6 +11,18 @@ import app.agent.assistant.tools.order_tool as order_tool
 def _install_http_mocks(monkeypatch: pytest.MonkeyPatch, *, parsed_result: str):
     calls: list[dict] = []
 
+    class FakeResponse:
+        def __init__(self, data):
+            self._data = data
+            self.status_code = 200
+
+        def json(self):
+            return {
+                "code": 200,
+                "message": "ok",
+                "data": self._data,
+            }
+
     class FakeHttpClient:
         def __init__(self, **_kwargs):
             pass
@@ -23,7 +35,7 @@ def _install_http_mocks(monkeypatch: pytest.MonkeyPatch, *, parsed_result: str):
 
         async def get(self, url: str, params=None, **kwargs):
             calls.append({"url": url, "params": params, **kwargs})
-            return parsed_result
+            return FakeResponse(parsed_result)
 
     monkeypatch.setattr(order_tool, "HttpClient", FakeHttpClient)
     return calls
@@ -64,7 +76,6 @@ def test_get_order_list_maps_query_params_to_backend_params(
                 "receiverName": "张三",
                 "receiverPhone": "13800138000",
             },
-            "include_envelope": True,
         }
     ]
 
@@ -84,7 +95,6 @@ def test_get_orders_detail_formats_order_ids_into_path(
         {
             "url": "/agent/admin/order/O202601010001,O202601010002",
             "params": None,
-            "include_envelope": True,
         }
     ]
 
@@ -111,7 +121,6 @@ def test_order_timeline_and_shipping_use_expected_path(
         {
             "url": expected_url,
             "params": None,
-            "include_envelope": True,
         }
     ]
 
@@ -121,6 +130,11 @@ def test_order_tool_agent_builds_expected_tools_and_returns_agent_output(
 ) -> None:
     captured: dict = {}
     fake_agent = object()
+    fake_llm = object()
+
+    def _fake_create_chat_model(**kwargs):
+        captured["create_chat_model_kwargs"] = kwargs
+        return fake_llm
 
     def _fake_create_agent(**kwargs):
         captured["create_agent_kwargs"] = kwargs
@@ -131,6 +145,7 @@ def test_order_tool_agent_builds_expected_tools_and_returns_agent_output(
         captured["history_messages"] = history_messages
         return SimpleNamespace(content="订单子代理结果")
 
+    monkeypatch.setattr(order_tool, "create_chat_model", _fake_create_chat_model)
     monkeypatch.setattr(order_tool, "create_agent", _fake_create_agent)
     monkeypatch.setattr(order_tool, "agent_invoke", _fake_agent_invoke)
 
@@ -140,9 +155,14 @@ def test_order_tool_agent_builds_expected_tools_and_returns_agent_output(
     assert captured["agent"] is fake_agent
     assert captured["history_messages"] == "查询订单发货记录"
 
+    assert captured["create_chat_model_kwargs"] == {
+        "model": "qwen-flash",
+        "provider": order_tool.LlmProvider.ALIYUN,
+        "temperature": 0.2,
+    }
+
     create_agent_kwargs = captured["create_agent_kwargs"]
-    assert create_agent_kwargs["model"] == "qwen-flash"
-    assert create_agent_kwargs["llm_kwargs"] == {"temperature": 0.2}
+    assert create_agent_kwargs["model"] is fake_llm
     assert create_agent_kwargs["tools"] == [
         order_tool.get_order_list,
         order_tool.get_orders_detail,

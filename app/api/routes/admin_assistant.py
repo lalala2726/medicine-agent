@@ -57,6 +57,10 @@ class AssistantRequest(BaseModel):
         min_length=1,
         description="会话UUID",
     )
+    enable_thinking: bool = Field(
+        default=False,
+        description="是否开启深度思考流式透传",
+    )
 
     @field_validator("question")
     @classmethod
@@ -193,8 +197,23 @@ def _build_update_conversation_title_response(
     lambda: has_role(RoleCode.SUPER_ADMIN) or has_permission("admin:assistant:access")
 )
 async def assistant(_request: Request, request: AssistantRequest) -> StreamingResponse:
-    """管理助手聊天入口（SSE 流式返回，基于 Gateway + Supervisor 工作流）。"""
+    """
+    管理助手聊天入口（SSE 流式返回，基于 Gateway + Supervisor 工作流）。
 
+    Args:
+        _request: FastAPI 原始请求对象（当前实现仅用于依赖注入与中间件链路）。
+        request: 聊天请求体，包含问题、会话 UUID 与可选 `enable_thinking` 开关。
+
+    Returns:
+        StreamingResponse: SSE 流式响应对象。
+    """
+
+    if request.enable_thinking:
+        return assistant_chat(
+            question=request.question,
+            conversation_uuid=request.conversation_uuid,
+            enable_thinking=True,
+        )
     return assistant_chat(
         question=request.question,
         conversation_uuid=request.conversation_uuid,

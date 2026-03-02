@@ -18,6 +18,7 @@ class Content(BaseModel):
 
 class MessageType(str, Enum):
     ANSWER = "answer"
+    THINKING = "thinking"
     FUNCTION_CALL = "function_call"
     TOOL_RESPONSE = "tool_response"
     STATUS = "status"
