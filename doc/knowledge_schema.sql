@@ -1,0 +1,172 @@
+-- ============================================================
+-- Knowledge Metadata Schema (MySQL 8.0)
+-- Path: doc/knowledge_schema.sql
+-- Notes:
+-- 1) This schema stores business metadata only.
+-- 2) Chunk detail and vectors stay in Milvus.
+-- 3) Soft delete is enabled for all tables.
+-- ============================================================
+
+SET NAMES utf8mb4;
+SET FOREIGN_KEY_CHECKS = 0;
+
+-- ------------------------------------------------------------
+-- Table: knowledge_base
+-- Purpose: knowledge base master metadata for list pages
+-- ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `knowledge_base` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT 'Primary key',
+  `knowledge_name` VARCHAR(128) NOT NULL COMMENT 'Unique knowledge name used as business key',
+  `display_name` VARCHAR(255) NOT NULL COMMENT 'Display name shown in UI',
+  `description` VARCHAR(1024) NOT NULL DEFAULT '' COMMENT 'Knowledge base description',
+  `milvus_collection_name` VARCHAR(128) NOT NULL COMMENT 'Milvus collection name bound to this knowledge base',
+  `embedding_model` VARCHAR(128) NOT NULL DEFAULT '' COMMENT 'Embedding model identifier',
+  `embedding_dim` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT 'Embedding vector dimension',
+  `status` VARCHAR(32) NOT NULL DEFAULT 'ACTIVE' COMMENT 'Record status, for example ACTIVE or DISABLED',
+  `create_by` VARCHAR(64) NOT NULL DEFAULT '' COMMENT 'Creator account',
+  `update_by` VARCHAR(64) NOT NULL DEFAULT '' COMMENT 'Last updater account',
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT 'Creation time',
+  `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT 'Last update time',
+  `is_deleted` TINYINT(1) NOT NULL DEFAULT 0 COMMENT 'Soft delete flag: 0 = active, 1 = deleted',
+  `deleted_at` DATETIME(3) NULL DEFAULT NULL COMMENT 'Soft delete timestamp',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_kb_name_deleted` (`knowledge_name`, `is_deleted`),
+  KEY `idx_kb_status_deleted` (`status`, `is_deleted`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Knowledge base master table';
+
+-- ------------------------------------------------------------
+-- Table: knowledge_document
+-- Purpose: uploaded file metadata under a knowledge base
+-- ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `knowledge_document` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT 'Primary key',
+  `knowledge_base_id` BIGINT UNSIGNED NOT NULL COMMENT 'Foreign key to knowledge_base.id',
+  `file_name` VARCHAR(255) NOT NULL COMMENT 'Original file name',
+  `file_url` VARCHAR(2048) NOT NULL COMMENT 'File URL managed by SpringBoot side',
+  `file_sha256` CHAR(64) NOT NULL COMMENT 'File content SHA-256 hash',
+  `file_size` BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT 'File size in bytes',
+  `mime_type` VARCHAR(255) NOT NULL DEFAULT '' COMMENT 'File MIME type',
+  `parse_images` TINYINT(1) NOT NULL DEFAULT 0 COMMENT 'Whether image parsing is enabled: 0 no, 1 yes',
+  `version` INT UNSIGNED NOT NULL DEFAULT 1 COMMENT 'Reserved document version field',
+  `status` VARCHAR(16) NOT NULL DEFAULT 'PENDING' COMMENT 'Index status: PENDING, RUNNING, SUCCESS, FAILED',
+  `last_error` VARCHAR(2000) NOT NULL DEFAULT '' COMMENT 'Last error message if processing failed',
+  `create_by` VARCHAR(64) NOT NULL DEFAULT '' COMMENT 'Creator account',
+  `update_by` VARCHAR(64) NOT NULL DEFAULT '' COMMENT 'Last updater account',
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT 'Creation time',
+  `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT 'Last update time',
+  `is_deleted` TINYINT(1) NOT NULL DEFAULT 0 COMMENT 'Soft delete flag: 0 = active, 1 = deleted',
+  `deleted_at` DATETIME(3) NULL DEFAULT NULL COMMENT 'Soft delete timestamp',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_doc_kb_sha_deleted` (`knowledge_base_id`, `file_sha256`, `is_deleted`),
+  KEY `idx_doc_kb_status` (`knowledge_base_id`, `status`, `is_deleted`),
+  CONSTRAINT `fk_doc_kb` FOREIGN KEY (`knowledge_base_id`) REFERENCES `knowledge_base` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Document metadata table';
+
+-- ------------------------------------------------------------
+-- Table: knowledge_import_task
+-- Purpose: import execution tracking and status history
+-- ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `knowledge_import_task` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT 'Primary key',
+  `knowledge_base_id` BIGINT UNSIGNED NOT NULL COMMENT 'Foreign key to knowledge_base.id',
+  `document_id` BIGINT UNSIGNED NOT NULL COMMENT 'Foreign key to knowledge_document.id',
+  `task_uuid` CHAR(36) NOT NULL COMMENT 'Task UUID generated by caller',
+  `trigger_source` VARCHAR(32) NOT NULL DEFAULT 'SPRINGBOOT_HTTP' COMMENT 'Task trigger source',
+  `status` VARCHAR(16) NOT NULL DEFAULT 'PENDING' COMMENT 'Task status: PENDING, RUNNING, SUCCESS, FAILED',
+  `progress` DECIMAL(5,2) NOT NULL DEFAULT 0.00 COMMENT 'Progress percentage in [0, 100]',
+  `chunk_strategy` VARCHAR(32) NOT NULL DEFAULT 'character' COMMENT 'Chunk strategy snapshot',
+  `chunk_size` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT 'Chunk size snapshot for character strategy',
+  `token_size` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT 'Token size snapshot for token strategy',
+  `chunk_overlap` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT 'Chunk overlap snapshot',
+  `parse_images` TINYINT(1) NOT NULL DEFAULT 0 COMMENT 'Image parse switch snapshot: 0 no, 1 yes',
+  `started_at` DATETIME(3) NULL DEFAULT NULL COMMENT 'Task start time',
+  `finished_at` DATETIME(3) NULL DEFAULT NULL COMMENT 'Task finish time',
+  `error_message` VARCHAR(2000) NOT NULL DEFAULT '' COMMENT 'Error detail when task failed',
+  `create_by` VARCHAR(64) NOT NULL DEFAULT '' COMMENT 'Creator account',
+  `update_by` VARCHAR(64) NOT NULL DEFAULT '' COMMENT 'Last updater account',
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT 'Creation time',
+  `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT 'Last update time',
+  `is_deleted` TINYINT(1) NOT NULL DEFAULT 0 COMMENT 'Soft delete flag: 0 = active, 1 = deleted',
+  `deleted_at` DATETIME(3) NULL DEFAULT NULL COMMENT 'Soft delete timestamp',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_task_uuid_deleted` (`task_uuid`, `is_deleted`),
+  KEY `idx_task_doc_status` (`document_id`, `status`, `is_deleted`),
+  KEY `idx_task_kb_created` (`knowledge_base_id`, `created_at`),
+  CONSTRAINT `fk_task_kb` FOREIGN KEY (`knowledge_base_id`) REFERENCES `knowledge_base` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `fk_task_doc` FOREIGN KEY (`document_id`) REFERENCES `knowledge_document` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Knowledge import task table';
+
+-- ------------------------------------------------------------
+-- Table: knowledge_document_index
+-- Purpose: index snapshot metadata to align document and vector index
+-- ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `knowledge_document_index` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT 'Primary key',
+  `knowledge_base_id` BIGINT UNSIGNED NOT NULL COMMENT 'Foreign key to knowledge_base.id',
+  `document_id` BIGINT UNSIGNED NOT NULL COMMENT 'Foreign key to knowledge_document.id',
+  `index_version` INT UNSIGNED NOT NULL DEFAULT 1 COMMENT 'Reserved index version field',
+  `index_status` VARCHAR(16) NOT NULL DEFAULT 'PENDING' COMMENT 'Index status: PENDING, RUNNING, SUCCESS, FAILED',
+  `chunk_count` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT 'Chunk count generated for this index',
+  `token_count` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT 'Token count generated for this index',
+  `chunk_strategy` VARCHAR(32) NOT NULL DEFAULT 'character' COMMENT 'Chunk strategy snapshot',
+  `chunk_size` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT 'Chunk size snapshot',
+  `token_size` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT 'Token size snapshot',
+  `chunk_overlap` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT 'Chunk overlap snapshot',
+  `embedding_model` VARCHAR(128) NOT NULL DEFAULT '' COMMENT 'Embedding model snapshot',
+  `embedding_dim` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT 'Embedding dimension snapshot',
+  `milvus_collection_name` VARCHAR(128) NOT NULL DEFAULT '' COMMENT 'Milvus collection snapshot',
+  `source_hash` CHAR(64) NOT NULL DEFAULT '' COMMENT 'Source content hash snapshot',
+  `last_indexed_at` DATETIME(3) NULL DEFAULT NULL COMMENT 'Last successful index time',
+  `error_message` VARCHAR(2000) NOT NULL DEFAULT '' COMMENT 'Error detail when indexing failed',
+  `create_by` VARCHAR(64) NOT NULL DEFAULT '' COMMENT 'Creator account',
+  `update_by` VARCHAR(64) NOT NULL DEFAULT '' COMMENT 'Last updater account',
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT 'Creation time',
+  `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT 'Last update time',
+  `is_deleted` TINYINT(1) NOT NULL DEFAULT 0 COMMENT 'Soft delete flag: 0 = active, 1 = deleted',
+  `deleted_at` DATETIME(3) NULL DEFAULT NULL COMMENT 'Soft delete timestamp',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_index_doc_ver_deleted` (`document_id`, `index_version`, `is_deleted`),
+  KEY `idx_index_doc_status` (`document_id`, `index_status`, `is_deleted`),
+  CONSTRAINT `fk_index_kb` FOREIGN KEY (`knowledge_base_id`) REFERENCES `knowledge_base` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `fk_index_doc` FOREIGN KEY (`document_id`) REFERENCES `knowledge_document` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Document index snapshot table';
+
+SET FOREIGN_KEY_CHECKS = 1;
+
+-- ============================================================
+-- Example queries for backend integration
+-- ============================================================
+
+-- 1) Knowledge base list page
+-- SELECT id, knowledge_name, display_name, status, updated_at
+-- FROM knowledge_base
+-- WHERE is_deleted = 0
+-- ORDER BY id DESC
+-- LIMIT :offset, :page_size;
+
+-- 2) Document list under one knowledge base
+-- SELECT id, knowledge_base_id, file_name, file_url, status, updated_at
+-- FROM knowledge_document
+-- WHERE knowledge_base_id = :knowledge_base_id
+--   AND is_deleted = 0
+-- ORDER BY id DESC
+-- LIMIT :offset, :page_size;
+
+-- 3) Import task list for one document
+-- SELECT id, task_uuid, status, progress, error_message, started_at, finished_at, created_at
+-- FROM knowledge_import_task
+-- WHERE document_id = :document_id
+--   AND is_deleted = 0
+-- ORDER BY id DESC
+-- LIMIT :offset, :page_size;
+
+-- 4) Index snapshot details for one document
+-- SELECT id, index_version, index_status, chunk_count, token_count,
+--        chunk_strategy, chunk_size, token_size, chunk_overlap,
+--        embedding_model, embedding_dim, milvus_collection_name,
+--        source_hash, last_indexed_at, error_message
+-- FROM knowledge_document_index
+-- WHERE document_id = :document_id
+--   AND is_deleted = 0
+-- ORDER BY index_version DESC
+-- LIMIT :offset, :page_size;

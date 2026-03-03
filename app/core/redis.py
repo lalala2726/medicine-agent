@@ -28,7 +28,7 @@ def _parse_bool(value: Optional[str]) -> bool:
 
 @lru_cache(maxsize=1)
 def get_redis_connection() -> Redis:
-    """Create and cache a Redis connection for RQ usage."""
+    """Create and cache a Redis connection for shared infrastructure usage (for example rate limit)."""
     redis_url = os.getenv("REDIS_URL")
     if redis_url:
         return Redis.from_url(redis_url)
@@ -39,7 +39,7 @@ def get_redis_connection() -> Redis:
     password = os.getenv("REDIS_PASSWORD")
     ssl_enabled = _parse_bool(os.getenv("REDIS_SSL"))
 
-    # decode_responses defaults to False to keep payloads as bytes for RQ.
+    # decode_responses defaults to False to keep payloads as bytes for script operations.
     return Redis(
         host=host,
         port=port,

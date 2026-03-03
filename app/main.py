@@ -13,6 +13,10 @@ from starlette.responses import Response
 from app.api.main import api_router
 from app.core.exception.exception_handlers import ExceptionHandlers
 from app.core.exception.exceptions import ServiceException
+from app.core.mq.lifecycle import (
+    start_import_consumer_if_enabled,
+    stop_import_consumer,
+)
 from app.core.security.anonymous_access import is_anonymous_request
 from app.core.security.auth_context import (
     reset_authorization_header,
@@ -61,7 +65,11 @@ async def lifespan(_app: FastAPI):
             if isinstance(result, Exception):
                 raise result
         _speech_startup_probe_done = True
-    yield
+    await start_import_consumer_if_enabled()
+    try:
+        yield
+    finally:
+        await stop_import_consumer()
 
 
 app = FastAPI(

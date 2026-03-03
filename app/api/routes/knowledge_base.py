@@ -1,6 +1,6 @@
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Path, Query
+from fastapi import APIRouter, Depends, Path, Query
 from pydantic import BaseModel, Field, field_validator
 
 from app.core.exception.exceptions import ServiceException
@@ -10,8 +10,8 @@ from app.services.knowledge_base_service import (
     create_collection,
     delete_document,
     delete_knowledge,
-    import_knowledge_service,
     list_knowledge_chunks,
+    submit_import_to_queue,
 )
 
 router = APIRouter(prefix="/knowledge_base", tags=["知识库管理"])
@@ -170,25 +170,26 @@ async def delete_document_chunk(
 @router.post(path="/document/import", summary="导入知识库")
 async def import_knowledge(
         request: ImportKnowledgeRequest,
-        background_tasks: BackgroundTasks
 ) -> ApiResponse[str]:
     """
-    导入知识库（后台异步处理）
+    功能描述:
+        接收导入请求并提交到 MQ 异步队列，立即返回受理结果。
 
-    Args:
-        request: 导入知识库请求参数
-        background_tasks: 后台任务管理器
+    参数说明:
+        request (ImportKnowledgeRequest): 导入请求体，包含知识库、文档与切片参数。
 
-    Returns:
-        ApiResponse[str]: 导入请求已接收响应
+    返回值:
+        ApiResponse[str]: 受理成功响应，不等待导入处理完成。
+
+    异常说明:
+        ServiceException: 参数校验失败或 MQ 提交失败时由下游抛出。
     """
-    background_tasks.add_task(
-        import_knowledge_service,
-        request.knowledge_name,
-        request.document_id,
-        request.file_urls,
-        request.chunk_strategy,
-        request.chunk_size,
-        request.token_size,
+    await submit_import_to_queue(
+        knowledge_name=request.knowledge_name,
+        document_id=request.document_id,
+        file_url=request.file_urls,
+        chunk_strategy=request.chunk_strategy,
+        chunk_size=request.chunk_size,
+        token_size=request.token_size,
     )
-    return ApiResponse.success("已接收导入请求，正在后台处理中～")
+    return ApiResponse.success("已接收导入请求，正在异步队列处理中～")

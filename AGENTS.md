@@ -87,7 +87,9 @@
 - Rate limit configuration (optional): `RATE_LIMIT_KEY_PREFIX` (defaults to `rate_limit`),
   `RATE_LIMIT_TRUST_X_FORWARDED_FOR` (default false; when true, fallback to `X-Forwarded-For`
   only if `request.client.host` is unavailable).
-- RQ configuration (optional): `RQ_QUEUE_NAME`, `RQ_DEFAULT_TIMEOUT`.
+- RabbitMQ configuration (optional): `RABBITMQ_URL`, `RABBITMQ_EXCHANGE`, `RABBITMQ_QUEUE`,
+  `RABBITMQ_ROUTING_KEY`, `RABBITMQ_PREFETCH_COUNT`, `MQ_CONSUMER_ENABLED`,
+  `MQ_MAX_RETRIES`, `MQ_RETRY_DELAYS_SECONDS`.
 - HTTP client configuration (optional): `HTTP_BASE_URL` (defaults to `http://localhost:8080`).
 - HTTP client logging (optional): `HTTP_CLIENT_LOG_ENABLED` (default false, set true to log request/response details).
 - Download file storage configuration (required for URL import):

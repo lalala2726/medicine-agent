@@ -4,6 +4,8 @@ from loguru import logger
 
 from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException
+from app.core.mq.models import KnowledgeImportMessage
+from app.core.mq.publisher import publish_import_messages
 from app.rag.chunking import ChunkStrategyType, SplitChunk, SplitConfig, split_text
 from app.rag.file_loader import parse_downloaded_file, validate_url_extension
 from app.services import vector_service
@@ -12,6 +14,71 @@ from app.utils.file_utils import FileUtils
 DEFAULT_CHUNK_SIZE = 500  # 默认切片长度（字符）
 DEFAULT_TOKEN_SIZE = 100  # 默认 token 切片长度
 DEFAULT_CHUNK_OVERLAP = 50  # 默认切片重叠长度（字符）
+
+
+async def submit_import_to_queue(
+        knowledge_name: str,
+        document_id: int,
+        file_url: list[str] | str,
+        chunk_strategy: ChunkStrategyType = ChunkStrategyType.CHARACTER,
+        chunk_size: int = DEFAULT_CHUNK_SIZE,
+        token_size: int = DEFAULT_TOKEN_SIZE,
+) -> dict:
+    """
+    功能描述:
+        将导入请求转换为 RabbitMQ 消息并异步投递，不在请求线程中执行解析与切片。
+
+    参数说明:
+        knowledge_name (str): 知识库名称。
+        document_id (int): 文档 ID。
+        file_url (list[str] | str): 待导入文件 URL 列表或单个 URL 字符串。
+        chunk_strategy (ChunkStrategyType): 切片策略类型，默认值为 ChunkStrategyType.CHARACTER。
+        chunk_size (int): 字符类切片大小，默认值为 DEFAULT_CHUNK_SIZE。
+        token_size (int): token 切片大小，默认值为 DEFAULT_TOKEN_SIZE。
+
+    返回值:
+        dict: 投递结果，包含 accepted_count 与 task_uuids。
+
+    异常说明:
+        ServiceException:
+            - URL 参数非法或为空时抛出；
+            - URL 后缀不支持时抛出；
+            - RabbitMQ 配置缺失或消息投递失败时由下游抛出。
+    """
+    normalized_urls = _normalize_import_urls(file_url)
+    if not normalized_urls:
+        raise ServiceException(
+            code=ResponseCode.BAD_REQUEST,
+            message="导入文件不能为空",
+        )
+
+    messages: list[KnowledgeImportMessage] = []
+    for url in normalized_urls:
+        validate_url_extension(url)
+        messages.append(
+            KnowledgeImportMessage.build(
+                knowledge_name=knowledge_name,
+                document_id=document_id,
+                file_url=url,
+                chunk_strategy=chunk_strategy,
+                chunk_size=chunk_size,
+                token_size=token_size,
+            )
+        )
+
+    await publish_import_messages(messages)
+    task_uuids = [message.task_uuid for message in messages]
+    logger.info(
+        "导入任务投递 MQ 成功：knowledge_name={}, document_id={}, url_count={}, task_uuids={}",
+        knowledge_name,
+        document_id,
+        len(messages),
+        task_uuids,
+    )
+    return {
+        "accepted_count": len(messages),
+        "task_uuids": task_uuids,
+    }
 
 
 def _download_file(url: str) -> tuple[str, Path]:
@@ -78,13 +145,17 @@ def delete_knowledge(knowledge_name: str) -> None:
 
 def _validate_file_not_empty(file_path: Path) -> None:
     """
-    验证文件不为空。
+    功能描述:
+        校验下载文件大小，防止空文件进入解析与切片流程。
 
-    Args:
-        file_path: 文件路径
+    参数说明:
+        file_path (Path): 下载后的本地文件路径。
 
-    Raises:
-        ServiceException: 文件为空
+    返回值:
+        None: 校验通过无返回值。
+
+    异常说明:
+        ServiceException: 文件大小为 0 时抛出。
     """
     if file_path.stat().st_size == 0:
         raise ServiceException(
