@@ -48,11 +48,11 @@ class ImportKnowledgeRequest(BaseModel):
     document_id: int = Field(..., gt=0, description="文档ID")
     file_urls: list[str] = Field(..., description="导入文件的URL")
     chunk_strategy: ChunkStrategyType = Field(
-        default=ChunkStrategyType.LENGTH, description="切片策略：LENGTH/TOKEN/RECURSIVE"
+        default=ChunkStrategyType.CHARACTER,
+        description="切片策略：character/recursive/token/markdown_header",
     )
     chunk_size: int = Field(default=500, ge=1, le=10000, description="切片大小（字符）")
     token_size: int = Field(default=100, ge=1, le=1000, description="token大小")
-    parse_images: bool = Field(default=False, description="是否解析图片")
 
 
 @router.post(path="", summary="创建知识库")
@@ -190,6 +190,5 @@ async def import_knowledge(
         request.chunk_strategy,
         request.chunk_size,
         request.token_size,
-        request.parse_images,
     )
     return ApiResponse.success("已接收导入请求，正在后台处理中～")

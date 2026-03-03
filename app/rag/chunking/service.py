@@ -1,31 +1,34 @@
 from __future__ import annotations
 
-from pathlib import Path
-from typing import List, Optional, Union
+from typing import Optional
 
-from app.rag.chunking.base import ChunkStrategyType, SplitChunk, SplitConfig
 from app.rag.chunking.factory import ChunkerFactory
-from app.rag.file_loader.factory import FileLoaderFactory
+from app.rag.chunking.types import ChunkStrategyType, SplitChunk, SplitConfig
 
 
-def split_file(
-        file_path: Union[str, Path],
-        strategy_type: str | ChunkStrategyType,
-        config: Optional[SplitConfig] = None,
-) -> List[SplitChunk]:
+def split_text(
+    text: str,
+    strategy_type: str | ChunkStrategyType,
+    config: Optional[SplitConfig] = None,
+) -> list[SplitChunk]:
     """
-    解析文件并按指定策略切片。
+    功能描述:
+        对输入文本应用指定切片策略并返回结构化切片列表。
 
-    Args:
-        file_path: 文件路径
-        strategy_type: 切片方式
-        config: 切片配置
+    参数说明:
+        text (str): 待切片文本。
+        strategy_type (str | ChunkStrategyType): 切片策略类型。
+        config (SplitConfig | None): 切片配置，默认值为 None；为空时使用默认配置。
 
-    Returns:
-        切片结果列表
+    返回值:
+        list[SplitChunk]: 切片结果列表。
+
+    异常说明:
+        ServiceException: strategy_type 未注册时由工厂抛出。
+        ServiceException: 具体策略执行失败时由策略实现抛出。
     """
-    path = Path(file_path)
-    pages = FileLoaderFactory.parse_file(path)
+    if not text:
+        return []
     resolved_config = config or SplitConfig()
     strategy = ChunkerFactory.get(strategy_type)
-    return strategy.split_pages(pages, resolved_config)
+    return strategy.split_text(text, resolved_config)

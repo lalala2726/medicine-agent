@@ -90,6 +90,10 @@
 - RQ configuration (optional): `RQ_QUEUE_NAME`, `RQ_DEFAULT_TIMEOUT`.
 - HTTP client configuration (optional): `HTTP_BASE_URL` (defaults to `http://localhost:8080`).
 - HTTP client logging (optional): `HTTP_CLIENT_LOG_ENABLED` (default false, set true to log request/response details).
+- Download file storage configuration (required for URL import):
+  `FILE_DOWNLOAD_ROOT_DIR`（固定下载根目录，必填；URL 下载文件会按 `yyyy/mm/dd` 分层落盘并长期保留，当前阶段不启用自动清理）。
+- File type detection dependency (required for URL import parsing):
+  `filetype`（纯 Python 依赖；用于下载后真实类型识别与解析器分发，无需系统 `libmagic`）。
 - Agent tool logging (optional): `AGENT_TOOL_LOG_ENABLED` (default false, set true to log tool invocations and results).
 - CORS configuration (optional): `CORS_ALLOW_ORIGINS` (comma-separated origins, takes precedence over regex when set).
 - CORS configuration (optional): `CORS_ALLOW_ORIGIN_REGEX` (defaults to allowing `localhost`/`127.0.0.1` on any port).

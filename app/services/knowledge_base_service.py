@@ -4,39 +4,20 @@ from loguru import logger
 
 from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException
-from app.rag.chunking import ChunkStrategyType, SplitConfig, split_file
-from app.rag.file_loader.base import (
-    cleanup_temp_assets,
-    create_temp_image_dir,
-    register_temp_assets,
-)
-from app.rag.file_loader.factory import FileLoaderFactory
+from app.rag.chunking import ChunkStrategyType, SplitChunk, SplitConfig, split_text
+from app.rag.file_loader import parse_downloaded_file, validate_url_extension
+from app.rag.file_loader.types import ParsedPage
 from app.services import vector_service
 from app.utils.file_utils import FileUtils
 
 DEFAULT_CHUNK_SIZE = 500  # 默认切片长度（字符）
 DEFAULT_TOKEN_SIZE = 100  # 默认 token 切片长度
-DEFAULT_PARSE_IMAGES = False  # 默认不解析图片
 DEFAULT_CHUNK_OVERLAP = 50  # 默认切片重叠长度（字符）
-# 支持导入的文件扩展名集合
-SUPPORTED_IMPORT_EXTENSIONS = {
-    ".txt",
-    ".md",
-    ".pdf",
-    ".docx",
-    ".doc",
-    ".pptx",
-    ".ppt",
-    ".xlsx",
-    ".xls",
-    ".html",
-    ".htm",
-}
 
 
 def _download_file(url: str) -> tuple[str, Path]:
     """
-    下载文件并返回（文件名，临时文件路径）。
+    下载文件并返回（文件名，固定下载目录下的文件路径）。
 
     单独封装该函数是为了测试可替换（monkeypatch），
     同时避免导入流程与底层下载实现强耦合。
@@ -69,25 +50,6 @@ def delete_knowledge(knowledge_name: str) -> None:
     vector_service.delete_collection(knowledge_name)
 
 
-def _validate_import_extension(filename: str) -> None:
-    """
-    验证文件扩展名是否在支持的导入格式列表中。
-
-    Args:
-        filename: 文件名
-
-    Raises:
-        ServiceException: 文件格式不支持
-    """
-    suffix = Path(filename).suffix.lower()
-    if not suffix or suffix not in SUPPORTED_IMPORT_EXTENSIONS:
-        allowed = ", ".join(sorted(SUPPORTED_IMPORT_EXTENSIONS))
-        raise ServiceException(
-            code=ResponseCode.BAD_REQUEST,
-            message=f"不支持的文件格式: {suffix or '未知'}，支持: {allowed}",
-        )
-
-
 def _validate_file_not_empty(file_path: Path) -> None:
     """
     验证文件不为空。
@@ -107,105 +69,84 @@ def _validate_file_not_empty(file_path: Path) -> None:
 def import_knowledge_service(
         knowledge_name: str,
         document_id: int,
-        file_url: list[str],
-        chunk_strategy: ChunkStrategyType = ChunkStrategyType.LENGTH,
+        file_url: list[str] | str,
+        chunk_strategy: ChunkStrategyType = ChunkStrategyType.CHARACTER,
         chunk_size: int = DEFAULT_CHUNK_SIZE,
         token_size: int = DEFAULT_TOKEN_SIZE,
-        parse_images: bool = DEFAULT_PARSE_IMAGES,
 ) -> dict:
     """
-    知识库导入服务：批量下载、解析文件并返回结果。
+    功能描述:
+        批量导入知识库文件，执行下载、文件校验、文本解析与切片打印流程。
+        当前为调试阶段：仅验证“下载 -> 切片”链路，暂不写入向量数据库。
 
-    Args:
-        knowledge_name: Milvus knowledge 名称
-        file_url: 待导入的文件 URL 列表
+    参数说明:
+        knowledge_name (str): 知识库名称。
+        document_id (int): 文档 ID。
+        file_url (list[str] | str): 待导入文件 URL 列表或单个 URL 字符串。
+        chunk_strategy (ChunkStrategyType): 切片策略类型，默认值为 ChunkStrategyType.CHARACTER。
+        chunk_size (int): 字符类切片大小，默认值为 DEFAULT_CHUNK_SIZE。
+        token_size (int): token 切片大小，默认值为 DEFAULT_TOKEN_SIZE。
 
-    Returns:
-        包含成功解析结果和失败 URL 列表的字典
-        :param knowledge_name: 知识库名
-        :param document_id: 文档ID
-        :param file_url: 文件URL
-        :param chunk_strategy: 切片策略
-        :param chunk_size: 切片长度
-        :param token_size: token 切片长度
-        :param parse_images: 是否解析图片
+    返回值:
+        dict: 导入汇总结果，包含 `results`（成功列表）与 `failed_urls`（失败 URL 列表）。
+
+    异常说明:
+        ServiceException: 参数非法、下载失败、文件解析失败或切片失败时抛出。
     """
+    normalized_urls = _normalize_import_urls(file_url)
     logger.info(
-        "开始导入知识库：knowledge_name={}, document_id={}, file_count={}, chunk_strategy={}, chunk_size={}, token_size={}, parse_images={}",
+        "开始导入知识库：knowledge_name={}, document_id={}, file_count={}, chunk_strategy={}, chunk_size={}, token_size={}",
         knowledge_name,
         document_id,
-        len(file_url) if file_url else 0,
+        len(normalized_urls),
         chunk_strategy.value,
         chunk_size,
         token_size,
-        parse_images,
     )
-    # 验证 knowledge 是否存在
-    vector_service.ensure_collection_exists(knowledge_name)
 
-    if not file_url:
+    if not normalized_urls:
         raise ServiceException(
             code=ResponseCode.BAD_REQUEST, message="导入文件不能为空"
         )
 
-    # 下载失败的文件 URL 列表
     failed_urls: list[str] = []
-    # 下载结果列表
     results: list[dict] = []
-    # 向量写入已暂时关闭，后续需要时再恢复维度校验
 
-    for url in file_url:
+    for url in normalized_urls:
         filename: str | None = None
         file_path: Path | None = None
-        keep_file = False
         try:
             logger.info("开始处理文件：file_url={}", url)
-            # 1. 从 URL 下载文件到临时目录
+            source_extension = validate_url_extension(url)
             filename, file_path = _download_file(url)
             logger.info(
-                "下载完成：file_url={}, filename={}, temp_path={}",
+                "下载完成：file_url={}, filename={}, file_path={}",
                 url,
                 filename,
                 file_path,
             )
-            # 2. 验证文件格式是否支持
-            _validate_import_extension(filename)
-            # 3. 验证文件不为空
             _validate_file_not_empty(file_path)
-            # 4. 解析文件内容（默认不解析图片，需显式开启）
-            if parse_images:
-                parsed = FileLoaderFactory.parse_file_with_images(
-                    file_path, source_name=filename
-                )
-            else:
-                # 即使不解析图片，也创建并注册临时图片目录，保持导入资产结构一致，
-                # 便于 cleanup_import_assets 统一清理。
-                image_dir = create_temp_image_dir(file_path.stem or "file")
-                register_temp_assets(filename, image_dir, source_path=file_path)
-                pages = FileLoaderFactory.parse_file(file_path)
-                parsed = {
-                    "image_dir": str(image_dir),
-                    "pages": [page.to_dict() for page in pages],
-                }
-            logger.info(
-                "解析完成：filename={}, pages={}, image_dir={}",
-                filename,
-                len(parsed.get("pages") or []),
-                parsed.get("image_dir"),
+            parsed_document = parse_downloaded_file(
+                file_path=file_path,
+                source_url=url,
             )
-            # 5. 按策略切片
+            pages = parsed_document.pages
+            logger.info(
+                "解析完成：filename={}, file_kind={}, mime_type={}, pages={}",
+                filename,
+                parsed_document.file_kind.value,
+                parsed_document.mime_type,
+                len(pages),
+            )
             effective_chunk_size = (
                 token_size
                 if chunk_strategy == ChunkStrategyType.TOKEN
                 else chunk_size
             )
-            chunks = split_file(
-                file_path,
+            chunks = _split_parsed_pages(
+                pages,
                 chunk_strategy,
-                SplitConfig(
-                    chunk_size=effective_chunk_size,
-                    chunk_overlap=DEFAULT_CHUNK_OVERLAP,
-                ),
+                effective_chunk_size,
             )
             logger.info(
                 "切片完成：filename={}, chunk_strategy={}, chunk_size={}, chunks={}",
@@ -214,31 +155,20 @@ def import_knowledge_service(
                 effective_chunk_size,
                 len(chunks),
             )
-            # 6. 向量化并写入 Milvus
-            texts = [chunk.text for chunk in chunks if chunk.text.strip()]
-            if texts:
-                embeddings = vector_service.embed_texts(texts)
-                vector_service.insert_embeddings(
-                    knowledge_name,
-                    document_id,
-                    embeddings,
-                    texts,
-                )
-                logger.info(
-                    "向量写入完成：filename={}, text_count={}",
-                    filename,
-                    len(texts),
-                )
-            else:
-                logger.warning("未生成有效文本，跳过向量写入：filename={}", filename)
+            _print_chunks_to_console(
+                filename=filename or "unknown",
+                chunks=chunks,
+            )
 
-            keep_file = True
             results.append(
                 {
                     "file_url": url,
                     "filename": filename,
-                    "image_dir": parsed["image_dir"],
-                    "pages": parsed["pages"],
+                    "source_extension": source_extension,
+                    "file_kind": parsed_document.file_kind.value,
+                    "mime_type": parsed_document.mime_type,
+                    "pages": [page.to_dict() for page in pages],
+                    "chunk_count": len(chunks),
                 }
             )
         except ServiceException as exc:
@@ -249,32 +179,131 @@ def import_knowledge_service(
                 exc,
             )
             failed_urls.append(url)
-            if filename:
-                cleanup_temp_assets(filename)
             continue
-        finally:
-            # 解析失败时清理下载的临时文件，成功则等待统一清理
-            if not keep_file and file_path and file_path.exists():
-                file_path.unlink(missing_ok=True)
-                logger.info("临时文件已清理：temp_path={}", file_path)
-    summary = {
-        "results": results,
-        "failed_urls": failed_urls,
+    return {"results": results, "failed_urls": failed_urls}
+
+
+def _normalize_import_urls(file_url: list[str] | str) -> list[str]:
+    """
+    功能描述:
+        归一化导入 URL 参数，统一转换为 URL 列表，兼容单个字符串与字符串列表输入。
+
+    参数说明:
+        file_url (list[str] | str): 原始 URL 入参。
+
+    返回值:
+        list[str]: 清洗后的 URL 列表（去除空白项）。
+
+    异常说明:
+        ServiceException: 当参数类型非法或无有效 URL 时抛出。
+    """
+    if isinstance(file_url, str):
+        normalized = [file_url.strip()] if file_url.strip() else []
+    elif isinstance(file_url, list):
+        normalized = [str(item).strip() for item in file_url if str(item).strip()]
+    else:
+        raise ServiceException(
+            code=ResponseCode.BAD_REQUEST,
+            message="file_url 参数类型错误，必须是字符串或字符串列表",
+        )
+    return normalized
+
+
+def _print_chunks_to_console(*, filename: str, chunks: list[SplitChunk]) -> None:
+    """
+    功能描述:
+        将切片结果按可读格式打印到控制台，供导入链路调试验证使用。
+
+    参数说明:
+        filename (str): 当前文件名，用于控制台分组标识。
+        chunks (list[SplitChunk]): 切片结果列表。
+
+    返回值:
+        None: 打印完成无返回值。
+
+    异常说明:
+        无。打印异常会由 Python 标准输出层自行处理。
+    """
+    print(f"[chunk-debug] filename={filename}, chunk_count={len(chunks)}")
+    for chunk in chunks:
+        chunk_text = chunk.text.strip()
+        print(
+            "[chunk-debug] "
+            f"chunk_index={chunk.chunk_index}, "
+            f"page_number={chunk.page_number}, "
+            f"page_label={chunk.page_label}, "
+            f"text={chunk_text}"
+        )
+
+
+def _split_parsed_pages(
+        pages: list[ParsedPage],
+        chunk_strategy: ChunkStrategyType,
+        chunk_size: int,
+) -> list[SplitChunk]:
+    """
+    功能描述:
+        遍历解析后的页面列表，对每页文本执行切片，并将页级元数据回填到切片结果中。
+
+    参数说明:
+        pages (list[ParsedPage]): 解析后的页面列表。
+        chunk_strategy (ChunkStrategyType): 切片策略类型。
+        chunk_size (int): 生效切片大小（字符策略时为 chunk_size，token 策略时为 token_size）。
+
+    返回值:
+        list[SplitChunk]: 聚合后的切片结果列表。
+
+    异常说明:
+        ServiceException: 当切片策略不支持或底层切片依赖缺失时由下游抛出。
+    """
+    config = SplitConfig(
+        chunk_size=chunk_size,
+        chunk_overlap=DEFAULT_CHUNK_OVERLAP,
+    )
+    chunks: list[SplitChunk] = []
+    for page in pages:
+        text = page.text or ""
+        if not text.strip():
+            continue
+        page_chunks = split_text(text, chunk_strategy, config)
+        page_metadata = _build_page_chunk_metadata(page)
+        for chunk in page_chunks:
+            chunk.page_number = page_metadata["page_number"]
+            chunk.page_label = page_metadata["page_label"]
+            chunk.metadata = {**page_metadata, **chunk.metadata}
+        chunks.extend(page_chunks)
+    return chunks
+
+
+def _build_page_chunk_metadata(page: ParsedPage) -> dict:
+    """
+    功能描述:
+        从解析页对象构造标准页级元数据，供切片结果统一写入 metadata。
+
+    参数说明:
+        page (ParsedPage): 解析页对象，支持 page_number 与 page_label 字段。
+
+    返回值:
+        dict: 标准化页级元数据，包含 page_number、page_label。
+
+    异常说明:
+        无。字段缺失或类型异常时使用兜底默认值。
+    """
+    raw_page_number = page.page_number
+    try:
+        resolved_page_number = int(raw_page_number)
+    except (TypeError, ValueError):
+        resolved_page_number = 1
+    if resolved_page_number <= 0:
+        resolved_page_number = 1
+
+    raw_page_label = page.page_label
+    resolved_page_label = raw_page_label if isinstance(raw_page_label, str) else None
+
+    return {
+        "page_number": resolved_page_number,
+        "page_label": resolved_page_label,
     }
-    return summary
-
-
-def cleanup_import_assets(filename: str) -> dict:
-    """
-    按文件名清理解析产生的临时文件与图片目录。
-
-    Args:
-        filename: 文件名
-
-    Returns:
-        清理结果统计字典
-    """
-    return cleanup_temp_assets(filename)
 
 
 def delete_document(knowledge_name: str, document_id: int) -> None:
