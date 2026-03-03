@@ -6,7 +6,6 @@ from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException
 from app.rag.chunking import ChunkStrategyType, SplitChunk, SplitConfig, split_text
 from app.rag.file_loader import parse_downloaded_file, validate_url_extension
-from app.rag.file_loader.types import ParsedPage
 from app.services import vector_service
 from app.utils.file_utils import FileUtils
 
@@ -17,10 +16,23 @@ DEFAULT_CHUNK_OVERLAP = 50  # 默认切片重叠长度（字符）
 
 def _download_file(url: str) -> tuple[str, Path]:
     """
-    下载文件并返回（文件名，固定下载目录下的文件路径）。
+    功能描述:
+        下载文件并返回（文件名，固定下载目录下的文件路径）。
 
-    单独封装该函数是为了测试可替换（monkeypatch），
-    同时避免导入流程与底层下载实现强耦合。
+    参数说明:
+        url (str): 远程文件 URL。
+
+    返回值:
+        tuple[str, Path]:
+            - 第 1 项: 解析后的文件名；
+            - 第 2 项: 固定目录中的落盘路径。
+
+    异常说明:
+        ServiceException: 下载失败或下载目录配置异常时由下游抛出。
+
+    说明:
+        单独封装该函数是为了测试可替换（monkeypatch），
+        同时避免导入流程与底层下载实现强耦合。
     """
 
     return FileUtils.download_file(url)
@@ -30,22 +42,36 @@ def create_collection(
         knowledge_name: str, embedding_dim: int, description: str
 ) -> None:
     """
-    创建 Milvus 知识库并应用业务字段 schema。
+    功能描述:
+        创建 Milvus 知识库并应用业务字段 schema。
 
-    Args:
-        knowledge_name: knowledge 名称
-        embedding_dim: 向量维度
-        description: knowledge 描述
+    参数说明:
+        knowledge_name (str): knowledge 名称。
+        embedding_dim (int): 向量维度。
+        description (str): knowledge 描述。
+
+    返回值:
+        None: 创建完成无返回值。
+
+    异常说明:
+        ServiceException: 集合已存在、参数非法或底层创建失败时由下游抛出。
     """
     vector_service.create_collection(knowledge_name, embedding_dim, description)
 
 
 def delete_knowledge(knowledge_name: str) -> None:
     """
-    删除 Milvus 知识库。
+    功能描述:
+        删除 Milvus 知识库。
 
-    Args:
-        knowledge_name: knowledge 名称
+    参数说明:
+        knowledge_name (str): knowledge 名称。
+
+    返回值:
+        None: 删除完成无返回值。
+
+    异常说明:
+        ServiceException: 知识库不存在或底层删除失败时由下游抛出。
     """
     vector_service.delete_collection(knowledge_name)
 
@@ -114,7 +140,6 @@ def import_knowledge_service(
 
     for url in normalized_urls:
         filename: str | None = None
-        file_path: Path | None = None
         try:
             logger.info("开始处理文件：file_url={}", url)
             source_extension = validate_url_extension(url)
@@ -130,21 +155,21 @@ def import_knowledge_service(
                 file_path=file_path,
                 source_url=url,
             )
-            pages = parsed_document.pages
+            parsed_text = parsed_document.text or ""
             logger.info(
-                "解析完成：filename={}, file_kind={}, mime_type={}, pages={}",
+                "解析完成：filename={}, file_kind={}, mime_type={}, text_length={}",
                 filename,
                 parsed_document.file_kind.value,
                 parsed_document.mime_type,
-                len(pages),
+                len(parsed_text),
             )
             effective_chunk_size = (
                 token_size
                 if chunk_strategy == ChunkStrategyType.TOKEN
                 else chunk_size
             )
-            chunks = _split_parsed_pages(
-                pages,
+            chunks = _split_parsed_text(
+                parsed_text,
                 chunk_strategy,
                 effective_chunk_size,
             )
@@ -167,13 +192,23 @@ def import_knowledge_service(
                     "source_extension": source_extension,
                     "file_kind": parsed_document.file_kind.value,
                     "mime_type": parsed_document.mime_type,
-                    "pages": [page.to_dict() for page in pages],
+                    "text_length": len(parsed_text),
                     "chunk_count": len(chunks),
+                    "chunks": [chunk.to_dict() for chunk in chunks],
                 }
             )
         except ServiceException as exc:
             logger.error(
                 "文件处理失败：file_url={}, filename={}, error={}",
+                url,
+                filename,
+                exc,
+            )
+            failed_urls.append(url)
+            continue
+        except Exception as exc:
+            logger.exception(
+                "文件处理异常：file_url={}, filename={}, error={}",
                 url,
                 filename,
                 exc,
@@ -229,24 +264,22 @@ def _print_chunks_to_console(*, filename: str, chunks: list[SplitChunk]) -> None
         chunk_text = chunk.text.strip()
         print(
             "[chunk-debug] "
-            f"chunk_index={chunk.chunk_index}, "
-            f"page_number={chunk.page_number}, "
-            f"page_label={chunk.page_label}, "
+            f"char_count={chunk.stats.char_count}, "
             f"text={chunk_text}"
         )
 
 
-def _split_parsed_pages(
-        pages: list[ParsedPage],
+def _split_parsed_text(
+        text: str,
         chunk_strategy: ChunkStrategyType,
         chunk_size: int,
 ) -> list[SplitChunk]:
     """
     功能描述:
-        遍历解析后的页面列表，对每页文本执行切片，并将页级元数据回填到切片结果中。
+        对解析后的单一文本执行切片并返回统一切片结果。
 
     参数说明:
-        pages (list[ParsedPage]): 解析后的页面列表。
+        text (str): 解析后的完整文本。
         chunk_strategy (ChunkStrategyType): 切片策略类型。
         chunk_size (int): 生效切片大小（字符策略时为 chunk_size，token 策略时为 token_size）。
 
@@ -260,53 +293,24 @@ def _split_parsed_pages(
         chunk_size=chunk_size,
         chunk_overlap=DEFAULT_CHUNK_OVERLAP,
     )
-    chunks: list[SplitChunk] = []
-    for page in pages:
-        text = page.text or ""
-        if not text.strip():
-            continue
-        page_chunks = split_text(text, chunk_strategy, config)
-        page_metadata = _build_page_chunk_metadata(page)
-        for chunk in page_chunks:
-            chunk.page_number = page_metadata["page_number"]
-            chunk.page_label = page_metadata["page_label"]
-            chunk.metadata = {**page_metadata, **chunk.metadata}
-        chunks.extend(page_chunks)
-    return chunks
-
-
-def _build_page_chunk_metadata(page: ParsedPage) -> dict:
-    """
-    功能描述:
-        从解析页对象构造标准页级元数据，供切片结果统一写入 metadata。
-
-    参数说明:
-        page (ParsedPage): 解析页对象，支持 page_number 与 page_label 字段。
-
-    返回值:
-        dict: 标准化页级元数据，包含 page_number、page_label。
-
-    异常说明:
-        无。字段缺失或类型异常时使用兜底默认值。
-    """
-    raw_page_number = page.page_number
-    try:
-        resolved_page_number = int(raw_page_number)
-    except (TypeError, ValueError):
-        resolved_page_number = 1
-    if resolved_page_number <= 0:
-        resolved_page_number = 1
-
-    raw_page_label = page.page_label
-    resolved_page_label = raw_page_label if isinstance(raw_page_label, str) else None
-
-    return {
-        "page_number": resolved_page_number,
-        "page_label": resolved_page_label,
-    }
+    return split_text(text, chunk_strategy, config) if text.strip() else []
 
 
 def delete_document(knowledge_name: str, document_id: int) -> None:
+    """
+    功能描述:
+        删除指定文档在向量库中的全部切片数据。
+
+    参数说明:
+        knowledge_name (str): 知识库名称。
+        document_id (int): 文档 ID。
+
+    返回值:
+        None: 删除完成无返回值。
+
+    异常说明:
+        ServiceException: 知识库不存在或删除执行失败时由下游抛出。
+    """
     vector_service.ensure_collection_exists(knowledge_name)
     vector_service.delete_document(
         knowledge_name=knowledge_name,
@@ -321,16 +325,24 @@ def list_knowledge_chunks(
         page_size: int,
 ) -> tuple[list[dict], int]:
     """
-    分页查询知识库中的文档切片数据。
+    功能描述:
+        分页查询知识库中的文档切片数据。
 
-    Args:
-        knowledge_name: 知识库名
-        document_id: 文档ID
-        page_num: 页码（从 1 开始）
-        page_size: 每页数量
+    参数说明:
+        knowledge_name (str): 知识库名。
+        document_id (int): 文档 ID。
+        page_num (int): 页码（从 1 开始）。
+        page_size (int): 每页数量。
 
-    Returns:
-        (rows, total) 元组
+    返回值:
+        tuple[list[dict], int]:
+            - 第 1 项: 当前页切片列表；
+            - 第 2 项: 总条数。
+
+    异常说明:
+        ServiceException:
+            - page_num/page_size 非法时抛出；
+            - 知识库不存在或查询失败时由下游抛出。
     """
     if page_num <= 0 or page_size <= 0:
         raise ServiceException(

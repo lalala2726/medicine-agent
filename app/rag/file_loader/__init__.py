@@ -5,14 +5,12 @@ from app.rag.file_loader.types import (
     FileKind,
     ParseOptions,
     ParsedDocument,
-    ParsedPage,
 )
 
 __all__ = [
     "FileKind",
     "ParseOptions",
     "ParsedDocument",
-    "ParsedPage",
     "detect_file_kind",
     "parse_downloaded_file",
     "validate_url_extension",

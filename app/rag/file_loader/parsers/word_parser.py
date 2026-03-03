@@ -10,7 +10,6 @@ from docx.text.paragraph import Paragraph
 
 from app.core.exception.exceptions import ServiceException
 from app.rag.file_loader.parsers.base import BaseParser
-from app.rag.file_loader.types import ParsedPage
 
 
 def _iter_block_items(document: Document) -> Iterable[Paragraph | Table]:
@@ -61,66 +60,39 @@ def _block_text(block: Paragraph | Table) -> str:
     return "\n".join(rows)
 
 
-def _block_has_page_break(paragraph: Paragraph) -> bool:
+def _parse_docx(file_path: Path) -> str:
     """
     功能描述:
-        检测段落中是否存在分页符，用于粗粒度页码划分。
-
-    参数说明:
-        paragraph (Paragraph): 段落对象。
-
-    返回值:
-        bool: 包含分页符返回 True，否则返回 False。
-
-    异常说明:
-        无。
-    """
-    element = paragraph._p
-    for br in element.findall(f".//{qn('w:br')}"):
-        if br.get(qn("w:type")) == "page":
-            return True
-    if element.findall(f".//{qn('w:lastRenderedPageBreak')}"):
-        return True
-    return False
-
-
-def _parse_docx(file_path: Path) -> list[ParsedPage]:
-    """
-    功能描述:
-        解析 docx 文件，基于分页符构建页面文本。
+        解析 docx 文件并按内容顺序拼接为单一文本。
 
     参数说明:
         file_path (Path): docx 文件路径。
 
     返回值:
-        list[ParsedPage]: 按页组织的文本列表。
+        str: 拼接后的完整文本。
 
     异常说明:
         Exception: 文档读取失败时由 python-docx 抛出。
     """
     document = Document(str(file_path))
-    pages: list[ParsedPage] = [ParsedPage(page_number=1, text="")]
+    parts: list[str] = []
     for block in _iter_block_items(document):
         text = _block_text(block)
         if text:
-            if pages[-1].text:
-                pages[-1].text += "\n"
-            pages[-1].text += text
-        if isinstance(block, Paragraph) and _block_has_page_break(block):
-            pages.append(ParsedPage(page_number=pages[-1].page_number + 1, text=""))
-    return pages
+            parts.append(text.strip())
+    return "\n\n".join(part for part in parts if part)
 
 
-def _parse_doc(file_path: Path) -> list[ParsedPage]:
+def _parse_doc(file_path: Path) -> str:
     """
     功能描述:
-        使用 unstructured 降级解析 doc 文件并按页聚合文本。
+        使用 unstructured 降级解析 doc 文件并拼接为单一文本。
 
     参数说明:
         file_path (Path): doc 文件路径。
 
     返回值:
-        list[ParsedPage]: 按页组织的文本列表。
+        str: 拼接后的完整文本。
 
     异常说明:
         ServiceException:
@@ -137,16 +109,12 @@ def _parse_doc(file_path: Path) -> list[ParsedPage]:
     except Exception as exc:
         raise ServiceException(f"解析 doc 文件失败: {exc}") from exc
 
-    pages_map: dict[int, ParsedPage] = {}
+    parts: list[str] = []
     for element in elements:
-        page_number = getattr(element.metadata, "page_number", None) or 1
         text = element.text or ""
-        page = pages_map.setdefault(page_number, ParsedPage(page_number=page_number))
         if text:
-            if page.text:
-                page.text += "\n"
-            page.text += text
-    return [pages_map[index] for index in sorted(pages_map)]
+            parts.append(text.strip())
+    return "\n\n".join(part for part in parts if part)
 
 
 class WordParser(BaseParser):
@@ -158,13 +126,13 @@ class WordParser(BaseParser):
         无。解析参数通过 `parse` 方法传入。
 
     返回值:
-        无。调用 `parse` 时返回页面列表。
+        无。调用 `parse` 时返回文本内容。
 
     异常说明:
         ServiceException: 文件后缀不支持或降级解析失败时抛出。
     """
 
-    def parse(self, file_path: Path) -> list[ParsedPage]:
+    def parse(self, file_path: Path) -> str:
         """
         功能描述:
             根据后缀选择 Word 解析分支。
@@ -173,7 +141,7 @@ class WordParser(BaseParser):
             file_path (Path): Word 文件路径。
 
         返回值:
-            list[ParsedPage]: 按页组织的文本列表。
+            str: 拼接后的完整文本。
 
         异常说明:
             ServiceException: 不支持的 Word 文件格式时抛出。

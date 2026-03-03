@@ -4,12 +4,14 @@ from pathlib import Path
 
 from loguru import logger
 
+from app.core.codes import ResponseCode
+from app.core.exception.exceptions import ServiceException
 from app.rag.file_loader.detectors.filetype_detector import detect_file_kind
 from app.rag.file_loader.detectors.type_mapping import file_kind_from_extension
 from app.rag.file_loader.detectors.url_extension import validate_url_extension
-from app.rag.file_loader.normalizers.text_normalizer import normalize_page_text
+from app.rag.file_loader.normalizers.text_normalizer import normalize_text
 from app.rag.file_loader.registry import get_parser
-from app.rag.file_loader.types import ParseOptions, ParsedDocument, ParsedPage
+from app.rag.file_loader.types import ParseOptions, ParsedDocument
 
 
 def parse_downloaded_file(
@@ -51,27 +53,22 @@ def parse_downloaded_file(
         )
 
     parser = get_parser(detected_file_kind)
-    parsed_pages = parser.parse(file_path)
-    normalized_pages: list[ParsedPage] = []
-
-    for page in parsed_pages:
-        resolved_page_number = page.page_number if page.page_number > 0 else 1
-        resolved_text = page.text or ""
-        if resolved_options.normalize_text:
-            resolved_text = normalize_page_text(resolved_text, detected_file_kind)
-        if resolved_options.drop_empty_pages and not resolved_text.strip():
-            continue
-        normalized_pages.append(
-            ParsedPage(
-                page_number=resolved_page_number,
-                page_label=page.page_label,
-                text=resolved_text,
-            )
-        )
+    try:
+        parsed_text = parser.parse(file_path)
+    except ServiceException:
+        raise
+    except Exception as exc:
+        raise ServiceException(
+            code=ResponseCode.OPERATION_FAILED,
+            message=f"文件解析失败: {file_path.name}",
+        ) from exc
+    normalized_text = parsed_text or ""
+    if resolved_options.normalize_text:
+        normalized_text = normalize_text(normalized_text, detected_file_kind)
 
     return ParsedDocument(
         file_kind=detected_file_kind,
         mime_type=mime_type,
         source_extension=source_extension,
-        pages=normalized_pages,
+        text=normalized_text,
     )

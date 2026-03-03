@@ -6,7 +6,6 @@ from pptx import Presentation
 
 from app.core.exception.exceptions import ServiceException
 from app.rag.file_loader.parsers.base import BaseParser
-from app.rag.file_loader.types import ParsedPage
 
 
 def _extract_table_text(table) -> str:
@@ -33,22 +32,22 @@ def _extract_table_text(table) -> str:
     return "\n".join(rows)
 
 
-def _parse_pptx(file_path: Path) -> list[ParsedPage]:
+def _parse_pptx(file_path: Path) -> str:
     """
     功能描述:
-        解析 pptx 文件，每一张幻灯片视为一页并提取文本/表格内容。
+        解析 pptx 文件并拼接为单一文本，保留幻灯片序号作为结构标签。
 
     参数说明:
         file_path (Path): pptx 文件路径。
 
     返回值:
-        list[ParsedPage]: 按幻灯片组织的页面列表。
+        str: 拼接后的完整文本。
 
     异常说明:
         Exception: 幻灯片读取失败时由 python-pptx 抛出。
     """
     presentation = Presentation(str(file_path))
-    pages: list[ParsedPage] = []
+    sections: list[str] = []
     for slide_index, slide in enumerate(presentation.slides, start=1):
         texts: list[str] = []
         for shape in slide.shapes:
@@ -62,20 +61,22 @@ def _parse_pptx(file_path: Path) -> list[ParsedPage]:
                 table_text = _extract_table_text(shape.table).strip()
                 if table_text:
                     texts.append(table_text)
-        pages.append(ParsedPage(page_number=slide_index, text="\n".join(texts)))
-    return pages
+        slide_text = "\n".join(texts).strip()
+        if slide_text:
+            sections.append(f"Slide {slide_index}\n{slide_text}")
+    return "\n\n".join(sections)
 
 
-def _parse_ppt(file_path: Path) -> list[ParsedPage]:
+def _parse_ppt(file_path: Path) -> str:
     """
     功能描述:
-        使用 unstructured 降级解析 ppt 文件并按页聚合文本。
+        使用 unstructured 降级解析 ppt 文件并拼接为单一文本。
 
     参数说明:
         file_path (Path): ppt 文件路径。
 
     返回值:
-        list[ParsedPage]: 按页组织的页面列表。
+        str: 拼接后的完整文本。
 
     异常说明:
         ServiceException:
@@ -92,16 +93,12 @@ def _parse_ppt(file_path: Path) -> list[ParsedPage]:
     except Exception as exc:
         raise ServiceException(f"解析 ppt 文件失败: {exc}") from exc
 
-    pages_map: dict[int, ParsedPage] = {}
+    parts: list[str] = []
     for element in elements:
-        page_number = getattr(element.metadata, "page_number", None) or 1
         text = element.text or ""
-        page = pages_map.setdefault(page_number, ParsedPage(page_number=page_number))
         if text:
-            if page.text:
-                page.text += "\n"
-            page.text += text
-    return [pages_map[index] for index in sorted(pages_map)]
+            parts.append(text.strip())
+    return "\n\n".join(part for part in parts if part)
 
 
 class PptParser(BaseParser):
@@ -113,13 +110,13 @@ class PptParser(BaseParser):
         无。解析参数通过 `parse` 方法传入。
 
     返回值:
-        无。调用 `parse` 时返回页面列表。
+        无。调用 `parse` 时返回文本内容。
 
     异常说明:
         ServiceException: 文件后缀不支持或降级解析失败时抛出。
     """
 
-    def parse(self, file_path: Path) -> list[ParsedPage]:
+    def parse(self, file_path: Path) -> str:
         """
         功能描述:
             根据后缀分发 PPT 解析分支。
@@ -128,7 +125,7 @@ class PptParser(BaseParser):
             file_path (Path): PPT 文件路径。
 
         返回值:
-            list[ParsedPage]: 按页组织的页面列表。
+            str: 拼接后的完整文本。
 
         异常说明:
             ServiceException: 不支持的 PPT 文件格式时抛出。

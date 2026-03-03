@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
@@ -43,6 +43,60 @@ class SplitConfig:
     headers_to_split_on: list[tuple[str, str]] | None = None
 
 
+@dataclass
+class ChunkStats:
+    """
+    功能描述:
+        定义单个切片的文本统计信息结构。
+
+    参数说明:
+        char_count (int): 切片文本字符数量，默认值为 0。
+
+    返回值:
+        无。该类用于承载切片统计数据。
+
+    异常说明:
+        无。
+    """
+
+    char_count: int = 0
+
+    def to_dict(self) -> dict[str, int]:
+        """
+        功能描述:
+            将统计对象转换为可序列化字典。
+
+        参数说明:
+            无。
+
+        返回值:
+            dict[str, int]: 仅包含 `char_count` 字段的字典。
+
+        异常说明:
+            无。
+        """
+        return {
+            "char_count": self.char_count,
+        }
+
+
+def build_chunk_stats(text: str) -> ChunkStats:
+    """
+    功能描述:
+        基于切片文本构建统计信息对象。
+
+    参数说明:
+        text (str): 切片文本内容。
+
+    返回值:
+        ChunkStats: 包含字符统计信息的对象。
+
+    异常说明:
+        无。空文本会返回 `char_count=0`。
+    """
+    return ChunkStats(char_count=len(text or ""))
+
+
 class ChunkStrategyType(str, Enum):
     """
     功能描述:
@@ -72,10 +126,7 @@ class SplitChunk:
 
     参数说明:
         text (str): 切片文本内容。
-        page_number (int): 来源页码，纯文本默认值为 1。
-        page_label (str | None): 来源页标签，纯文本默认值为 None。
-        chunk_index (int): 当前页内切片序号，从 1 开始。
-        metadata (dict[str, Any]): 额外元数据，默认值为空字典。
+        stats (ChunkStats): 切片统计信息，默认基于 text 自动计算。
 
     返回值:
         无。该类用于承载切片结果数据。
@@ -85,10 +136,7 @@ class SplitChunk:
     """
 
     text: str
-    page_number: int = 1
-    page_label: str | None = None
-    chunk_index: int = 0
-    metadata: dict[str, Any] = field(default_factory=dict)
+    stats: ChunkStats
 
     def to_dict(self) -> dict[str, Any]:
         """
@@ -99,17 +147,14 @@ class SplitChunk:
             无。
 
         返回值:
-            dict[str, Any]: 包含文本、页码、序号和元数据的字典。
+            dict[str, Any]: 包含文本和统计信息的字典。
 
         异常说明:
             无。
         """
         return {
             "text": self.text,
-            "page_number": self.page_number,
-            "page_label": self.page_label,
-            "chunk_index": self.chunk_index,
-            "metadata": self.metadata,
+            "stats": self.stats.to_dict(),
         }
 
 

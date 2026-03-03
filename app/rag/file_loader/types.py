@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 
 
@@ -29,59 +29,16 @@ class FileKind(str, Enum):
 
 
 @dataclass
-class ParsedPage:
-    """
-    功能描述:
-        表示单页解析结果，供上游切片模块消费。
-
-    参数说明:
-        page_number (int): 页码，默认值为 1。
-        text (str): 页面文本内容，默认值为空字符串。
-        page_label (str | None): 页面标签（如工作表名称），默认值为 None。
-
-    返回值:
-        无。该类用于承载页面结构化数据。
-
-    异常说明:
-        无。字段合法性由调用方保障。
-    """
-
-    page_number: int = 1
-    text: str = ""
-    page_label: str | None = None
-
-    def to_dict(self) -> dict:
-        """
-        功能描述:
-            将页面对象转换为可序列化字典，便于接口返回与日志打印。
-
-        参数说明:
-            无。
-
-        返回值:
-            dict: 包含 page_number、page_label、text 的字典。
-
-        异常说明:
-            无。
-        """
-        return {
-            "page_number": self.page_number,
-            "page_label": self.page_label,
-            "text": self.text,
-        }
-
-
-@dataclass
 class ParsedDocument:
     """
     功能描述:
-        表示文件解析后的统一输出结果，包含类型识别与页面列表。
+        表示文件解析后的统一输出结果，包含类型识别与单一文本内容。
 
     参数说明:
         file_kind (FileKind): 下载后识别出的文件类型。
         mime_type (str | None): 魔数识别得到的 MIME 类型，默认值为 None。
         source_extension (str | None): URL 推断得到的后缀，默认值为 None。
-        pages (list[ParsedPage]): 解析后的页面列表，默认值为空列表。
+        text (str): 解析并清洗后的文本内容，默认值为空字符串。
 
     返回值:
         无。该类用于承载文件级解析结果。
@@ -93,7 +50,7 @@ class ParsedDocument:
     file_kind: FileKind
     mime_type: str | None = None
     source_extension: str | None = None
-    pages: list[ParsedPage] = field(default_factory=list)
+    text: str = ""
 
     def to_dict(self) -> dict:
         """
@@ -104,7 +61,7 @@ class ParsedDocument:
             无。
 
         返回值:
-            dict: 包含 file_kind、mime_type、source_extension、pages 的字典。
+            dict: 包含 file_kind、mime_type、source_extension、text 的字典。
 
         异常说明:
             无。
@@ -113,7 +70,7 @@ class ParsedDocument:
             "file_kind": self.file_kind.value,
             "mime_type": self.mime_type,
             "source_extension": self.source_extension,
-            "pages": [page.to_dict() for page in self.pages],
+            "text": self.text,
         }
 
 
@@ -125,7 +82,6 @@ class ParseOptions:
 
     参数说明:
         normalize_text (bool): 是否执行文本标准化清洗，默认值为 True。
-        drop_empty_pages (bool): 是否丢弃清洗后空白页，默认值为 True。
 
     返回值:
         无。该类用于承载解析行为配置。
@@ -135,4 +91,3 @@ class ParseOptions:
     """
 
     normalize_text: bool = True
-    drop_empty_pages: bool = True

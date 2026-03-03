@@ -4,19 +4,18 @@ from pathlib import Path
 
 from app.core.exception.exceptions import ServiceException
 from app.rag.file_loader.parsers.base import BaseParser
-from app.rag.file_loader.types import ParsedPage
 
 
-def _parse_xlsx(file_path: Path) -> list[ParsedPage]:
+def _parse_xlsx(file_path: Path) -> str:
     """
     功能描述:
-        解析 xlsx 文件，每个工作表视作一页，列值使用制表符连接。
+        解析 xlsx 文件并拼接为单一文本，保留工作表名称作为结构标签。
 
     参数说明:
         file_path (Path): xlsx 文件路径。
 
     返回值:
-        list[ParsedPage]: 按工作表组织的页面列表。
+        str: 拼接后的完整文本。
 
     异常说明:
         ServiceException: 缺少 openpyxl 依赖时抛出。
@@ -27,7 +26,7 @@ def _parse_xlsx(file_path: Path) -> list[ParsedPage]:
         raise ServiceException("缺少 openpyxl 依赖，无法解析 xlsx 文件") from exc
 
     workbook = load_workbook(filename=str(file_path), read_only=True, data_only=True)
-    pages: list[ParsedPage] = []
+    sections: list[str] = []
     for sheet_index, sheet_name in enumerate(workbook.sheetnames, start=1):
         sheet = workbook[sheet_name]
         rows: list[str] = []
@@ -35,26 +34,22 @@ def _parse_xlsx(file_path: Path) -> list[ParsedPage]:
             values = ["" if cell is None else str(cell) for cell in row]
             if any(value.strip() for value in values):
                 rows.append("\t".join(values))
-        pages.append(
-            ParsedPage(
-                page_number=sheet_index,
-                page_label=sheet_name,
-                text="\n".join(rows),
-            )
-        )
-    return pages
+        sheet_text = "\n".join(rows).strip()
+        if sheet_text:
+            sections.append(f"Sheet {sheet_index}: {sheet_name}\n{sheet_text}")
+    return "\n\n".join(sections)
 
 
-def _parse_xls(file_path: Path) -> list[ParsedPage]:
+def _parse_xls(file_path: Path) -> str:
     """
     功能描述:
-        解析 xls 文件，每个工作表视作一页，列值使用制表符连接。
+        解析 xls 文件并拼接为单一文本，保留工作表名称作为结构标签。
 
     参数说明:
         file_path (Path): xls 文件路径。
 
     返回值:
-        list[ParsedPage]: 按工作表组织的页面列表。
+        str: 拼接后的完整文本。
 
     异常说明:
         ServiceException: 缺少 xlrd 依赖时抛出。
@@ -65,7 +60,7 @@ def _parse_xls(file_path: Path) -> list[ParsedPage]:
         raise ServiceException("缺少 xlrd 依赖，无法解析 xls 文件") from exc
 
     workbook = xlrd.open_workbook(str(file_path))
-    pages: list[ParsedPage] = []
+    sections: list[str] = []
     for sheet_index in range(workbook.nsheets):
         sheet = workbook.sheet_by_index(sheet_index)
         rows: list[str] = []
@@ -76,14 +71,12 @@ def _parse_xls(file_path: Path) -> list[ParsedPage]:
             ]
             if any(value.strip() for value in values):
                 rows.append("\t".join(values))
-        pages.append(
-            ParsedPage(
-                page_number=sheet_index + 1,
-                page_label=sheet.name,
-                text="\n".join(rows),
+        sheet_text = "\n".join(rows).strip()
+        if sheet_text:
+            sections.append(
+                f"Sheet {sheet_index + 1}: {sheet.name}\n{sheet_text}"
             )
-        )
-    return pages
+    return "\n\n".join(sections)
 
 
 class ExcelParser(BaseParser):
@@ -95,13 +88,13 @@ class ExcelParser(BaseParser):
         无。解析参数通过 `parse` 方法传入。
 
     返回值:
-        无。调用 `parse` 时返回页面列表。
+        无。调用 `parse` 时返回文本内容。
 
     异常说明:
         ServiceException: 文件后缀不支持或依赖缺失时抛出。
     """
 
-    def parse(self, file_path: Path) -> list[ParsedPage]:
+    def parse(self, file_path: Path) -> str:
         """
         功能描述:
             根据后缀分发 Excel 解析分支。
@@ -110,7 +103,7 @@ class ExcelParser(BaseParser):
             file_path (Path): Excel 文件路径。
 
         返回值:
-            list[ParsedPage]: 按工作表组织的页面列表。
+            str: 拼接后的完整文本。
 
         异常说明:
             ServiceException: 不支持的 Excel 文件格式时抛出。

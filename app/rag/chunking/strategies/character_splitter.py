@@ -5,7 +5,12 @@ import importlib.util
 from langchain_text_splitters import CharacterTextSplitter, RecursiveCharacterTextSplitter
 
 from app.core.exception.exceptions import ServiceException
-from app.rag.chunking.types import ChunkStrategy, SplitChunk, SplitConfig
+from app.rag.chunking.types import (
+    ChunkStrategy,
+    SplitChunk,
+    SplitConfig,
+    build_chunk_stats,
+)
 
 
 class CharacterChunker(ChunkStrategy):
@@ -33,7 +38,7 @@ class CharacterChunker(ChunkStrategy):
             config (SplitConfig): 切片配置。
 
         返回值:
-            list[SplitChunk]: 切片结果列表，page_number 默认 1，chunk_index 从 1 递增。
+            list[SplitChunk]: 切片结果列表，每项包含文本和字符统计信息。
 
         异常说明:
             ServiceException: 当 use_tiktoken=True 且未安装 tiktoken 时抛出。
@@ -45,12 +50,9 @@ class CharacterChunker(ChunkStrategy):
         return [
             SplitChunk(
                 text=piece,
-                page_number=1,
-                page_label=None,
-                chunk_index=index + 1,
-                metadata={},
+                stats=build_chunk_stats(piece),
             )
-            for index, piece in enumerate(pieces)
+            for piece in pieces
         ]
 
     def _build_splitter(self, config: SplitConfig) -> CharacterTextSplitter:

@@ -154,7 +154,7 @@ def _normalize_general(text: str) -> str:
     return "\n".join(_compress_blank_lines(cleaned)).strip()
 
 
-def normalize_page_text(text: str, file_kind: FileKind) -> str:
+def normalize_text(text: str, file_kind: FileKind) -> str:
     """
     功能描述:
         按文件类型执行文本标准化清洗，减少无效 token 消耗并尽量保留语义结构。

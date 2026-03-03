@@ -2,7 +2,12 @@ from __future__ import annotations
 
 from langchain_text_splitters import MarkdownHeaderTextSplitter
 
-from app.rag.chunking.types import ChunkStrategy, SplitChunk, SplitConfig
+from app.rag.chunking.types import (
+    ChunkStrategy,
+    SplitChunk,
+    SplitConfig,
+    build_chunk_stats,
+)
 
 DEFAULT_HEADERS: list[tuple[str, str]] = [
     ("#", "title"),
@@ -15,7 +20,7 @@ DEFAULT_HEADERS: list[tuple[str, str]] = [
 class MarkdownHeaderChunker(ChunkStrategy):
     """
     功能描述:
-        基于 Markdown 标题结构进行切片，并携带标题层级元数据。
+        基于 Markdown 标题结构进行切片。
 
     参数说明:
         无。配置由 split_text 方法参数传入。
@@ -30,14 +35,14 @@ class MarkdownHeaderChunker(ChunkStrategy):
     def split_text(self, text: str, config: SplitConfig) -> list[SplitChunk]:
         """
         功能描述:
-            按 Markdown 标题分层切分文本，并将 LangChain 返回的标题元数据写入 chunk.metadata。
+            按 Markdown 标题分层切分文本。
 
         参数说明:
             text (str): 待切片文本。
             config (SplitConfig): 切片配置。
 
         返回值:
-            list[SplitChunk]: 切片结果列表，包含标题元数据，chunk_index 从 1 递增。
+            list[SplitChunk]: 切片结果列表，每项包含文本和字符统计信息。
 
         异常说明:
             无。
@@ -48,10 +53,7 @@ class MarkdownHeaderChunker(ChunkStrategy):
         return [
             SplitChunk(
                 text=document.page_content,
-                page_number=1,
-                page_label=None,
-                chunk_index=index + 1,
-                metadata={**document.metadata},
+                stats=build_chunk_stats(document.page_content),
             )
-            for index, document in enumerate(documents)
+            for document in documents
         ]

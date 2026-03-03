@@ -4,7 +4,6 @@ from html.parser import HTMLParser
 from pathlib import Path
 
 from app.rag.file_loader.parsers.base import BaseParser
-from app.rag.file_loader.types import ParsedPage
 
 
 class _HTMLTextExtractor(HTMLParser):
@@ -76,19 +75,19 @@ class _HTMLTextExtractor(HTMLParser):
 class HtmlParser(BaseParser):
     """
     功能描述:
-        解析 HTML 文件，抽取正文纯文本并按单页返回。
+        解析 HTML 文件并抽取正文纯文本。
 
     参数说明:
         无。解析参数通过 `parse` 方法传入。
 
     返回值:
-        无。调用 `parse` 时返回页面列表。
+        无。调用 `parse` 时返回文本内容。
 
     异常说明:
         无。文件读取异常由底层 I/O 抛出。
     """
 
-    def parse(self, file_path: Path) -> list[ParsedPage]:
+    def parse(self, file_path: Path) -> str:
         """
         功能描述:
             读取 HTML 文件并提取纯文本内容。
@@ -97,7 +96,7 @@ class HtmlParser(BaseParser):
             file_path (Path): HTML 文件路径。
 
         返回值:
-            list[ParsedPage]: 仅包含 1 页文本的列表。
+            str: 提取后的纯文本内容。
 
         异常说明:
             OSError: 文件不可读时由底层文件系统抛出。
@@ -105,4 +104,4 @@ class HtmlParser(BaseParser):
         content = file_path.read_text(encoding="utf-8", errors="ignore")
         extractor = _HTMLTextExtractor()
         extractor.feed(content)
-        return [ParsedPage(page_number=1, text=extractor.get_text())]
+        return extractor.get_text()

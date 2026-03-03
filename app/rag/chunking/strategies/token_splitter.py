@@ -6,7 +6,12 @@ from typing import Any
 from langchain_text_splitters import TokenTextSplitter
 
 from app.core.exception.exceptions import ServiceException
-from app.rag.chunking.types import ChunkStrategy, SplitChunk, SplitConfig
+from app.rag.chunking.types import (
+    ChunkStrategy,
+    SplitChunk,
+    SplitConfig,
+    build_chunk_stats,
+)
 
 
 class TokenChunker(ChunkStrategy):
@@ -34,7 +39,7 @@ class TokenChunker(ChunkStrategy):
             config (SplitConfig): 切片配置。
 
         返回值:
-            list[SplitChunk]: 切片结果列表，page_number 默认 1，chunk_index 从 1 递增。
+            list[SplitChunk]: 切片结果列表，每项包含文本和字符统计信息。
 
         异常说明:
             ServiceException: 缺失 tiktoken 依赖时抛出。
@@ -55,12 +60,9 @@ class TokenChunker(ChunkStrategy):
         return [
             SplitChunk(
                 text=piece,
-                page_number=1,
-                page_label=None,
-                chunk_index=index + 1,
-                metadata={},
+                stats=build_chunk_stats(piece),
             )
-            for index, piece in enumerate(pieces)
+            for piece in pieces
         ]
 
     @staticmethod
