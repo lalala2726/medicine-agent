@@ -66,7 +66,11 @@ async def create_knowledge_base(request: CreateCollectionRequest) -> ApiResponse
     Returns:
         ApiResponse[dict]: 创建成功响应
     """
-    create_collection(request.knowledge_name, request.embedding_dim, request.description or "")
+    create_collection(
+        request.knowledge_name,
+        request.embedding_dim,
+        request.description or "",
+    )
     return ApiResponse.success(
         data={"knowledge_name": request.knowledge_name},
         message="创建成功",

@@ -1,19 +1,25 @@
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from loguru import logger
 
 from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException
+from app.core.llms import create_embedding_model
 from app.core.mq.models import KnowledgeImportMessage
 from app.core.mq.publisher import publish_import_messages
+from app.repositories import vector_repository
 from app.rag.chunking import ChunkStrategyType, SplitChunk, SplitConfig, split_text
 from app.rag.file_loader import parse_downloaded_file, validate_url_extension
-from app.services import vector_service
 from app.utils.file_utils import FileUtils
+from app.utils.token_utills import TokenUtils
 
 DEFAULT_CHUNK_SIZE = 500  # 默认切片长度（字符）
 DEFAULT_TOKEN_SIZE = 100  # 默认 token 切片长度
 DEFAULT_CHUNK_OVERLAP = 50  # 默认切片重叠长度（字符）
+EMBED_BATCH_SIZE = 10  # 向量模型单次最大处理文本数
+EMBED_MAX_WORKERS = 5  # 最大并发线程数
+EMBED_MAX_TOKEN_SIZE = 8192  # 向量化前单文本最大 token 限制
 
 
 async def submit_import_to_queue(
@@ -25,25 +31,21 @@ async def submit_import_to_queue(
         token_size: int = DEFAULT_TOKEN_SIZE,
 ) -> dict:
     """
-    功能描述:
-        将导入请求转换为 RabbitMQ 消息并异步投递，不在请求线程中执行解析与切片。
+    提交导入请求到 RabbitMQ。
 
-    参数说明:
-        knowledge_name (str): 知识库名称。
-        document_id (int): 文档 ID。
-        file_url (list[str] | str): 待导入文件 URL 列表或单个 URL 字符串。
-        chunk_strategy (ChunkStrategyType): 切片策略类型，默认值为 ChunkStrategyType.CHARACTER。
-        chunk_size (int): 字符类切片大小，默认值为 DEFAULT_CHUNK_SIZE。
-        token_size (int): token 切片大小，默认值为 DEFAULT_TOKEN_SIZE。
+    Args:
+        knowledge_name: 知识库名称。
+        document_id: 文档 ID。
+        file_url: 文件 URL（字符串或字符串列表）。
+        chunk_strategy: 切片策略，默认 `character`。
+        chunk_size: 字符切片大小，默认 `500`。
+        token_size: token 切片大小，默认 `100`。
 
-    返回值:
-        dict: 投递结果，包含 accepted_count 与 task_uuids。
+    Returns:
+        投递结果字典，包含 `accepted_count` 和 `task_uuids`。
 
-    异常说明:
-        ServiceException:
-            - URL 参数非法或为空时抛出；
-            - URL 后缀不支持时抛出；
-            - RabbitMQ 配置缺失或消息投递失败时由下游抛出。
+    Raises:
+        ServiceException: URL 为空/非法、后缀不支持或 MQ 投递失败。
     """
     normalized_urls = _normalize_import_urls(file_url)
     if not normalized_urls:
@@ -81,81 +83,158 @@ async def submit_import_to_queue(
     }
 
 
+def _split_embed_batches(items: list[str], batch_size: int) -> list[list[str]]:
+    """
+    将文本按批次切分。
+
+    Args:
+        items: 原始文本列表。
+        batch_size: 单批最大条数。
+
+    Returns:
+        二维列表，每个子列表为一个批次。
+
+    Raises:
+        无。
+    """
+    result: list[list[str]] = []
+    for index in range(0, len(items), batch_size):
+        result.append(items[index:index + batch_size])
+    return result
+
+
+def embed_texts(texts: list[str]) -> list[list[float]]:
+    """
+    批量文本向量化（含 token 限制与并发）。
+
+    Args:
+        texts: 待向量化文本列表。
+
+    Returns:
+        向量列表，顺序与 `texts` 一致。
+
+    Raises:
+        ServiceException: 文本超过 token 限制或模型调用失败。
+    """
+    if not texts:
+        return []
+
+    token_counts = TokenUtils.count_tokens_list(texts)
+    for token_count in token_counts:
+        if token_count > EMBED_MAX_TOKEN_SIZE:
+            raise ServiceException(
+                message=(
+                    "文本超出最大 token 数限制，"
+                    f"最大 token 数为 {EMBED_MAX_TOKEN_SIZE}, 当前 token 数为 {token_count}"
+                ),
+            )
+
+    embedding_model = create_embedding_model()
+
+    def _embed_batch(batch: list[str]) -> list[list[float]]:
+        """
+        执行单批文本向量化。
+
+        Args:
+            batch: 单批文本列表。
+
+        Returns:
+            当前批次向量结果。
+
+        Raises:
+            异常由外层统一转换为 `ServiceException`。
+        """
+        return embedding_model.embed_documents(batch)
+
+    batches = _split_embed_batches(texts, EMBED_BATCH_SIZE)
+    if len(batches) == 1:
+        try:
+            return _embed_batch(batches[0])
+        except Exception as exc:  # pragma: no cover - 依赖外部模型 SDK
+            raise ServiceException(message=f"嵌入文本失败: {exc}") from exc
+
+    results: list[list[float]] = []
+    try:
+        with ThreadPoolExecutor(max_workers=EMBED_MAX_WORKERS) as executor:
+            futures = [executor.submit(_embed_batch, batch) for batch in batches]
+            for future in futures:
+                results.extend(future.result())
+    except Exception as exc:  # pragma: no cover - 依赖外部模型 SDK
+        raise ServiceException(message=f"嵌入文本失败: {exc}") from exc
+    return results
+
+
 def _download_file(url: str) -> tuple[str, Path]:
     """
-    功能描述:
-        下载文件并返回（文件名，固定下载目录下的文件路径）。
+    下载文件并返回文件名与本地路径。
 
-    参数说明:
-        url (str): 远程文件 URL。
+    Args:
+        url: 远程文件 URL。
 
-    返回值:
-        tuple[str, Path]:
-            - 第 1 项: 解析后的文件名；
-            - 第 2 项: 固定目录中的落盘路径。
+    Returns:
+        `(filename, file_path)`。
 
-    异常说明:
-        ServiceException: 下载失败或下载目录配置异常时由下游抛出。
-
-    说明:
-        单独封装该函数是为了测试可替换（monkeypatch），
-        同时避免导入流程与底层下载实现强耦合。
+    Raises:
+        ServiceException: 下载失败或下载目录配置异常。
     """
 
     return FileUtils.download_file(url)
 
 
 def create_collection(
-        knowledge_name: str, embedding_dim: int, description: str
+        knowledge_name: str,
+        embedding_dim: int,
+        description: str,
 ) -> None:
     """
-    功能描述:
-        创建 Milvus 知识库并应用业务字段 schema。
+    创建知识库对应的 Milvus collection。
 
-    参数说明:
-        knowledge_name (str): knowledge 名称。
-        embedding_dim (int): 向量维度。
-        description (str): knowledge 描述。
+    Args:
+        knowledge_name: 知识库名称。
+        embedding_dim: 向量维度。
+        description: 知识库描述。
 
-    返回值:
-        None: 创建完成无返回值。
+    Returns:
+        None。
 
-    异常说明:
-        ServiceException: 集合已存在、参数非法或底层创建失败时由下游抛出。
+    Raises:
+        ServiceException: collection 已存在或创建失败。
     """
-    vector_service.create_collection(knowledge_name, embedding_dim, description)
+    vector_repository.create_collection(
+        knowledge_name=knowledge_name,
+        embedding_dim=embedding_dim,
+        description=description,
+    )
 
 
 def delete_knowledge(knowledge_name: str) -> None:
     """
-    功能描述:
-        删除 Milvus 知识库。
+    删除知识库对应的 Milvus collection。
 
-    参数说明:
-        knowledge_name (str): knowledge 名称。
+    Args:
+        knowledge_name: 知识库名称。
 
-    返回值:
-        None: 删除完成无返回值。
+    Returns:
+        None。
 
-    异常说明:
-        ServiceException: 知识库不存在或底层删除失败时由下游抛出。
+    Raises:
+        ServiceException: collection 不存在或删除失败。
     """
-    vector_service.delete_collection(knowledge_name)
+    vector_repository.delete_collection(knowledge_name=knowledge_name)
 
 
 def _validate_file_not_empty(file_path: Path) -> None:
     """
-    功能描述:
-        校验下载文件大小，防止空文件进入解析与切片流程。
+    校验文件非空。
 
-    参数说明:
-        file_path (Path): 下载后的本地文件路径。
+    Args:
+        file_path: 本地文件路径。
 
-    返回值:
-        None: 校验通过无返回值。
+    Returns:
+        None。
 
-    异常说明:
-        ServiceException: 文件大小为 0 时抛出。
+    Raises:
+        ServiceException: 文件大小为 0。
     """
     if file_path.stat().st_size == 0:
         raise ServiceException(
@@ -172,23 +251,21 @@ def import_knowledge_service(
         token_size: int = DEFAULT_TOKEN_SIZE,
 ) -> dict:
     """
-    功能描述:
-        批量导入知识库文件，执行下载、文件校验、文本解析与切片打印流程。
-        当前为调试阶段：仅验证“下载 -> 切片”链路，暂不写入向量数据库。
+    执行导入主流程：下载 -> 解析 -> 切片 -> 控制台打印。
 
-    参数说明:
-        knowledge_name (str): 知识库名称。
-        document_id (int): 文档 ID。
-        file_url (list[str] | str): 待导入文件 URL 列表或单个 URL 字符串。
-        chunk_strategy (ChunkStrategyType): 切片策略类型，默认值为 ChunkStrategyType.CHARACTER。
-        chunk_size (int): 字符类切片大小，默认值为 DEFAULT_CHUNK_SIZE。
-        token_size (int): token 切片大小，默认值为 DEFAULT_TOKEN_SIZE。
+    Args:
+        knowledge_name: 知识库名称。
+        document_id: 文档 ID。
+        file_url: 文件 URL（字符串或字符串列表）。
+        chunk_strategy: 切片策略。
+        chunk_size: 字符切片大小。
+        token_size: token 切片大小。
 
-    返回值:
-        dict: 导入汇总结果，包含 `results`（成功列表）与 `failed_urls`（失败 URL 列表）。
+    Returns:
+        导入结果字典，包含 `results` 和 `failed_urls`。
 
-    异常说明:
-        ServiceException: 参数非法、下载失败、文件解析失败或切片失败时抛出。
+    Raises:
+        ServiceException: 参数非法时抛出（其他文件级异常会记录并计入失败列表）。
     """
     normalized_urls = _normalize_import_urls(file_url)
     logger.info(
@@ -291,17 +368,16 @@ def import_knowledge_service(
 
 def _normalize_import_urls(file_url: list[str] | str) -> list[str]:
     """
-    功能描述:
-        归一化导入 URL 参数，统一转换为 URL 列表，兼容单个字符串与字符串列表输入。
+    标准化导入 URL 入参。
 
-    参数说明:
-        file_url (list[str] | str): 原始 URL 入参。
+    Args:
+        file_url: 原始 URL 入参。
 
-    返回值:
-        list[str]: 清洗后的 URL 列表（去除空白项）。
+    Returns:
+        清洗后的 URL 列表（去除空白项）。
 
-    异常说明:
-        ServiceException: 当参数类型非法或无有效 URL 时抛出。
+    Raises:
+        ServiceException: 参数类型不是字符串或字符串列表。
     """
     if isinstance(file_url, str):
         normalized = [file_url.strip()] if file_url.strip() else []
@@ -317,18 +393,17 @@ def _normalize_import_urls(file_url: list[str] | str) -> list[str]:
 
 def _print_chunks_to_console(*, filename: str, chunks: list[SplitChunk]) -> None:
     """
-    功能描述:
-        将切片结果按可读格式打印到控制台，供导入链路调试验证使用。
+    打印切片调试信息。
 
-    参数说明:
-        filename (str): 当前文件名，用于控制台分组标识。
-        chunks (list[SplitChunk]): 切片结果列表。
+    Args:
+        filename: 文件名。
+        chunks: 切片结果列表。
 
-    返回值:
-        None: 打印完成无返回值。
+    Returns:
+        None。
 
-    异常说明:
-        无。打印异常会由 Python 标准输出层自行处理。
+    Raises:
+        无。
     """
     print(f"[chunk-debug] filename={filename}, chunk_count={len(chunks)}")
     for chunk in chunks:
@@ -346,19 +421,18 @@ def _split_parsed_text(
         chunk_size: int,
 ) -> list[SplitChunk]:
     """
-    功能描述:
-        对解析后的单一文本执行切片并返回统一切片结果。
+    对解析后的文本执行切片。
 
-    参数说明:
-        text (str): 解析后的完整文本。
-        chunk_strategy (ChunkStrategyType): 切片策略类型。
-        chunk_size (int): 生效切片大小（字符策略时为 chunk_size，token 策略时为 token_size）。
+    Args:
+        text: 完整文本。
+        chunk_strategy: 切片策略。
+        chunk_size: 生效切片大小。
 
-    返回值:
-        list[SplitChunk]: 聚合后的切片结果列表。
+    Returns:
+        切片结果列表；空白文本返回空列表。
 
-    异常说明:
-        ServiceException: 当切片策略不支持或底层切片依赖缺失时由下游抛出。
+    Raises:
+        ServiceException: 切片策略不支持或切片依赖不可用。
     """
     config = SplitConfig(
         chunk_size=chunk_size,
@@ -369,21 +443,20 @@ def _split_parsed_text(
 
 def delete_document(knowledge_name: str, document_id: int) -> None:
     """
-    功能描述:
-        删除指定文档在向量库中的全部切片数据。
+    删除文档在知识库中的全部切片。
 
-    参数说明:
-        knowledge_name (str): 知识库名称。
-        document_id (int): 文档 ID。
+    Args:
+        knowledge_name: 知识库名称。
+        document_id: 文档 ID。
 
-    返回值:
-        None: 删除完成无返回值。
+    Returns:
+        None。
 
-    异常说明:
-        ServiceException: 知识库不存在或删除执行失败时由下游抛出。
+    Raises:
+        ServiceException: 知识库不存在或删除失败。
     """
-    vector_service.ensure_collection_exists(knowledge_name)
-    vector_service.delete_document(
+    vector_repository.ensure_collection_exists(knowledge_name=knowledge_name)
+    vector_repository.delete_document_chunks(
         knowledge_name=knowledge_name,
         document_id=document_id,
     )
@@ -396,32 +469,27 @@ def list_knowledge_chunks(
         page_size: int,
 ) -> tuple[list[dict], int]:
     """
-    功能描述:
-        分页查询知识库中的文档切片数据。
+    分页查询文档切片。
 
-    参数说明:
-        knowledge_name (str): 知识库名。
-        document_id (int): 文档 ID。
-        page_num (int): 页码（从 1 开始）。
-        page_size (int): 每页数量。
+    Args:
+        knowledge_name: 知识库名称。
+        document_id: 文档 ID。
+        page_num: 页码（从 1 开始）。
+        page_size: 每页条数。
 
-    返回值:
-        tuple[list[dict], int]:
-            - 第 1 项: 当前页切片列表；
-            - 第 2 项: 总条数。
+    Returns:
+        `(rows, total)`，分别为当前页数据与总数。
 
-    异常说明:
-        ServiceException:
-            - page_num/page_size 非法时抛出；
-            - 知识库不存在或查询失败时由下游抛出。
+    Raises:
+        ServiceException: 分页参数非法、知识库不存在或查询失败。
     """
     if page_num <= 0 or page_size <= 0:
         raise ServiceException(
             code=ResponseCode.BAD_REQUEST,
             message="page_num 和 page_size 必须大于 0",
         )
-    vector_service.ensure_collection_exists(knowledge_name)
-    return vector_service.list_document_chunks(
+    vector_repository.ensure_collection_exists(knowledge_name=knowledge_name)
+    return vector_repository.list_document_chunks(
         knowledge_name=knowledge_name,
         document_id=document_id,
         page_num=page_num,

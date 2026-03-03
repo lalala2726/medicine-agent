@@ -199,13 +199,9 @@ def test_import_knowledge_service_does_not_trigger_vectorization(
             text="只做切片，不做向量化",
         ),
     )
+    monkeypatch.setattr(knowledge_base_service, "embed_texts", _fake_embed)
     monkeypatch.setattr(
-        knowledge_base_service.vector_service,
-        "embed_texts",
-        _fake_embed,
-    )
-    monkeypatch.setattr(
-        knowledge_base_service.vector_service,
+        knowledge_base_service.vector_repository,
         "insert_embeddings",
         _fake_insert,
     )

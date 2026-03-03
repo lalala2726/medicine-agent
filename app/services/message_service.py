@@ -12,7 +12,7 @@ from pymongo import ASCENDING, DESCENDING
 
 from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException
-from app.core.mongodb import DEFAULT_MESSAGES_COLLECTION, get_mongo_database
+from app.core.database.mongodb import DEFAULT_MESSAGES_COLLECTION, get_mongo_database
 from app.schemas.document.message import (
     MessageRole,
     MessageCreate,

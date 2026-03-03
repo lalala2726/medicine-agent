@@ -105,3 +105,12 @@
 4. 旧切片字段 `chunk_index/metadata` 全部移除，不做兼容。
 5. 导入链路固定为：URL 校验 -> 下载 -> 类型识别 -> 解析文本 -> 文本清洗 -> 按策略切片。
 6. 当前调试阶段切片结果打印到控制台，不写入向量库。
+
+## 10. HTTP 建库与向量字段定稿（2026-03-03 新增）
+
+1. 建库接口保持 `POST /knowledge_base`，请求体仅包含 `knowledge_name`、`embedding_dim`、`description`。
+2. `embedding_dim` 继续由 HTTP 传入，不在 Python 内做固定维度硬编码。
+3. Milvus 使用“每知识库一集合”模型，集合名使用 `knowledge_name`。
+4. Milvus 字段定稿为 11 个：`id`、`document_id`、`chunk_no`、`content`、`char_count`、`embedding`、`chunk_strategy`、`chunk_size`、`token_size`、`source_hash`、`created_at_ts`。
+5. 向量索引保持 `embedding -> AUTOINDEX + COSINE`，标量索引保持 `document_id -> STL_SORT`。
+6. `embedding_model` 由 SpringBoot/MySQL 元数据层管理（`knowledge_base`、`knowledge_document_index`），Python 建库接口不接收该字段。
