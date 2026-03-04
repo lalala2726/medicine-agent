@@ -8,9 +8,9 @@ from bson import ObjectId
 from pydantic import Field
 
 from app.core.codes import ResponseCode
+from app.core.database.mongodb import DEFAULT_MESSAGE_TRACES_COLLECTION, get_mongo_database
 from app.core.exception.exceptions import ServiceException
 from app.core.llms.provider import LlmProvider, resolve_provider
-from app.core.database.mongodb import DEFAULT_MESSAGE_TRACES_COLLECTION, get_mongo_database
 from app.schemas.document.message_trace import (
     ExecutionTraceItem,
     MessageTraceCreate,

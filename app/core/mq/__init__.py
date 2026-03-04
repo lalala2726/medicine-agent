@@ -9,4 +9,3 @@ MQ 基础模块包。
    - app.core.mq.consumer
    - app.core.mq.lifecycle
 """
-

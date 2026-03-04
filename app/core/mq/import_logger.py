@@ -67,10 +67,10 @@ _WARNING_STAGES: frozenset[ImportStage] = frozenset(
 
 
 def import_log(
-    stage: ImportStage,
-    task_uuid: str = "-",
-    /,
-    **metrics: object,
+        stage: ImportStage,
+        task_uuid: str = "-",
+        /,
+        **metrics: object,
 ) -> None:
     """
     输出一条导入流程结构化日志。

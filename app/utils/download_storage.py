@@ -106,8 +106,8 @@ def resolve_download_root_dir() -> Path:
 
 
 def build_download_target_path(
-    filename: str,
-    now: datetime | None = None,
+        filename: str,
+        now: datetime | None = None,
 ) -> Path:
     """
     功能描述:

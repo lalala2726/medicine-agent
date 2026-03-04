@@ -9,9 +9,9 @@ from app.core.llms import create_embedding_model
 from app.core.mq.import_logger import ImportStage, import_log
 from app.core.mq.models import KnowledgeImportMessage
 from app.core.mq.publisher import publish_import_messages
-from app.repositories import vector_repository
 from app.rag.chunking import ChunkStrategyType, SplitChunk, SplitConfig, split_text
 from app.rag.file_loader import parse_downloaded_file, validate_url_extension
+from app.repositories import vector_repository
 from app.schemas.knowledge_import import (
     ImportChunk,
     ImportKnowledgeServiceResult,

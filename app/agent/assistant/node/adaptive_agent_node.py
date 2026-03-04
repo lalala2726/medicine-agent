@@ -8,6 +8,10 @@ from langchain_core.messages import AIMessage, SystemMessage
 
 from app.agent.assistant.model_switch import model_switch
 from app.agent.assistant.state import AgentState, ExecutionTraceState
+from app.agent.assistant.tools.after_sale_tools import (
+    get_admin_after_sale_detail,
+    get_admin_after_sale_list,
+)
 from app.agent.assistant.tools.analytics_tools import (
     get_analytics_hot_products,
     get_analytics_order_status_distribution,
@@ -15,10 +19,6 @@ from app.agent.assistant.tools.analytics_tools import (
     get_analytics_overview,
     get_analytics_payment_distribution,
     get_analytics_product_return_rates,
-)
-from app.agent.assistant.tools.after_sale_tools import (
-    get_admin_after_sale_detail,
-    get_admin_after_sale_list,
 )
 from app.agent.assistant.tools.base_tools import get_current_time
 from app.agent.assistant.tools.base_tools import get_safe_user_info

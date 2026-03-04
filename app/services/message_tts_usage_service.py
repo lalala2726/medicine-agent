@@ -11,11 +11,11 @@ from pydantic import Field
 from pymongo import DESCENDING
 
 from app.core.codes import ResponseCode
-from app.core.exception.exceptions import ServiceException
 from app.core.database.mongodb import (
     DEFAULT_MESSAGE_TTS_USAGES_COLLECTION,
     get_mongo_database,
 )
+from app.core.exception.exceptions import ServiceException
 from app.schemas.document.message_tts_usage import (
     MessageTtsUsageCreate,
     TtsUsageProvider,

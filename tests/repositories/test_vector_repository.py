@@ -112,28 +112,28 @@ def test_build_collection_schema_contains_standard_12_fields() -> None:
     assert fields["chunk_no"].dtype == DataType.INT64
     assert fields["content"].dtype == DataType.VARCHAR
     assert (
-        fields["content"].params["max_length"]
-        == repository_module.DEFAULT_CONTENT_MAX_LENGTH
+            fields["content"].params["max_length"]
+            == repository_module.DEFAULT_CONTENT_MAX_LENGTH
     )
     assert fields["char_count"].dtype == DataType.INT32
     assert fields["embedding"].dtype == DataType.FLOAT_VECTOR
     assert fields["embedding"].params["dim"] == 1024
     assert fields["chunk_strategy"].dtype == DataType.VARCHAR
     assert (
-        fields["chunk_strategy"].params["max_length"]
-        == repository_module.DEFAULT_CHUNK_STRATEGY_MAX_LENGTH
+            fields["chunk_strategy"].params["max_length"]
+            == repository_module.DEFAULT_CHUNK_STRATEGY_MAX_LENGTH
     )
     assert fields["chunk_size"].dtype == DataType.INT32
     assert fields["token_size"].dtype == DataType.INT32
     assert fields["status"].dtype == DataType.INT32
     assert (
-        fields["status"].default_value.long_data
-        == repository_module.DEFAULT_KNOWLEDGE_STATUS
+            fields["status"].default_value.long_data
+            == repository_module.DEFAULT_KNOWLEDGE_STATUS
     )
     assert fields["source_hash"].dtype == DataType.VARCHAR
     assert (
-        fields["source_hash"].params["max_length"]
-        == repository_module.DEFAULT_SOURCE_HASH_MAX_LENGTH
+            fields["source_hash"].params["max_length"]
+            == repository_module.DEFAULT_SOURCE_HASH_MAX_LENGTH
     )
     assert fields["created_at_ts"].dtype == DataType.INT64
 

@@ -299,7 +299,7 @@ def _build_tool_call_traces(messages: list[Any]) -> list[dict[str, Any]]:
                 {
                     "tool_name": str(raw_call.get("name") or ""),
                     "tool_call_id": (
-                        str(raw_call.get("id") or "").strip() or None
+                            str(raw_call.get("id") or "").strip() or None
                     ),
                     "tool_input": raw_call.get("args"),
                 }

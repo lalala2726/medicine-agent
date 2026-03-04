@@ -69,10 +69,10 @@
 
 1. DDL 文件：`doc/knowledge_schema.sql`
 2. 内容包括：
-   1. 4 张表完整建表语句；
-   2. 表注释和字段注释；
-   3. 索引、唯一键、外键；
-   4. 联调示例查询（知识库列表、文件列表、任务列表、索引快照）。
+    1. 4 张表完整建表语句；
+    2. 表注释和字段注释；
+    3. 索引、唯一键、外键；
+    4. 联调示例查询（知识库列表、文件列表、任务列表、索引快照）。
 
 ## 6. 后续实现建议顺序（下一步参考）
 
@@ -111,6 +111,7 @@
 1. 建库接口保持 `POST /knowledge_base`，请求体仅包含 `knowledge_name`、`embedding_dim`、`description`。
 2. `embedding_dim` 继续由 HTTP 传入，不在 Python 内做固定维度硬编码。
 3. Milvus 使用“每知识库一集合”模型，集合名使用 `knowledge_name`。
-4. Milvus 字段定稿为 11 个：`id`、`document_id`、`chunk_no`、`content`、`char_count`、`embedding`、`chunk_strategy`、`chunk_size`、`token_size`、`source_hash`、`created_at_ts`。
+4. Milvus 字段定稿为 11 个：`id`、`document_id`、`chunk_no`、`content`、`char_count`、`embedding`、`chunk_strategy`、
+   `chunk_size`、`token_size`、`source_hash`、`created_at_ts`。
 5. 向量索引保持 `embedding -> AUTOINDEX + COSINE`，标量索引保持 `document_id -> STL_SORT`。
 6. `embedding_model` 由 SpringBoot/MySQL 元数据层管理（`knowledge_base`、`knowledge_document_index`），Python 建库接口不接收该字段。

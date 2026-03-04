@@ -1,8 +1,6 @@
 import asyncio
 from datetime import datetime, timezone
 
-import pytest
-
 from app.core.mq.consumer import (
     CallbackAttemptResult,
     CallbackTracker,
@@ -62,7 +60,7 @@ def _build_settings() -> RabbitMQSettings:
 
 
 def _build_callback_payload(
-    status: str = "COMPLETED",
+        status: str = "COMPLETED",
 ) -> KnowledgeImportCallbackPayload:
     """
     测试目的：构造回调参数样例，供回调重试测试复用。
@@ -186,7 +184,7 @@ def test_process_import_message_with_retry_retries_until_success() -> None:
     slept: list[float] = []
 
     def _fake_process(
-        _message: KnowledgeImportMessage, **_kwargs
+            _message: KnowledgeImportMessage, **_kwargs
     ) -> KnowledgeImportCallbackPayload:
         called["count"] += 1
         if called["count"] < 3:
@@ -221,7 +219,7 @@ def test_process_import_message_with_retry_stops_after_max_retries() -> None:
     slept: list[float] = []
 
     def _always_fail(
-        _message: KnowledgeImportMessage, **_kwargs
+            _message: KnowledgeImportMessage, **_kwargs
     ) -> KnowledgeImportCallbackPayload:
         called["count"] += 1
         return _build_callback_payload("FAILED")
@@ -276,8 +274,8 @@ def test_send_callback_with_retry_stops_after_window() -> None:
     slept: list[float] = []
 
     async def _always_fail(
-        _payload: KnowledgeImportCallbackPayload,
-        _settings: RabbitMQSettings,
+            _payload: KnowledgeImportCallbackPayload,
+            _settings: RabbitMQSettings,
     ) -> CallbackAttemptResult:
         called["count"] += 1
         return CallbackAttemptResult(
@@ -317,8 +315,8 @@ def test_send_callback_with_retry_returns_when_first_attempt_success() -> None:
     slept: list[float] = []
 
     async def _success_once(
-        _payload: KnowledgeImportCallbackPayload,
-        _settings: RabbitMQSettings,
+            _payload: KnowledgeImportCallbackPayload,
+            _settings: RabbitMQSettings,
     ) -> CallbackAttemptResult:
         called["count"] += 1
         return CallbackAttemptResult(
@@ -364,8 +362,8 @@ def test_callback_tracker_merges_state_only_sends_latest() -> None:
     call_count = {"n": 0}
 
     async def _fake_send(
-        payload: KnowledgeImportCallbackPayload,
-        _settings: RabbitMQSettings,
+            payload: KnowledgeImportCallbackPayload,
+            _settings: RabbitMQSettings,
     ) -> CallbackAttemptResult:
         call_count["n"] += 1
         sent_payloads.append(payload)
@@ -409,8 +407,8 @@ def test_callback_tracker_flush_final_retries() -> None:
     slept: list[float] = []
 
     async def _fail_then_succeed(
-        _payload: KnowledgeImportCallbackPayload,
-        _settings: RabbitMQSettings,
+            _payload: KnowledgeImportCallbackPayload,
+            _settings: RabbitMQSettings,
     ) -> CallbackAttemptResult:
         call_count["n"] += 1
         if call_count["n"] == 1:
@@ -447,7 +445,7 @@ def test_callback_tracker_flush_final_retries() -> None:
 
 
 def test_handle_incoming_message_acks_when_callback_retries_exhausted(
-    monkeypatch,
+        monkeypatch,
 ) -> None:
     """
     测试目的：验证回调重试耗尽后消息仍会 ACK，避免队列无限积压。
@@ -476,10 +474,11 @@ def test_handle_incoming_message_acks_when_callback_retries_exhausted(
         "app.core.mq.consumer.process_import_message_with_retry",
         _fake_process_with_retry,
     )
+
     # Patch _send_callback_once to always fail (tests ACK regardless)
     async def _always_fail_callback(
-        _payload: KnowledgeImportCallbackPayload,
-        _settings: RabbitMQSettings,
+            _payload: KnowledgeImportCallbackPayload,
+            _settings: RabbitMQSettings,
     ) -> CallbackAttemptResult:
         return CallbackAttemptResult(
             success=False, status_code=502, body_snippet="ERR", error_message=None

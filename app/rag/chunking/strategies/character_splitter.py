@@ -94,8 +94,8 @@ class CharacterChunker(ChunkStrategy):
         )
 
     def _build_fallback_splitter(
-        self,
-        config: SplitConfig,
+            self,
+            config: SplitConfig,
     ) -> RecursiveCharacterTextSplitter:
         """
         功能描述:

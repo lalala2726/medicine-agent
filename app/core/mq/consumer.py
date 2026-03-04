@@ -80,7 +80,7 @@ class CallbackTracker:
     _pending: bool = field(default=False, repr=False)
 
     def advance(
-        self, payload: KnowledgeImportCallbackPayload
+            self, payload: KnowledgeImportCallbackPayload
     ) -> None:
         """
         功能描述:
@@ -99,13 +99,13 @@ class CallbackTracker:
         self._pending = True
 
     async def flush(
-        self,
-        settings: RabbitMQSettings,
-        *,
-        send_func: Callable[
-            [KnowledgeImportCallbackPayload, RabbitMQSettings],
-            Awaitable[CallbackAttemptResult],
-        ] = None,
+            self,
+            settings: RabbitMQSettings,
+            *,
+            send_func: Callable[
+                [KnowledgeImportCallbackPayload, RabbitMQSettings],
+                Awaitable[CallbackAttemptResult],
+            ] = None,
     ) -> bool:
         """
         功能描述:
@@ -152,16 +152,16 @@ class CallbackTracker:
         return False
 
     async def flush_final(
-        self,
-        settings: RabbitMQSettings,
-        *,
-        max_retries: int,
-        retry_delays_seconds: tuple[int, ...],
-        send_func: Callable[
-            [KnowledgeImportCallbackPayload, RabbitMQSettings],
-            Awaitable[CallbackAttemptResult],
-        ] = None,
-        sleep_func: Callable[[float], Awaitable[None]] = asyncio.sleep,
+            self,
+            settings: RabbitMQSettings,
+            *,
+            max_retries: int,
+            retry_delays_seconds: tuple[int, ...],
+            send_func: Callable[
+                [KnowledgeImportCallbackPayload, RabbitMQSettings],
+                Awaitable[CallbackAttemptResult],
+            ] = None,
+            sleep_func: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> bool:
         """
         功能描述:
@@ -261,12 +261,12 @@ def _load_aio_pika() -> tuple[Any, Any]:
 
 
 def _build_failed_payload(
-    message: KnowledgeImportMessage,
-    *,
-    started_at: datetime,
-    error_message: str,
-    embedding_dim: int = 0,
-    stage_detail: str | None = None,
+        message: KnowledgeImportMessage,
+        *,
+        started_at: datetime,
+        error_message: str,
+        embedding_dim: int = 0,
+        stage_detail: str | None = None,
 ) -> KnowledgeImportCallbackPayload:
     """
     功能描述:
@@ -306,11 +306,11 @@ def _build_failed_payload(
 
 
 def _build_base_payload(
-    message: KnowledgeImportMessage,
-    *,
-    status: str,
-    detail: str,
-    started_at: datetime,
+        message: KnowledgeImportMessage,
+        *,
+        status: str,
+        detail: str,
+        started_at: datetime,
 ) -> KnowledgeImportCallbackPayload:
     """
     功能描述:
@@ -354,9 +354,9 @@ def _build_base_payload(
 
 
 def process_import_message_once(
-    message: KnowledgeImportMessage,
-    *,
-    tracker: CallbackTracker | None = None,
+        message: KnowledgeImportMessage,
+        *,
+        tracker: CallbackTracker | None = None,
 ) -> KnowledgeImportCallbackPayload:
     """
     功能描述:
@@ -428,15 +428,15 @@ def process_import_message_once(
 
 
 async def process_import_message_with_retry(
-    message: KnowledgeImportMessage,
-    *,
-    max_retries: int,
-    retry_delays_seconds: tuple[int, ...],
-    tracker: CallbackTracker | None = None,
-    process_func: Callable[
-        ..., KnowledgeImportCallbackPayload
-    ] = None,
-    sleep_func: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        message: KnowledgeImportMessage,
+        *,
+        max_retries: int,
+        retry_delays_seconds: tuple[int, ...],
+        tracker: CallbackTracker | None = None,
+        process_func: Callable[
+            ..., KnowledgeImportCallbackPayload
+        ] = None,
+        sleep_func: Callable[[float], Awaitable[None]] = asyncio.sleep,
 ) -> KnowledgeImportCallbackPayload:
     """
     功能描述:
@@ -543,8 +543,8 @@ def _is_callback_success(status_code: int, body_text: str) -> bool:
 
 
 async def _send_callback_once(
-    payload: KnowledgeImportCallbackPayload,
-    settings: RabbitMQSettings,
+        payload: KnowledgeImportCallbackPayload,
+        settings: RabbitMQSettings,
 ) -> CallbackAttemptResult:
     """
     功能描述:
@@ -584,15 +584,15 @@ async def _send_callback_once(
 
 
 async def send_callback_with_retry(
-    payload: KnowledgeImportCallbackPayload,
-    *,
-    settings: RabbitMQSettings,
-    max_retries: int,
-    retry_delays_seconds: tuple[int, ...],
-    send_func: Callable[
-        [KnowledgeImportCallbackPayload, RabbitMQSettings], Awaitable[CallbackAttemptResult]
-    ] = _send_callback_once,
-    sleep_func: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        payload: KnowledgeImportCallbackPayload,
+        *,
+        settings: RabbitMQSettings,
+        max_retries: int,
+        retry_delays_seconds: tuple[int, ...],
+        send_func: Callable[
+            [KnowledgeImportCallbackPayload, RabbitMQSettings], Awaitable[CallbackAttemptResult]
+        ] = _send_callback_once,
+        sleep_func: Callable[[float], Awaitable[None]] = asyncio.sleep,
 ) -> bool:
     """
     功能描述:
@@ -633,8 +633,8 @@ async def send_callback_with_retry(
 
 
 async def _handle_incoming_message(
-    incoming: Any,
-    settings: RabbitMQSettings,
+        incoming: Any,
+        settings: RabbitMQSettings,
 ) -> None:
     """
     功能描述:

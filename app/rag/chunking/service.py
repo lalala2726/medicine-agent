@@ -65,9 +65,9 @@ _suppress_langchain_chunk_size_warning()
 
 
 def split_text(
-    text: str,
-    strategy_type: str | ChunkStrategyType,
-    config: Optional[SplitConfig] = None,
+        text: str,
+        strategy_type: str | ChunkStrategyType,
+        config: Optional[SplitConfig] = None,
 ) -> list[SplitChunk]:
     """
     功能描述:

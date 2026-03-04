@@ -4,8 +4,8 @@
 统一导出 gateway 与各业务节点，供 `workflow.py` 进行拓扑编排。
 """
 
-from app.agent.assistant.node.after_sale_node import after_sale_agent
 from app.agent.assistant.node.adaptive_agent_node import adaptive_agent
+from app.agent.assistant.node.after_sale_node import after_sale_agent
 from app.agent.assistant.node.analytics_node import analytics_agent
 from app.agent.assistant.node.chat_node import chat_agent
 from app.agent.assistant.node.gateway_node import gateway_router

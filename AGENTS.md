@@ -40,7 +40,8 @@
   Allowed values: `openai`, `aliyun`, `volcengine` (also accepts `LlmProvider.<NAME>` style strings).
 - LLM config priority: function args > environment values after `python-dotenv` (`load_dotenv`) > defaults.
 - OpenAI chat provider configuration (optional): `OPENAI_API_KEY` (required when provider is `openai`),
-  `OPENAI_BASE_URL` (defaults to `https://api.openai.com/v1`), `OPENAI_CHAT_MODEL` (required when chat model name is not passed explicitly),
+  `OPENAI_BASE_URL` (defaults to `https://api.openai.com/v1`), `OPENAI_CHAT_MODEL` (required when chat model name is not
+  passed explicitly),
   `OPENAI_GATEWAY_ROUTER_MODEL` (optional gateway 路由专用模型，未配置时回退 `OPENAI_CHAT_MODEL`),
   `OPENAI_IMAGE_MODEL` (required when image model name is not passed explicitly),
   `OPENAI_EMBEDDING_MODEL` (required when embedding model name is not passed explicitly).

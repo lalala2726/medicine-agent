@@ -5,7 +5,7 @@ from app.core.mq.settings import get_rabbitmq_settings
 
 
 def test_get_rabbitmq_settings_supports_duration_suffixes(
-    monkeypatch: pytest.MonkeyPatch,
+        monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """
     测试目的：验证 MQ_RETRY_DELAYS_SECONDS 支持 s/m/h 单位并可正确换算为秒。
@@ -47,7 +47,7 @@ def test_get_rabbitmq_settings_supports_duration_suffixes(
 
 
 def test_get_rabbitmq_settings_rejects_invalid_duration_token(
-    monkeypatch: pytest.MonkeyPatch,
+        monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """
     测试目的：验证 MQ_RETRY_DELAYS_SECONDS 存在非法时间单位时会抛出配置异常。
@@ -67,7 +67,7 @@ def test_get_rabbitmq_settings_rejects_invalid_duration_token(
 
 
 def test_get_rabbitmq_settings_requires_callback_url(
-    monkeypatch: pytest.MonkeyPatch,
+        monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """
     测试目的：验证导入回调地址缺失时会拒绝加载 MQ 配置。

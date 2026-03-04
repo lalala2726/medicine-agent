@@ -12,7 +12,7 @@ from app.services import knowledge_base_service
 
 
 def test_submit_import_to_queue_publishes_one_message_per_url(
-    monkeypatch: pytest.MonkeyPatch,
+        monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """
     测试目的：验证导入提交会按 file_urls 数量拆分并发布多条 MQ 消息，并透传 embedding_model。
@@ -58,7 +58,7 @@ def test_submit_import_to_queue_publishes_one_message_per_url(
 
 
 def test_submit_import_to_queue_rejects_unknown_collection_before_publish(
-    monkeypatch: pytest.MonkeyPatch,
+        monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """
     测试目的：验证入队前会先校验知识库集合存在，不存在时直接拒绝且不发布 MQ 消息。
@@ -105,7 +105,7 @@ def test_submit_import_to_queue_rejects_unknown_collection_before_publish(
 
 
 def test_import_knowledge_service_rejects_url_without_supported_suffix(
-    monkeypatch: pytest.MonkeyPatch,
+        monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """
     测试目的：验证导入流程会在下载前执行 URL 后缀校验。
@@ -151,8 +151,8 @@ def test_import_knowledge_service_rejects_url_without_supported_suffix(
 
 
 def test_import_knowledge_service_runs_vectorization_and_insert_batches(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
 ) -> None:
     """
     测试目的：验证导入流程按“下载 -> 解析 -> 切片 -> 向量化 -> 入库”主链路运行。
@@ -246,8 +246,8 @@ def test_import_knowledge_service_runs_vectorization_and_insert_batches(
 
 
 def test_import_knowledge_service_keeps_downloaded_file_on_parse_failure(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
 ) -> None:
     """
     测试目的：验证解析失败时不会删除已下载源文件，便于后续排障。
@@ -301,8 +301,8 @@ def test_import_knowledge_service_keeps_downloaded_file_on_parse_failure(
 
 
 def test_import_knowledge_service_batches_are_strictly_serial(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
 ) -> None:
     """
     测试目的：验证向量化与入库按批次严格串行执行（先向量化该批，再入库该批）。

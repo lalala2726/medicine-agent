@@ -35,8 +35,8 @@ from app.services.conversation_service import (
     save_conversation_title,
     update_admin_conversation_title,
 )
-from app.services.memory_summary_service import refresh_conversation_summary_if_needed
 from app.services.memory_service import load_memory, resolve_assistant_memory_mode
+from app.services.memory_summary_service import refresh_conversation_summary_if_needed
 from app.services.message_service import add_message, list_messages
 from app.services.message_trace_service import add_message_trace
 from app.services.token_usage_service import (

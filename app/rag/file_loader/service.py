@@ -15,9 +15,9 @@ from app.rag.file_loader.types import ParseOptions, ParsedDocument
 
 
 def parse_downloaded_file(
-    file_path: Path,
-    source_url: str,
-    options: ParseOptions | None = None,
+        file_path: Path,
+        source_url: str,
+        options: ParseOptions | None = None,
 ) -> ParsedDocument:
     """
     功能描述:

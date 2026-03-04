@@ -58,7 +58,7 @@ class ImportSingleFileFailedResult(BaseModel):
 
 
 ImportSingleFileResult: TypeAlias = (
-    ImportSingleFileSuccessResult | ImportSingleFileFailedResult
+        ImportSingleFileSuccessResult | ImportSingleFileFailedResult
 )
 
 

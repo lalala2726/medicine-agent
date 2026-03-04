@@ -6,7 +6,7 @@ from app.core.mq.models import CallbackStage, KnowledgeImportCallbackPayload
 
 
 def _build_payload(
-    status: str = "COMPLETED", stage_detail: str | None = None
+        status: str = "COMPLETED", stage_detail: str | None = None
 ) -> KnowledgeImportCallbackPayload:
     return KnowledgeImportCallbackPayload.build(
         task_uuid="task-1",
