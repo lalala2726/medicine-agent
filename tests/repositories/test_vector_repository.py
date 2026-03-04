@@ -1,6 +1,8 @@
 import pytest
 from pymilvus import DataType
+from pymilvus.client.types import LoadState
 
+from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException
 from app.repositories import vector_repository as repository_module
 
@@ -18,11 +20,15 @@ class _FakeMilvusClient:
         self._has_collection_result = has_collection_result
         self.index_params = _FakeIndexParams()
         self.create_collection_calls: list[dict[str, object]] = []
+        self.load_collection_calls: list[dict[str, object]] = []
+        self.release_collection_calls: list[dict[str, object]] = []
+        self.get_load_state_calls: list[dict[str, object]] = []
         self.query_calls: list[dict[str, object]] = []
         self.delete_calls: list[dict[str, object]] = []
         self.insert_calls: list[dict[str, object]] = []
         self.rows_result: list[dict] = []
         self.count_result: list[dict] = [{"count(*)": 0}]
+        self.load_state_result: dict = {"state": LoadState.NotLoad}
         self.describe_result: dict = {
             "fields": [
                 {
@@ -40,6 +46,16 @@ class _FakeMilvusClient:
 
     def create_collection(self, **kwargs) -> None:
         self.create_collection_calls.append(kwargs)
+
+    def load_collection(self, **kwargs) -> None:
+        self.load_collection_calls.append(kwargs)
+
+    def release_collection(self, **kwargs) -> None:
+        self.release_collection_calls.append(kwargs)
+
+    def get_load_state(self, **kwargs) -> dict:
+        self.get_load_state_calls.append(kwargs)
+        return self.load_state_result
 
     def drop_collection(self, _name: str) -> None:
         return None
@@ -63,9 +79,9 @@ class _FakeMilvusClient:
         return self.describe_result
 
 
-def test_build_collection_schema_contains_standard_11_fields() -> None:
+def test_build_collection_schema_contains_standard_12_fields() -> None:
     """
-    测试目的：验证 Milvus repository 使用标准版 11 字段 schema。
+    测试目的：验证 Milvus repository 使用标准版 12 字段 schema。
     预期结果：schema 字段顺序、字段类型、向量维度与字符串长度约束均符合约定。
     """
     schema = repository_module._build_collection_schema(
@@ -83,6 +99,7 @@ def test_build_collection_schema_contains_standard_11_fields() -> None:
         "chunk_strategy",
         "chunk_size",
         "token_size",
+        "status",
         "source_hash",
         "created_at_ts",
     ]
@@ -108,6 +125,11 @@ def test_build_collection_schema_contains_standard_11_fields() -> None:
     )
     assert fields["chunk_size"].dtype == DataType.INT32
     assert fields["token_size"].dtype == DataType.INT32
+    assert fields["status"].dtype == DataType.INT32
+    assert (
+        fields["status"].default_value.long_data
+        == repository_module.DEFAULT_KNOWLEDGE_STATUS
+    )
     assert fields["source_hash"].dtype == DataType.VARCHAR
     assert (
         fields["source_hash"].params["max_length"]
@@ -152,6 +174,101 @@ def test_create_collection_raises_when_collection_exists(
             embedding_dim=1024,
             description="demo",
         )
+
+
+def test_load_collection_state_returns_normalized_state(
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    测试目的：验证加载集合会调用 load + get_load_state 并返回规范化状态。
+    预期结果：返回包含 knowledge_name/load_state，且调用参数正确。
+    """
+    client = _FakeMilvusClient(has_collection_result=True)
+    client.load_state_result = {"state": LoadState.Loaded}
+    monkeypatch.setattr(repository_module, "get_milvus_client", lambda: client)
+
+    result = repository_module.load_collection_state("demo_kb")
+
+    assert result == {
+        "knowledge_name": "demo_kb",
+        "load_state": "Loaded",
+    }
+    assert client.load_collection_calls == [{"collection_name": "demo_kb"}]
+    assert client.get_load_state_calls == [{"collection_name": "demo_kb"}]
+
+
+def test_load_collection_state_keeps_progress_when_loading(
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    测试目的：验证加载中状态会透传 progress 字段。
+    预期结果：返回 load_state=Loading 且 progress 保持原值。
+    """
+    client = _FakeMilvusClient(has_collection_result=True)
+    client.load_state_result = {"state": LoadState.Loading, "progress": 37}
+    monkeypatch.setattr(repository_module, "get_milvus_client", lambda: client)
+
+    result = repository_module.load_collection_state("demo_kb")
+
+    assert result["load_state"] == "Loading"
+    assert result["progress"] == 37
+
+
+def test_release_collection_state_returns_normalized_state(
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    测试目的：验证释放集合会调用 release + get_load_state 并返回规范化状态。
+    预期结果：返回包含 knowledge_name/load_state，且调用参数正确。
+    """
+    client = _FakeMilvusClient(has_collection_result=True)
+    client.load_state_result = {"state": LoadState.NotLoad}
+    monkeypatch.setattr(repository_module, "get_milvus_client", lambda: client)
+
+    result = repository_module.release_collection_state("demo_kb")
+
+    assert result == {
+        "knowledge_name": "demo_kb",
+        "load_state": "NotLoad",
+    }
+    assert client.release_collection_calls == [{"collection_name": "demo_kb"}]
+    assert client.get_load_state_calls == [{"collection_name": "demo_kb"}]
+
+
+def test_load_collection_state_raises_not_found_when_collection_missing(
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    测试目的：验证加载不存在集合时抛出 NOT_FOUND 业务异常。
+    预期结果：错误码为 404，且不会调用 load/get_load_state。
+    """
+    client = _FakeMilvusClient(has_collection_result=False)
+    monkeypatch.setattr(repository_module, "get_milvus_client", lambda: client)
+
+    with pytest.raises(ServiceException) as exc_info:
+        repository_module.load_collection_state("missing_kb")
+
+    assert int(exc_info.value.code) == ResponseCode.NOT_FOUND.code
+    assert client.load_collection_calls == []
+    assert client.get_load_state_calls == []
+
+
+def test_release_collection_state_raises_not_found_when_collection_missing(
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    测试目的：验证释放不存在集合时抛出 NOT_FOUND 业务异常。
+    预期结果：错误码为 404，且不会调用 release/get_load_state。
+    """
+    client = _FakeMilvusClient(has_collection_result=False)
+    monkeypatch.setattr(repository_module, "get_milvus_client", lambda: client)
+
+    with pytest.raises(ServiceException) as exc_info:
+        repository_module.release_collection_state("missing_kb")
+
+    assert int(exc_info.value.code) == ResponseCode.NOT_FOUND.code
+    assert client.release_collection_calls == []
+    assert client.get_load_state_calls == []
 
 
 def test_list_document_chunks_queries_with_expected_filter_and_fields(

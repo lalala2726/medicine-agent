@@ -291,6 +291,38 @@ def delete_knowledge(knowledge_name: str) -> None:
     vector_repository.delete_collection(knowledge_name=knowledge_name)
 
 
+def load_collection_state(knowledge_name: str) -> dict:
+    """
+    启用知识库对应的 Milvus collection（加载到查询节点）。
+
+    Args:
+        knowledge_name: 知识库名称。
+
+    Returns:
+        dict: 含 `knowledge_name` 与 `load_state`（可选 `progress`）。
+
+    Raises:
+        ServiceException: collection 不存在或加载失败。
+    """
+    return vector_repository.load_collection_state(knowledge_name=knowledge_name)
+
+
+def release_collection_state(knowledge_name: str) -> dict:
+    """
+    关闭知识库对应的 Milvus collection（从查询节点释放）。
+
+    Args:
+        knowledge_name: 知识库名称。
+
+    Returns:
+        dict: 含 `knowledge_name` 与 `load_state`（可选 `progress`）。
+
+    Raises:
+        ServiceException: collection 不存在或释放失败。
+    """
+    return vector_repository.release_collection_state(knowledge_name=knowledge_name)
+
+
 def _validate_file_not_empty(file_path: Path) -> None:
     """
     校验文件非空。

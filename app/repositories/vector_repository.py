@@ -15,6 +15,9 @@ from app.core.exception.exceptions import ServiceException
 DEFAULT_CONTENT_MAX_LENGTH = 65535  # 内容字段最大长度
 DEFAULT_CHUNK_STRATEGY_MAX_LENGTH = 32  # 切片策略字段最大长度
 DEFAULT_SOURCE_HASH_MAX_LENGTH = 64  # 源文本哈希字段最大长度（sha256）
+KNOWLEDGE_STATUS_ENABLED = 0  # 知识库启用状态
+KNOWLEDGE_STATUS_DISABLED = 1  # 知识库禁用状态
+DEFAULT_KNOWLEDGE_STATUS = KNOWLEDGE_STATUS_ENABLED
 DEFAULT_VECTOR_INDEX_TYPE = "AUTOINDEX"
 DEFAULT_VECTOR_METRIC_TYPE = "COSINE"
 COUNT_FALLBACK_LIMIT = 1000
@@ -47,7 +50,7 @@ def _build_index_params(client: MilvusClient):
 def _build_collection_schema(embedding_dim: int, description: str) -> CollectionSchema:
     """
     功能描述:
-        构建知识库向量集合 schema（标准 11 字段版本）。
+        构建知识库向量集合 schema（标准 12 字段版本）。
 
     参数说明:
         embedding_dim (int): 向量维度。
@@ -114,6 +117,12 @@ def _build_collection_schema(embedding_dim: int, description: str) -> Collection
             dtype=DataType.INT32,
             description="token 切片大小参数快照",
             nullable=True,
+        ),
+        FieldSchema(
+            name="status",
+            dtype=DataType.INT32,
+            description="知识库状态（0=启用，1=禁用）",
+            default_value=DEFAULT_KNOWLEDGE_STATUS,
         ),
         FieldSchema(
             name="source_hash",
@@ -314,6 +323,108 @@ def ensure_collection_exists(knowledge_name: str) -> None:
             code=ResponseCode.OPERATION_FAILED,
             message=f"查询知识库失败: {exc}",
         ) from exc
+
+
+def _normalize_load_state(result: dict) -> dict:
+    """
+    功能描述:
+        规范化 Milvus `get_load_state` 返回结果，统一输出可序列化字段。
+
+    参数说明:
+        result (dict): SDK 返回的 load_state 结果字典。
+
+    返回值:
+        dict: 标准化后的状态字典，包含 `load_state`，可选 `progress`。
+
+    异常说明:
+        无。
+    """
+    state_value = result.get("state")
+    if hasattr(state_value, "name"):
+        load_state = str(state_value.name)
+    elif isinstance(state_value, str):
+        load_state = state_value
+    else:
+        load_state = str(state_value)
+
+    normalized = {"load_state": load_state}
+    if "progress" in result:
+        normalized["progress"] = result["progress"]
+    return normalized
+
+
+def load_collection_state(knowledge_name: str) -> dict:
+    """
+    功能描述:
+        加载指定集合到查询节点，并返回当前加载状态。
+
+    参数说明:
+        knowledge_name (str): 集合名称。
+
+    返回值:
+        dict: 包含 `knowledge_name` 与 `load_state`，必要时包含 `progress`。
+
+    异常说明:
+        ServiceException:
+            - 集合不存在时抛出；
+            - Milvus 调用失败时抛出。
+    """
+    client = get_milvus_client()
+    try:
+        if not client.has_collection(knowledge_name):
+            raise ServiceException(
+                code=ResponseCode.NOT_FOUND,
+                message="知识库不存在",
+            )
+        client.load_collection(collection_name=knowledge_name)
+        state_result = client.get_load_state(collection_name=knowledge_name)
+    except milvus_exceptions.MilvusException as exc:
+        raise ServiceException(
+            code=ResponseCode.OPERATION_FAILED,
+            message=f"启用知识库失败: {exc}",
+        ) from exc
+
+    return {
+        "knowledge_name": knowledge_name,
+        **_normalize_load_state(state_result),
+    }
+
+
+def release_collection_state(knowledge_name: str) -> dict:
+    """
+    功能描述:
+        释放指定集合在查询节点中的加载状态，并返回当前加载状态。
+
+    参数说明:
+        knowledge_name (str): 集合名称。
+
+    返回值:
+        dict: 包含 `knowledge_name` 与 `load_state`，必要时包含 `progress`。
+
+    异常说明:
+        ServiceException:
+            - 集合不存在时抛出；
+            - Milvus 调用失败时抛出。
+    """
+    client = get_milvus_client()
+    try:
+        if not client.has_collection(knowledge_name):
+            raise ServiceException(
+                code=ResponseCode.NOT_FOUND,
+                message="知识库不存在",
+            )
+        client.release_collection(collection_name=knowledge_name)
+        state_result = client.get_load_state(collection_name=knowledge_name)
+    except milvus_exceptions.MilvusException as exc:
+        raise ServiceException(
+            code=ResponseCode.OPERATION_FAILED,
+            message=f"关闭知识库失败: {exc}",
+        ) from exc
+
+    return {
+        "knowledge_name": knowledge_name,
+        **_normalize_load_state(state_result),
+    }
 
 
 def insert_embeddings(

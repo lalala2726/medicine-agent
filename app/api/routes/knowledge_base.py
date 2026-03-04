@@ -10,7 +10,9 @@ from app.services.knowledge_base_service import (
     create_collection,
     delete_document,
     delete_knowledge,
+    load_collection_state,
     list_knowledge_chunks,
+    release_collection_state,
     submit_import_to_queue,
 )
 
@@ -102,6 +104,55 @@ async def delete_knowledge_base(
     return ApiResponse.success(
         data={"knowledge_name": request.knowledge_name},
         message="删除成功",
+    )
+
+
+class KnowledgeLoadRequest(BaseModel):
+    """启用/关闭集合请求参数"""
+    knowledge_name: str = Field(
+        ...,
+        pattern=r"^[A-Za-z][A-Za-z0-9_]*$",
+        description="知识库名称",
+    )
+
+
+@router.post(path="/load", summary="启用知识库")
+async def load_knowledge_base(
+        request: KnowledgeLoadRequest,
+) -> ApiResponse[dict]:
+    """
+    启用知识库对应集合（load collection）。
+
+    Args:
+        request: 启用请求参数。
+
+    Returns:
+        ApiResponse[dict]: 启用成功响应。
+    """
+    result = load_collection_state(request.knowledge_name)
+    return ApiResponse.success(
+        data=result,
+        message="启用成功",
+    )
+
+
+@router.post(path="/release", summary="关闭知识库")
+async def release_knowledge_base(
+        request: KnowledgeLoadRequest,
+) -> ApiResponse[dict]:
+    """
+    关闭知识库对应集合（release collection）。
+
+    Args:
+        request: 关闭请求参数。
+
+    Returns:
+        ApiResponse[dict]: 关闭成功响应。
+    """
+    result = release_collection_state(request.knowledge_name)
+    return ApiResponse.success(
+        data=result,
+        message="关闭成功",
     )
 
 
