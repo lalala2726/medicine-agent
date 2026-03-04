@@ -15,6 +15,7 @@ _DEFAULT_PREFETCH_COUNT = 1
 _DEFAULT_RETRY_DELAYS = (
     15, 15, 30, 180, 600, 1200, 1800, 1800, 1800, 3600, 10800, 10800, 10800, 21600, 21600
 )
+_DEFAULT_CALLBACK_TIMEOUT_SECONDS = 5
 
 
 def _parse_bool(value: str | None, *, default: bool) -> bool:
@@ -211,6 +212,10 @@ class RabbitMQSettings:
         prefetch_count (int): 消费预取条数。
         max_retries (int): 单消息最大重试次数。
         retry_delays_seconds (tuple[int, ...]): 重试间隔（秒）列表。
+        callback_url (str): 导入结果回调地址。
+        callback_timeout_seconds (int): 回调 HTTP 超时时间（秒）。
+        callback_max_retries (int): 回调最大重试次数。
+        callback_retry_delays_seconds (tuple[int, ...]): 回调重试间隔（秒）列表。
 
     返回值:
         无。该类用于承载配置数据。
@@ -226,6 +231,10 @@ class RabbitMQSettings:
     prefetch_count: int
     max_retries: int
     retry_delays_seconds: tuple[int, ...]
+    callback_url: str
+    callback_timeout_seconds: int
+    callback_max_retries: int
+    callback_retry_delays_seconds: tuple[int, ...]
 
 
 @lru_cache(maxsize=1)
@@ -243,6 +252,7 @@ def get_rabbitmq_settings() -> RabbitMQSettings:
     异常说明:
         ServiceException:
             - 未配置 `RABBITMQ_URL` 时抛出；
+            - 未配置 `KNOWLEDGE_IMPORT_CALLBACK_URL` 时抛出；
             - 整数配置非法时抛出。
     """
     url = (os.getenv("RABBITMQ_URL") or "").strip()
@@ -265,6 +275,26 @@ def get_rabbitmq_settings() -> RabbitMQSettings:
         default=len(retry_delays_seconds),
         name="MQ_MAX_RETRIES",
     )
+    callback_url = (os.getenv("KNOWLEDGE_IMPORT_CALLBACK_URL") or "").strip()
+    if not callback_url:
+        raise ServiceException(
+            code=ResponseCode.INTERNAL_ERROR,
+            message="未配置 KNOWLEDGE_IMPORT_CALLBACK_URL，无法回调导入结果",
+        )
+    callback_timeout_seconds = _parse_positive_int(
+        os.getenv("KNOWLEDGE_IMPORT_CALLBACK_TIMEOUT_SECONDS"),
+        default=_DEFAULT_CALLBACK_TIMEOUT_SECONDS,
+        name="KNOWLEDGE_IMPORT_CALLBACK_TIMEOUT_SECONDS",
+    )
+    callback_retry_delays_seconds = _parse_retry_delays(
+        os.getenv("KNOWLEDGE_CALLBACK_RETRY_DELAYS_SECONDS")
+        or os.getenv("MQ_RETRY_DELAYS_SECONDS")
+    )
+    callback_max_retries = _parse_positive_int(
+        os.getenv("KNOWLEDGE_CALLBACK_MAX_RETRIES"),
+        default=len(callback_retry_delays_seconds),
+        name="KNOWLEDGE_CALLBACK_MAX_RETRIES",
+    )
     return RabbitMQSettings(
         url=url,
         exchange=exchange,
@@ -273,4 +303,8 @@ def get_rabbitmq_settings() -> RabbitMQSettings:
         prefetch_count=prefetch_count,
         max_retries=max_retries,
         retry_delays_seconds=retry_delays_seconds,
+        callback_url=callback_url,
+        callback_timeout_seconds=callback_timeout_seconds,
+        callback_max_retries=callback_max_retries,
+        callback_retry_delays_seconds=callback_retry_delays_seconds,
     )

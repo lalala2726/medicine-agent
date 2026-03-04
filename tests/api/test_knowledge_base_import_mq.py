@@ -50,6 +50,7 @@ def test_import_route_submits_message_to_mq(monkeypatch) -> None:
             "knowledge_name": "demo",
             "document_id": 100,
             "file_urls": ["https://example.com/demo.txt"],
+            "embedding_model": "text-embedding-v4",
             "chunk_strategy": "character",
             "chunk_size": 500,
             "token_size": 100,
@@ -64,6 +65,7 @@ def test_import_route_submits_message_to_mq(monkeypatch) -> None:
     assert called["knowledge_name"] == "demo"
     assert called["document_id"] == 100
     assert called["file_url"] == ["https://example.com/demo.txt"]
+    assert called["embedding_model"] == "text-embedding-v4"
 
 
 def test_import_route_keeps_file_urls_and_submits_per_request(monkeypatch) -> None:
@@ -91,6 +93,7 @@ def test_import_route_keeps_file_urls_and_submits_per_request(monkeypatch) -> No
                 "https://example.com/a.txt",
                 "https://example.com/b.txt",
             ],
+            "embedding_model": "text-embedding-v4",
             "chunk_strategy": "character",
             "chunk_size": 500,
             "token_size": 100,
@@ -127,6 +130,7 @@ def test_import_route_returns_error_when_mq_submit_fails(monkeypatch) -> None:
             "knowledge_name": "demo",
             "document_id": 102,
             "file_urls": ["https://example.com/a.txt"],
+            "embedding_model": "text-embedding-v4",
             "chunk_strategy": "character",
             "chunk_size": 500,
             "token_size": 100,
@@ -137,3 +141,36 @@ def test_import_route_returns_error_when_mq_submit_fails(monkeypatch) -> None:
     body = response.json()
     assert body["code"] == 400
     assert body["message"] == "MQ 提交失败"
+
+
+def test_import_route_rejects_missing_embedding_model(monkeypatch) -> None:
+    """
+    测试目的：验证导入接口将 embedding_model 作为必填参数校验。
+    预期结果：缺少 embedding_model 时返回 400，且不触发 MQ 提交。
+    """
+    _mock_auth(monkeypatch)
+
+    async def _unexpected_submit(**_kwargs):
+        raise AssertionError("参数校验失败时不应触发 MQ 提交")
+
+    monkeypatch.setattr(knowledge_base_route, "submit_import_to_queue", _unexpected_submit)
+    client = TestClient(app)
+
+    response = client.post(
+        "/knowledge_base/document/import",
+        headers=_auth_headers(),
+        json={
+            "knowledge_name": "demo",
+            "document_id": 103,
+            "file_urls": ["https://example.com/a.txt"],
+            "chunk_strategy": "character",
+            "chunk_size": 500,
+            "token_size": 100,
+        },
+    )
+
+    assert response.status_code == 400
+    body = response.json()
+    assert body["code"] == 400
+    assert body["message"] == "Validation Failed"
+    assert any(error["field"] == "embedding_model" for error in body["errors"])

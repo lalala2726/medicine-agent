@@ -20,8 +20,17 @@ class _FakeMilvusClient:
         self.create_collection_calls: list[dict[str, object]] = []
         self.query_calls: list[dict[str, object]] = []
         self.delete_calls: list[dict[str, object]] = []
+        self.insert_calls: list[dict[str, object]] = []
         self.rows_result: list[dict] = []
         self.count_result: list[dict] = [{"count(*)": 0}]
+        self.describe_result: dict = {
+            "fields": [
+                {
+                    "name": "embedding",
+                    "params": {"dim": 1024},
+                }
+            ]
+        }
 
     def has_collection(self, _name: str) -> bool:
         return self._has_collection_result
@@ -46,6 +55,12 @@ class _FakeMilvusClient:
 
     def delete(self, **kwargs) -> None:
         self.delete_calls.append(kwargs)
+
+    def insert(self, **kwargs) -> None:
+        self.insert_calls.append(kwargs)
+
+    def describe_collection(self, _name: str) -> dict:
+        return self.describe_result
 
 
 def test_build_collection_schema_contains_standard_11_fields() -> None:
@@ -204,3 +219,79 @@ def test_delete_document_chunks_calls_milvus_delete_with_document_filter(
     payload = client.delete_calls[0]
     assert payload["collection_name"] == "demo_kb"
     assert payload["filter"] == "document_id == 42"
+
+
+def test_get_collection_embedding_dim_reads_dim_from_schema(
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    测试目的：验证 repository 可从 collection schema 中读取 embedding 字段 dim。
+    预期结果：返回整型维度值，且与 schema 配置一致。
+    """
+    client = _FakeMilvusClient(has_collection_result=True)
+    client.describe_result = {
+        "fields": [
+            {"name": "id", "params": {}},
+            {"name": "embedding", "params": {"dim": 1536}},
+        ]
+    }
+    monkeypatch.setattr(repository_module, "get_milvus_client", lambda: client)
+
+    dim = repository_module.get_collection_embedding_dim("demo_kb")
+
+    assert dim == 1536
+
+
+def test_get_collection_embedding_dim_raises_when_embedding_field_missing(
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    测试目的：验证 schema 中不存在 embedding 字段时会抛出业务异常。
+    预期结果：调用 get_collection_embedding_dim 抛出 ServiceException。
+    """
+    client = _FakeMilvusClient(has_collection_result=True)
+    client.describe_result = {"fields": [{"name": "id", "params": {}}]}
+    monkeypatch.setattr(repository_module, "get_milvus_client", lambda: client)
+
+    with pytest.raises(ServiceException, match="embedding 字段"):
+        repository_module.get_collection_embedding_dim("demo_kb")
+
+
+def test_insert_embeddings_builds_full_payload_fields(
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    测试目的：验证向量写入会补齐 chunk_no/char_count/策略快照/时间戳等字段。
+    预期结果：insert 数据包含完整业务字段，且 chunk_no 从 start_chunk_no 开始递增。
+    """
+    client = _FakeMilvusClient(has_collection_result=True)
+    monkeypatch.setattr(repository_module, "get_milvus_client", lambda: client)
+
+    repository_module.insert_embeddings(
+        knowledge_name="demo_kb",
+        document_id=99,
+        embeddings=[[0.1, 0.2], [0.3, 0.4]],
+        texts=["A", "BC"],
+        start_chunk_no=7,
+        chunk_strategy="character",
+        chunk_size=500,
+        token_size=100,
+        source_hash="hash-1",
+        char_counts=[1, 2],
+        created_at_ts=1234567890,
+    )
+
+    assert len(client.insert_calls) == 1
+    payload = client.insert_calls[0]
+    assert payload["collection_name"] == "demo_kb"
+    rows = payload["data"]
+    assert len(rows) == 2
+    assert rows[0]["chunk_no"] == 7
+    assert rows[1]["chunk_no"] == 8
+    assert rows[0]["char_count"] == 1
+    assert rows[1]["char_count"] == 2
+    assert rows[0]["chunk_strategy"] == "character"
+    assert rows[0]["chunk_size"] == 500
+    assert rows[0]["token_size"] == 100
+    assert rows[0]["source_hash"] == "hash-1"
+    assert rows[0]["created_at_ts"] == 1234567890

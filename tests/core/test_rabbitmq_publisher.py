@@ -87,6 +87,10 @@ def test_publish_import_messages_serializes_and_publishes(monkeypatch) -> None:
         prefetch_count=1,
         max_retries=3,
         retry_delays_seconds=(5, 30, 120),
+        callback_url="http://localhost:8083/api/knowledge/callback",
+        callback_timeout_seconds=5,
+        callback_max_retries=3,
+        callback_retry_delays_seconds=(5, 30, 120),
     )
 
     async def _fake_connect(_url: str):
@@ -106,6 +110,7 @@ def test_publish_import_messages_serializes_and_publishes(monkeypatch) -> None:
         knowledge_name="demo",
         document_id=1,
         file_url="https://example.com/a.txt",
+        embedding_model="text-embedding-v4",
         chunk_strategy=ChunkStrategyType.CHARACTER,
         chunk_size=500,
         token_size=100,

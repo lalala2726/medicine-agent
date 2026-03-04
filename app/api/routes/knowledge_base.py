@@ -47,6 +47,7 @@ class ImportKnowledgeRequest(BaseModel):
     )
     document_id: int = Field(..., gt=0, description="文档ID")
     file_urls: list[str] = Field(..., description="导入文件的URL")
+    embedding_model: str = Field(..., min_length=1, description="向量模型名称")
     chunk_strategy: ChunkStrategyType = Field(
         default=ChunkStrategyType.CHARACTER,
         description="切片策略：character/recursive/token/markdown_header",
@@ -192,6 +193,7 @@ async def import_knowledge(
         knowledge_name=request.knowledge_name,
         document_id=request.document_id,
         file_url=request.file_urls,
+        embedding_model=request.embedding_model,
         chunk_strategy=request.chunk_strategy,
         chunk_size=request.chunk_size,
         token_size=request.token_size,

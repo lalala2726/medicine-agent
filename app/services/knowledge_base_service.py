@@ -1,11 +1,12 @@
-from concurrent.futures import ThreadPoolExecutor
+import hashlib
+import os
 from pathlib import Path
-
-from loguru import logger
+from time import time
 
 from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException
 from app.core.llms import create_embedding_model
+from app.core.mq.import_logger import ImportStage, import_log
 from app.core.mq.models import KnowledgeImportMessage
 from app.core.mq.publisher import publish_import_messages
 from app.repositories import vector_repository
@@ -17,15 +18,15 @@ from app.utils.token_utills import TokenUtils
 DEFAULT_CHUNK_SIZE = 500  # 默认切片长度（字符）
 DEFAULT_TOKEN_SIZE = 100  # 默认 token 切片长度
 DEFAULT_CHUNK_OVERLAP = 50  # 默认切片重叠长度（字符）
-EMBED_BATCH_SIZE = 10  # 向量模型单次最大处理文本数
-EMBED_MAX_WORKERS = 5  # 最大并发线程数
 EMBED_MAX_TOKEN_SIZE = 8192  # 向量化前单文本最大 token 限制
+DEFAULT_VECTOR_BATCH_SIZE = 20  # 向量化与入库默认批次大小
 
 
 async def submit_import_to_queue(
         knowledge_name: str,
         document_id: int,
         file_url: list[str] | str,
+        embedding_model: str,
         chunk_strategy: ChunkStrategyType = ChunkStrategyType.CHARACTER,
         chunk_size: int = DEFAULT_CHUNK_SIZE,
         token_size: int = DEFAULT_TOKEN_SIZE,
@@ -37,6 +38,7 @@ async def submit_import_to_queue(
         knowledge_name: 知识库名称。
         document_id: 文档 ID。
         file_url: 文件 URL（字符串或字符串列表）。
+        embedding_model: 向量模型名称。
         chunk_strategy: 切片策略，默认 `character`。
         chunk_size: 字符切片大小，默认 `500`。
         token_size: token 切片大小，默认 `100`。
@@ -53,6 +55,16 @@ async def submit_import_to_queue(
             code=ResponseCode.BAD_REQUEST,
             message="导入文件不能为空",
         )
+    try:
+        vector_repository.ensure_collection_exists(knowledge_name=knowledge_name)
+    except ServiceException as exc:
+        message = str(exc)
+        if int(exc.code) == ResponseCode.NOT_FOUND.code:
+            message = "知识库不存在，无法提交导入任务"
+        raise ServiceException(
+            code=exc.code,
+            message=message,
+        ) from exc
 
     messages: list[KnowledgeImportMessage] = []
     for url in normalized_urls:
@@ -62,33 +74,35 @@ async def submit_import_to_queue(
                 knowledge_name=knowledge_name,
                 document_id=document_id,
                 file_url=url,
+                embedding_model=embedding_model,
                 chunk_strategy=chunk_strategy,
                 chunk_size=chunk_size,
                 token_size=token_size,
             )
         )
 
-    await publish_import_messages(messages)
+    try:
+        await publish_import_messages(messages)
+    except ServiceException:
+        raise
+    except Exception as exc:
+        raise ServiceException(
+            code=ResponseCode.OPERATION_FAILED,
+            message=f"导入任务投递失败: {exc}",
+        ) from exc
     task_uuids = [message.task_uuid for message in messages]
-    logger.info(
-        "导入任务投递 MQ 成功：knowledge_name={}, document_id={}, url_count={}, task_uuids={}",
-        knowledge_name,
-        document_id,
-        len(messages),
-        task_uuids,
-    )
     return {
         "accepted_count": len(messages),
         "task_uuids": task_uuids,
     }
 
 
-def _split_embed_batches(items: list[str], batch_size: int) -> list[list[str]]:
+def _split_batches(items: list, batch_size: int) -> list[list]:
     """
-    将文本按批次切分。
+    将列表按批次大小切分。
 
     Args:
-        items: 原始文本列表。
+        items: 原始列表。
         batch_size: 单批最大条数。
 
     Returns:
@@ -97,24 +111,99 @@ def _split_embed_batches(items: list[str], batch_size: int) -> list[list[str]]:
     Raises:
         无。
     """
-    result: list[list[str]] = []
+    result: list[list] = []
     for index in range(0, len(items), batch_size):
         result.append(items[index:index + batch_size])
     return result
 
 
-def embed_texts(texts: list[str]) -> list[list[float]]:
+def _resolve_vector_batch_size() -> int:
     """
-    批量文本向量化（含 token 限制与并发）。
+    读取向量处理批次配置。
+
+    Args:
+        无。
+
+    Returns:
+        向量处理批次大小。
+
+    Raises:
+        ServiceException: 配置值不是正整数时抛出。
+    """
+    raw_value = (os.getenv("KNOWLEDGE_VECTOR_BATCH_SIZE") or "").strip()
+    if not raw_value:
+        return DEFAULT_VECTOR_BATCH_SIZE
+    try:
+        parsed = int(raw_value)
+    except ValueError as exc:
+        raise ServiceException(
+            code=ResponseCode.INTERNAL_ERROR,
+            message="KNOWLEDGE_VECTOR_BATCH_SIZE 必须是正整数",
+        ) from exc
+    if parsed <= 0:
+        raise ServiceException(
+            code=ResponseCode.INTERNAL_ERROR,
+            message="KNOWLEDGE_VECTOR_BATCH_SIZE 必须大于 0",
+        )
+    return parsed
+
+
+def _build_source_hash(text: str) -> str:
+    """
+    计算文本 sha256 哈希。
+
+    Args:
+        text: 原始文本。
+
+    Returns:
+        十六进制哈希字符串。
+
+    Raises:
+        无。
+    """
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _create_embedding_client(*, embedding_model: str, embedding_dim: int):
+    """
+    创建向量模型客户端。
+
+    Args:
+        embedding_model: 向量模型名称。
+        embedding_dim: 向量维度。
+
+    Returns:
+        向量模型客户端实例。
+
+    Raises:
+        ServiceException: 模型初始化失败时抛出。
+    """
+    try:
+        return create_embedding_model(
+            model=embedding_model,
+            dimensions=embedding_dim,
+        )
+    except Exception as exc:  # pragma: no cover - 依赖外部模型 SDK
+        raise ServiceException(message=f"初始化向量模型失败: {exc}") from exc
+
+
+def embed_texts(
+        texts: list[str],
+        *,
+        embedding_client,
+) -> list[list[float]]:
+    """
+    对文本列表执行向量化。
 
     Args:
         texts: 待向量化文本列表。
+        embedding_client: 向量模型客户端。
 
     Returns:
         向量列表，顺序与 `texts` 一致。
 
     Raises:
-        ServiceException: 文本超过 token 限制或模型调用失败。
+        ServiceException: 文本超过 token 限制或向量化失败。
     """
     if not texts:
         return []
@@ -129,39 +218,10 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
                 ),
             )
 
-    embedding_model = create_embedding_model()
-
-    def _embed_batch(batch: list[str]) -> list[list[float]]:
-        """
-        执行单批文本向量化。
-
-        Args:
-            batch: 单批文本列表。
-
-        Returns:
-            当前批次向量结果。
-
-        Raises:
-            异常由外层统一转换为 `ServiceException`。
-        """
-        return embedding_model.embed_documents(batch)
-
-    batches = _split_embed_batches(texts, EMBED_BATCH_SIZE)
-    if len(batches) == 1:
-        try:
-            return _embed_batch(batches[0])
-        except Exception as exc:  # pragma: no cover - 依赖外部模型 SDK
-            raise ServiceException(message=f"嵌入文本失败: {exc}") from exc
-
-    results: list[list[float]] = []
     try:
-        with ThreadPoolExecutor(max_workers=EMBED_MAX_WORKERS) as executor:
-            futures = [executor.submit(_embed_batch, batch) for batch in batches]
-            for future in futures:
-                results.extend(future.result())
+        return embedding_client.embed_documents(texts)
     except Exception as exc:  # pragma: no cover - 依赖外部模型 SDK
         raise ServiceException(message=f"嵌入文本失败: {exc}") from exc
-    return results
 
 
 def _download_file(url: str) -> tuple[str, Path]:
@@ -242,128 +302,240 @@ def _validate_file_not_empty(file_path: Path) -> None:
         )
 
 
+def import_single_file(
+        url: str,
+        knowledge_name: str,
+        document_id: int,
+        embedding_model: str,
+        chunk_strategy: ChunkStrategyType = ChunkStrategyType.CHARACTER,
+        chunk_size: int = DEFAULT_CHUNK_SIZE,
+        token_size: int = DEFAULT_TOKEN_SIZE,
+        task_uuid: str = "-",
+) -> dict:
+    """
+    执行单个文件的完整导入流程：校验 → 下载 → 解析 → 切片 → 向量化 → 入库。
+
+    每个关键阶段输出结构化日志，调用方只需关注返回值。
+
+    Args:
+        url: 远程文件 URL。
+        knowledge_name: 知识库名称。
+        document_id: 文档 ID。
+        embedding_model: 向量模型名称。
+        chunk_strategy: 切片策略。
+        chunk_size: 字符切片大小。
+        token_size: token 切片大小。
+        task_uuid: 导入任务唯一标识（用于日志关联），默认 ``"-"``。
+
+    Returns:
+        成功时返回包含 ``status="success"`` 的结果字典；
+        失败时返回包含 ``status="failed"`` + ``error`` 的结果字典。
+
+    Raises:
+        ServiceException: 参数校验失败时直接抛出（非可恢复错误）。
+    """
+    vector_batch_size = _resolve_vector_batch_size()
+    filename: str | None = None
+    embedding_dim = 0
+
+    try:
+        # Step 1: URL 后缀校验
+        source_extension = validate_url_extension(url)
+
+        # Step 2: 知识库 + 模型准备
+        vector_repository.ensure_collection_exists(knowledge_name=knowledge_name)
+        embedding_dim = vector_repository.get_collection_embedding_dim(
+            knowledge_name=knowledge_name
+        )
+        embedding_client = _create_embedding_client(
+            embedding_model=embedding_model,
+            embedding_dim=embedding_dim,
+        )
+
+        # Step 3: 下载
+        import_log(ImportStage.DOWNLOAD_START, task_uuid, url=url)
+        filename, file_path = _download_file(url)
+        _validate_file_not_empty(file_path)
+        file_size = file_path.stat().st_size
+        import_log(ImportStage.DOWNLOAD_DONE, task_uuid, filename=filename, size=file_size)
+
+        # Step 4: 解析
+        parsed_document = parse_downloaded_file(
+            file_path=file_path,
+            source_url=url,
+        )
+        parsed_text = parsed_document.text or ""
+        import_log(
+            ImportStage.PARSE_DONE,
+            task_uuid,
+            filename=filename,
+            file_kind=parsed_document.file_kind.value,
+            text_length=len(parsed_text),
+        )
+
+        # Step 5: 切片
+        effective_chunk_size = (
+            token_size
+            if chunk_strategy == ChunkStrategyType.TOKEN
+            else chunk_size
+        )
+        chunks = _split_parsed_text(
+            parsed_text,
+            chunk_strategy,
+            effective_chunk_size,
+        )
+        import_log(
+            ImportStage.CHUNK_DONE,
+            task_uuid,
+            chunk_count=len(chunks),
+            strategy=chunk_strategy.value,
+            chunk_size=effective_chunk_size,
+        )
+
+        # Step 6: 分批向量化 + 入库
+        source_hash = _build_source_hash(parsed_text)
+        vector_count = 0
+        insert_batches = 0
+        batch_chunks_list = _split_batches(chunks, vector_batch_size)
+        total_batches = len(batch_chunks_list)
+
+        for batch_index, batch_chunks in enumerate(batch_chunks_list, start=1):
+            batch_texts = [chunk.text for chunk in batch_chunks]
+            batch_embeddings = embed_texts(
+                batch_texts,
+                embedding_client=embedding_client,
+            )
+            import_log(
+                ImportStage.EMBED_BATCH,
+                task_uuid,
+                batch=f"{batch_index}/{total_batches}",
+                texts=len(batch_texts),
+            )
+
+            char_counts = [chunk.stats.char_count for chunk in batch_chunks]
+            vector_repository.insert_embeddings(
+                knowledge_name=knowledge_name,
+                document_id=document_id,
+                embeddings=batch_embeddings,
+                texts=batch_texts,
+                start_chunk_no=vector_count + 1,
+                chunk_strategy=chunk_strategy.name.lower(),
+                chunk_size=chunk_size,
+                token_size=token_size,
+                source_hash=source_hash,
+                char_counts=char_counts,
+                created_at_ts=int(time() * 1000),
+            )
+            vector_count += len(batch_chunks)
+            insert_batches += 1
+
+        import_log(
+            ImportStage.INSERT_DONE,
+            task_uuid,
+            vector_count=vector_count,
+            insert_batches=insert_batches,
+        )
+        import_log(
+            ImportStage.COMPLETED,
+            task_uuid,
+            filename=filename,
+            chunk_count=len(chunks),
+            vector_count=vector_count,
+        )
+
+        return {
+            "status": "success",
+            "file_url": url,
+            "filename": filename,
+            "source_extension": source_extension,
+            "file_kind": parsed_document.file_kind.value,
+            "mime_type": parsed_document.mime_type,
+            "text_length": len(parsed_text),
+            "chunk_count": len(chunks),
+            "vector_count": vector_count,
+            "insert_batches": insert_batches,
+            "embedding_model": embedding_model,
+            "embedding_dim": embedding_dim,
+            "chunks": [chunk.to_dict() for chunk in chunks],
+        }
+    except Exception as exc:
+        import_log(
+            ImportStage.FAILED,
+            task_uuid,
+            url=url,
+            filename=filename,
+            error=str(exc),
+        )
+        return {
+            "status": "failed",
+            "file_url": url,
+            "filename": filename,
+            "error": str(exc),
+            "embedding_model": embedding_model,
+            "embedding_dim": embedding_dim,
+        }
+
+
 def import_knowledge_service(
         knowledge_name: str,
         document_id: int,
         file_url: list[str] | str,
+        embedding_model: str,
         chunk_strategy: ChunkStrategyType = ChunkStrategyType.CHARACTER,
         chunk_size: int = DEFAULT_CHUNK_SIZE,
         token_size: int = DEFAULT_TOKEN_SIZE,
 ) -> dict:
     """
-    执行导入主流程：下载 -> 解析 -> 切片 -> 控制台打印。
+    执行导入主流程（多 URL 兼容包装）：逐个调用 import_single_file。
 
     Args:
         knowledge_name: 知识库名称。
         document_id: 文档 ID。
         file_url: 文件 URL（字符串或字符串列表）。
+        embedding_model: 向量模型名称。
         chunk_strategy: 切片策略。
         chunk_size: 字符切片大小。
         token_size: token 切片大小。
 
     Returns:
-        导入结果字典，包含 `results` 和 `failed_urls`。
+        导入结果字典，包含 `results`、`failed_urls`、`failed_details`。
 
     Raises:
         ServiceException: 参数非法时抛出（其他文件级异常会记录并计入失败列表）。
     """
     normalized_urls = _normalize_import_urls(file_url)
-    logger.info(
-        "开始导入知识库：knowledge_name={}, document_id={}, file_count={}, chunk_strategy={}, chunk_size={}, token_size={}",
-        knowledge_name,
-        document_id,
-        len(normalized_urls),
-        chunk_strategy.value,
-        chunk_size,
-        token_size,
-    )
-
     if not normalized_urls:
         raise ServiceException(
             code=ResponseCode.BAD_REQUEST, message="导入文件不能为空"
         )
 
     failed_urls: list[str] = []
+    failed_details: list[dict] = []
     results: list[dict] = []
 
     for url in normalized_urls:
-        filename: str | None = None
-        try:
-            logger.info("开始处理文件：file_url={}", url)
-            source_extension = validate_url_extension(url)
-            filename, file_path = _download_file(url)
-            logger.info(
-                "下载完成：file_url={}, filename={}, file_path={}",
-                url,
-                filename,
-                file_path,
-            )
-            _validate_file_not_empty(file_path)
-            parsed_document = parse_downloaded_file(
-                file_path=file_path,
-                source_url=url,
-            )
-            parsed_text = parsed_document.text or ""
-            logger.info(
-                "解析完成：filename={}, file_kind={}, mime_type={}, text_length={}",
-                filename,
-                parsed_document.file_kind.value,
-                parsed_document.mime_type,
-                len(parsed_text),
-            )
-            effective_chunk_size = (
-                token_size
-                if chunk_strategy == ChunkStrategyType.TOKEN
-                else chunk_size
-            )
-            chunks = _split_parsed_text(
-                parsed_text,
-                chunk_strategy,
-                effective_chunk_size,
-            )
-            logger.info(
-                "切片完成：filename={}, chunk_strategy={}, chunk_size={}, chunks={}",
-                filename,
-                chunk_strategy.value,
-                effective_chunk_size,
-                len(chunks),
-            )
-            _print_chunks_to_console(
-                filename=filename or "unknown",
-                chunks=chunks,
-            )
+        result = import_single_file(
+            url=url,
+            knowledge_name=knowledge_name,
+            document_id=document_id,
+            embedding_model=embedding_model,
+            chunk_strategy=chunk_strategy,
+            chunk_size=chunk_size,
+            token_size=token_size,
+        )
 
-            results.append(
-                {
-                    "file_url": url,
-                    "filename": filename,
-                    "source_extension": source_extension,
-                    "file_kind": parsed_document.file_kind.value,
-                    "mime_type": parsed_document.mime_type,
-                    "text_length": len(parsed_text),
-                    "chunk_count": len(chunks),
-                    "chunks": [chunk.to_dict() for chunk in chunks],
-                }
-            )
-        except ServiceException as exc:
-            logger.error(
-                "文件处理失败：file_url={}, filename={}, error={}",
-                url,
-                filename,
-                exc,
-            )
+        if result.get("status") == "success":
+            result["callback_status"] = "PENDING"
+            results.append(result)
+        else:
             failed_urls.append(url)
-            continue
-        except Exception as exc:
-            logger.exception(
-                "文件处理异常：file_url={}, filename={}, error={}",
-                url,
-                filename,
-                exc,
-            )
-            failed_urls.append(url)
-            continue
-    return {"results": results, "failed_urls": failed_urls}
+            failed_details.append(result)
+
+    return {
+        "results": results,
+        "failed_urls": failed_urls,
+        "failed_details": failed_details,
+    }
 
 
 def _normalize_import_urls(file_url: list[str] | str) -> list[str]:
@@ -391,30 +563,6 @@ def _normalize_import_urls(file_url: list[str] | str) -> list[str]:
     return normalized
 
 
-def _print_chunks_to_console(*, filename: str, chunks: list[SplitChunk]) -> None:
-    """
-    打印切片调试信息。
-
-    Args:
-        filename: 文件名。
-        chunks: 切片结果列表。
-
-    Returns:
-        None。
-
-    Raises:
-        无。
-    """
-    print(f"[chunk-debug] filename={filename}, chunk_count={len(chunks)}")
-    for chunk in chunks:
-        chunk_text = chunk.text.strip()
-        print(
-            "[chunk-debug] "
-            f"char_count={chunk.stats.char_count}, "
-            f"text={chunk_text}"
-        )
-
-
 def _split_parsed_text(
         text: str,
         chunk_strategy: ChunkStrategyType,
@@ -439,6 +587,23 @@ def _split_parsed_text(
         chunk_overlap=DEFAULT_CHUNK_OVERLAP,
     )
     return split_text(text, chunk_strategy, config) if text.strip() else []
+
+
+def _print_chunks_to_console(*, filename: str, chunks: list[SplitChunk]) -> None:
+    """
+    保留切片打印钩子占位实现。
+
+    Args:
+        filename: 文件名。
+        chunks: 切片结果列表。
+
+    Returns:
+        None。
+
+    Raises:
+        无。
+    """
+    return None
 
 
 def delete_document(knowledge_name: str, document_id: int) -> None:

@@ -321,6 +321,14 @@ def insert_embeddings(
         document_id: int,
         embeddings: list[list[float]],
         texts: list[str],
+        *,
+        start_chunk_no: int = 1,
+        chunk_strategy: str | None = None,
+        chunk_size: int | None = None,
+        token_size: int | None = None,
+        source_hash: str | None = None,
+        char_counts: list[int] | None = None,
+        created_at_ts: int | None = None,
 ) -> None:
     """
     功能描述:
@@ -331,6 +339,13 @@ def insert_embeddings(
         document_id (int): 文档 ID。
         embeddings (list[list[float]]): 向量列表。
         texts (list[str]): 文本列表。
+        start_chunk_no (int): 本批首个 chunk 序号（从 1 开始）。
+        chunk_strategy (str | None): 切片策略快照，默认值为 None。
+        chunk_size (int | None): 字符切片大小快照，默认值为 None。
+        token_size (int | None): token 切片大小快照，默认值为 None。
+        source_hash (str | None): 源文本哈希，默认值为 None。
+        char_counts (list[int] | None): 每条文本字符数列表，默认值为 None。
+        created_at_ts (int | None): 写入时间戳（毫秒），默认值为 None。
 
     返回值:
         None: 写入成功无返回值。
@@ -345,16 +360,34 @@ def insert_embeddings(
             code=ResponseCode.OPERATION_FAILED,
             message="向量数量与文本数量不一致",
         )
+    if char_counts is not None and len(char_counts) != len(texts):
+        raise ServiceException(
+            code=ResponseCode.OPERATION_FAILED,
+            message="字符统计数量与文本数量不一致",
+        )
     if not embeddings:
         return
 
     data = [
         {
             "document_id": document_id,
+            "chunk_no": start_chunk_no + index,
             "embedding": embedding,
             "content": text,
+            "char_count": (
+                char_counts[index]
+                if char_counts is not None
+                else len(text)
+            ),
+            "chunk_strategy": chunk_strategy,
+            "chunk_size": chunk_size,
+            "token_size": token_size,
+            "source_hash": source_hash,
+            "created_at_ts": created_at_ts,
         }
-        for embedding, text in zip(embeddings, texts, strict=True)
+        for index, (embedding, text) in enumerate(
+            zip(embeddings, texts, strict=True)
+        )
     ]
 
     client = get_milvus_client()
@@ -365,6 +398,64 @@ def insert_embeddings(
             code=ResponseCode.OPERATION_FAILED,
             message=f"写入向量失败: {exc}",
         ) from exc
+
+
+def get_collection_embedding_dim(knowledge_name: str) -> int:
+    """
+    功能描述:
+        读取集合中 embedding 字段的向量维度配置。
+
+    参数说明:
+        knowledge_name (str): 集合名称。
+
+    返回值:
+        int: embedding 字段维度值。
+
+    异常说明:
+        ServiceException:
+            - 集合描述失败时抛出；
+            - 未找到 embedding 字段或维度非法时抛出。
+    """
+    client = get_milvus_client()
+    try:
+        collection_desc = client.describe_collection(knowledge_name)
+    except milvus_exceptions.MilvusException as exc:
+        raise ServiceException(
+            code=ResponseCode.OPERATION_FAILED,
+            message=f"读取知识库 schema 失败: {exc}",
+        ) from exc
+
+    fields = collection_desc.get("fields") or []
+    for field in fields:
+        if field.get("name") != "embedding":
+            continue
+        params = field.get("params") or {}
+        dim_value = params.get("dim")
+        if dim_value is None:
+            dim_value = field.get("dim")
+        if dim_value is None:
+            raise ServiceException(
+                code=ResponseCode.OPERATION_FAILED,
+                message="知识库 embedding 字段缺少 dim 配置",
+            )
+        try:
+            embedding_dim = int(dim_value)
+        except (TypeError, ValueError) as exc:
+            raise ServiceException(
+                code=ResponseCode.OPERATION_FAILED,
+                message=f"知识库 embedding 维度非法: {dim_value}",
+            ) from exc
+        if embedding_dim <= 0:
+            raise ServiceException(
+                code=ResponseCode.OPERATION_FAILED,
+                message=f"知识库 embedding 维度非法: {embedding_dim}",
+            )
+        return embedding_dim
+
+    raise ServiceException(
+        code=ResponseCode.OPERATION_FAILED,
+        message="知识库 schema 不包含 embedding 字段",
+    )
 
 
 def list_document_chunks(

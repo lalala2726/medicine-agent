@@ -13,6 +13,10 @@ def test_get_rabbitmq_settings_supports_duration_suffixes(
     """
     monkeypatch.setenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
     monkeypatch.setenv(
+        "KNOWLEDGE_IMPORT_CALLBACK_URL",
+        "http://localhost:8083/api/knowledge/callback",
+    )
+    monkeypatch.setenv(
         "MQ_RETRY_DELAYS_SECONDS",
         "15s,15s,30s,3m,10m,20m,30m,30m,30m,60m,3h,3h,3h,6h,6h",
     )
@@ -50,7 +54,27 @@ def test_get_rabbitmq_settings_rejects_invalid_duration_token(
     预期结果：读取配置时抛出 ServiceException，阻止错误重试参数生效。
     """
     monkeypatch.setenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
+    monkeypatch.setenv(
+        "KNOWLEDGE_IMPORT_CALLBACK_URL",
+        "http://localhost:8083/api/knowledge/callback",
+    )
     monkeypatch.setenv("MQ_RETRY_DELAYS_SECONDS", "15s,3x")
+    get_rabbitmq_settings.cache_clear()
+
+    with pytest.raises(ServiceException):
+        get_rabbitmq_settings()
+    get_rabbitmq_settings.cache_clear()
+
+
+def test_get_rabbitmq_settings_requires_callback_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    测试目的：验证导入回调地址缺失时会拒绝加载 MQ 配置。
+    预期结果：未配置 KNOWLEDGE_IMPORT_CALLBACK_URL 时抛出 ServiceException。
+    """
+    monkeypatch.setenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
+    monkeypatch.delenv("KNOWLEDGE_IMPORT_CALLBACK_URL", raising=False)
     get_rabbitmq_settings.cache_clear()
 
     with pytest.raises(ServiceException):
