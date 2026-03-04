@@ -1,0 +1,84 @@
+from __future__ import annotations
+
+from typing import Literal, TypeAlias
+
+from pydantic import BaseModel, Field
+
+from app.rag.chunking import SplitChunk
+
+
+class ImportChunkStats(BaseModel):
+    """导入切片统计信息。"""
+
+    char_count: int = Field(default=0, ge=0)
+
+
+class ImportChunk(BaseModel):
+    """导入切片内容。"""
+
+    text: str
+    stats: ImportChunkStats
+
+    @classmethod
+    def from_split_chunk(cls, chunk: SplitChunk) -> "ImportChunk":
+        """将 chunking 层对象转换为导入结果切片对象。"""
+        return cls(
+            text=chunk.text,
+            stats=ImportChunkStats(char_count=chunk.stats.char_count),
+        )
+
+
+class ImportSingleFileSuccessResult(BaseModel):
+    """单文件导入成功结果。"""
+
+    status: Literal["success"] = "success"
+    file_url: str = Field(..., min_length=1)
+    filename: str | None = None
+    source_extension: str = Field(..., min_length=1)
+    file_kind: str = Field(..., min_length=1)
+    mime_type: str = Field(..., min_length=1)
+    text_length: int = Field(..., ge=0)
+    chunk_count: int = Field(..., ge=0)
+    vector_count: int = Field(..., ge=0)
+    insert_batches: int = Field(..., ge=0)
+    embedding_model: str = Field(..., min_length=1)
+    embedding_dim: int = Field(..., ge=0)
+    chunks: list[ImportChunk] = Field(default_factory=list)
+
+
+class ImportSingleFileFailedResult(BaseModel):
+    """单文件导入失败结果。"""
+
+    status: Literal["failed"] = "failed"
+    file_url: str = Field(..., min_length=1)
+    filename: str | None = None
+    error: str = Field(..., min_length=1)
+    embedding_model: str = Field(..., min_length=1)
+    embedding_dim: int = Field(..., ge=0)
+
+
+ImportSingleFileResult: TypeAlias = (
+    ImportSingleFileSuccessResult | ImportSingleFileFailedResult
+)
+
+
+class ImportKnowledgeSuccessResult(ImportSingleFileSuccessResult):
+    """知识库批量导入中，单文件成功结果。"""
+
+    callback_status: Literal["PENDING"] = "PENDING"
+
+    @classmethod
+    def from_single_file_success(
+            cls,
+            result: ImportSingleFileSuccessResult,
+    ) -> "ImportKnowledgeSuccessResult":
+        """从单文件成功结果构造批量导入成功结果。"""
+        return cls(**result.model_dump())
+
+
+class ImportKnowledgeServiceResult(BaseModel):
+    """知识库批量导入返回结果。"""
+
+    results: list[ImportKnowledgeSuccessResult] = Field(default_factory=list)
+    failed_urls: list[str] = Field(default_factory=list)
+    failed_details: list[ImportSingleFileFailedResult] = Field(default_factory=list)

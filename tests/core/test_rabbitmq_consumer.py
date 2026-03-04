@@ -20,6 +20,7 @@ from app.core.mq.models import (
 )
 from app.core.mq.settings import RabbitMQSettings
 from app.rag.chunking import ChunkStrategyType
+from app.schemas.knowledge_import import ImportSingleFileSuccessResult
 
 
 def _build_message() -> KnowledgeImportMessage:
@@ -139,12 +140,20 @@ def test_process_import_message_once_returns_success_payload(monkeypatch) -> Non
         called["knowledge_name"] = knowledge_name
         called["document_id"] = document_id
         called["embedding_model"] = embedding_model
-        return {
-            "status": "success",
-            "chunk_count": 3,
-            "vector_count": 3,
-            "embedding_dim": 1024,
-        }
+        return ImportSingleFileSuccessResult(
+            file_url=url,
+            filename="a.txt",
+            source_extension=".txt",
+            file_kind="text",
+            mime_type="text/plain",
+            text_length=100,
+            chunk_count=3,
+            vector_count=3,
+            insert_batches=1,
+            embedding_model=embedding_model,
+            embedding_dim=1024,
+            chunks=[],
+        )
 
     monkeypatch.setattr(
         "app.core.mq.consumer.import_single_file",

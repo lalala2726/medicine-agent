@@ -12,6 +12,14 @@ from app.core.mq.publisher import publish_import_messages
 from app.repositories import vector_repository
 from app.rag.chunking import ChunkStrategyType, SplitChunk, SplitConfig, split_text
 from app.rag.file_loader import parse_downloaded_file, validate_url_extension
+from app.schemas.knowledge_import import (
+    ImportChunk,
+    ImportKnowledgeServiceResult,
+    ImportKnowledgeSuccessResult,
+    ImportSingleFileFailedResult,
+    ImportSingleFileResult,
+    ImportSingleFileSuccessResult,
+)
 from app.utils.file_utils import FileUtils
 from app.utils.token_utills import TokenUtils
 
@@ -311,7 +319,7 @@ def import_single_file(
         chunk_size: int = DEFAULT_CHUNK_SIZE,
         token_size: int = DEFAULT_TOKEN_SIZE,
         task_uuid: str = "-",
-) -> dict:
+) -> ImportSingleFileResult:
     """
     执行单个文件的完整导入流程：校验 → 下载 → 解析 → 切片 → 向量化 → 入库。
 
@@ -328,8 +336,8 @@ def import_single_file(
         task_uuid: 导入任务唯一标识（用于日志关联），默认 ``"-"``。
 
     Returns:
-        成功时返回包含 ``status="success"`` 的结果字典；
-        失败时返回包含 ``status="failed"`` + ``error`` 的结果字典。
+        成功时返回 `ImportSingleFileSuccessResult`；
+        失败时返回 `ImportSingleFileFailedResult`。
 
     Raises:
         ServiceException: 参数校验失败时直接抛出（非可恢复错误）。
@@ -443,21 +451,20 @@ def import_single_file(
             vector_count=vector_count,
         )
 
-        return {
-            "status": "success",
-            "file_url": url,
-            "filename": filename,
-            "source_extension": source_extension,
-            "file_kind": parsed_document.file_kind.value,
-            "mime_type": parsed_document.mime_type,
-            "text_length": len(parsed_text),
-            "chunk_count": len(chunks),
-            "vector_count": vector_count,
-            "insert_batches": insert_batches,
-            "embedding_model": embedding_model,
-            "embedding_dim": embedding_dim,
-            "chunks": [chunk.to_dict() for chunk in chunks],
-        }
+        return ImportSingleFileSuccessResult(
+            file_url=url,
+            filename=filename,
+            source_extension=source_extension,
+            file_kind=parsed_document.file_kind.value,
+            mime_type=parsed_document.mime_type,
+            text_length=len(parsed_text),
+            chunk_count=len(chunks),
+            vector_count=vector_count,
+            insert_batches=insert_batches,
+            embedding_model=embedding_model,
+            embedding_dim=embedding_dim,
+            chunks=[ImportChunk.from_split_chunk(chunk) for chunk in chunks],
+        )
     except Exception as exc:
         import_log(
             ImportStage.FAILED,
@@ -466,14 +473,13 @@ def import_single_file(
             filename=filename,
             error=str(exc),
         )
-        return {
-            "status": "failed",
-            "file_url": url,
-            "filename": filename,
-            "error": str(exc),
-            "embedding_model": embedding_model,
-            "embedding_dim": embedding_dim,
-        }
+        return ImportSingleFileFailedResult(
+            file_url=url,
+            filename=filename,
+            error=str(exc),
+            embedding_model=embedding_model,
+            embedding_dim=embedding_dim,
+        )
 
 
 def import_knowledge_service(
@@ -484,7 +490,7 @@ def import_knowledge_service(
         chunk_strategy: ChunkStrategyType = ChunkStrategyType.CHARACTER,
         chunk_size: int = DEFAULT_CHUNK_SIZE,
         token_size: int = DEFAULT_TOKEN_SIZE,
-) -> dict:
+) -> ImportKnowledgeServiceResult:
     """
     执行导入主流程（多 URL 兼容包装）：逐个调用 import_single_file。
 
@@ -498,7 +504,7 @@ def import_knowledge_service(
         token_size: token 切片大小。
 
     Returns:
-        导入结果字典，包含 `results`、`failed_urls`、`failed_details`。
+        导入结果对象，包含 `results`、`failed_urls`、`failed_details`。
 
     Raises:
         ServiceException: 参数非法时抛出（其他文件级异常会记录并计入失败列表）。
@@ -510,8 +516,8 @@ def import_knowledge_service(
         )
 
     failed_urls: list[str] = []
-    failed_details: list[dict] = []
-    results: list[dict] = []
+    failed_details: list[ImportSingleFileFailedResult] = []
+    results: list[ImportKnowledgeSuccessResult] = []
 
     for url in normalized_urls:
         result = import_single_file(
@@ -524,18 +530,17 @@ def import_knowledge_service(
             token_size=token_size,
         )
 
-        if result.get("status") == "success":
-            result["callback_status"] = "PENDING"
-            results.append(result)
+        if result.status == "success":
+            results.append(ImportKnowledgeSuccessResult.from_single_file_success(result))
         else:
             failed_urls.append(url)
             failed_details.append(result)
 
-    return {
-        "results": results,
-        "failed_urls": failed_urls,
-        "failed_details": failed_details,
-    }
+    return ImportKnowledgeServiceResult(
+        results=results,
+        failed_urls=failed_urls,
+        failed_details=failed_details,
+    )
 
 
 def _normalize_import_urls(file_url: list[str] | str) -> list[str]:

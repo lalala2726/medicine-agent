@@ -396,7 +396,7 @@ def process_import_message_once(
             error_message=str(exc),
         )
 
-    if result.get("status") == "success":
+    if result.status == "success":
         return KnowledgeImportCallbackPayload.build(
             task_uuid=message.task_uuid,
             knowledge_name=message.knowledge_name,
@@ -404,26 +404,26 @@ def process_import_message_once(
             file_url=message.file_url,
             status=CallbackStage.COMPLETED.value,
             message=(
-                f"导入成功，chunk_count={result.get('chunk_count', 0)}, "
-                f"vector_count={result.get('vector_count', 0)}"
+                f"导入成功，chunk_count={result.chunk_count}, "
+                f"vector_count={result.vector_count}"
             ),
             embedding_model=message.embedding_model,
-            embedding_dim=int(result.get("embedding_dim") or 0),
+            embedding_dim=result.embedding_dim,
             chunk_strategy=message.chunk_strategy.value,
             chunk_size=message.chunk_size,
             token_size=message.token_size,
-            chunk_count=int(result.get("chunk_count") or 0),
-            vector_count=int(result.get("vector_count") or 0),
+            chunk_count=result.chunk_count,
+            vector_count=result.vector_count,
             started_at=started_at,
             finished_at=datetime.now(timezone.utc),
         )
 
-    error_msg = result.get("error") or "导入失败"
+    error_msg = result.error or "导入失败"
     return _build_failed_payload(
         message,
         started_at=started_at,
         error_message=str(error_msg),
-        embedding_dim=int(result.get("embedding_dim") or 0),
+        embedding_dim=result.embedding_dim,
     )
 
 

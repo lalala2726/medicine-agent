@@ -145,8 +145,8 @@ def test_import_knowledge_service_rejects_url_without_supported_suffix(
         token_size=50,
     )
 
-    assert result["results"] == []
-    assert result["failed_urls"] == ["https://example.com/file.bin"]
+    assert result.results == []
+    assert result.failed_urls == ["https://example.com/file.bin"]
     assert called["download"] is False
 
 
@@ -224,19 +224,19 @@ def test_import_knowledge_service_runs_vectorization_and_insert_batches(
         token_size=50,
     )
 
-    assert result["failed_urls"] == []
-    assert len(result["results"]) == 1
-    first = result["results"][0]
-    assert first["filename"] == "demo.txt"
-    assert first["file_kind"] == "text"
-    assert first["mime_type"] == "text/plain"
-    assert first["source_extension"] == ".txt"
-    assert first["chunk_count"] == 3
-    assert first["vector_count"] == 3
-    assert first["insert_batches"] == 2
-    assert first["embedding_model"] == "text-embedding-v4"
-    assert first["embedding_dim"] == 1024
-    assert first["callback_status"] == "PENDING"
+    assert result.failed_urls == []
+    assert len(result.results) == 1
+    first = result.results[0]
+    assert first.filename == "demo.txt"
+    assert first.file_kind == "text"
+    assert first.mime_type == "text/plain"
+    assert first.source_extension == ".txt"
+    assert first.chunk_count == 3
+    assert first.vector_count == 3
+    assert first.insert_batches == 2
+    assert first.embedding_model == "text-embedding-v4"
+    assert first.embedding_dim == 1024
+    assert first.callback_status == "PENDING"
     assert len(insert_calls) == 2
     assert insert_calls[0]["start_chunk_no"] == 1
     assert insert_calls[1]["start_chunk_no"] == 3
@@ -293,10 +293,10 @@ def test_import_knowledge_service_keeps_downloaded_file_on_parse_failure(
         token_size=20,
     )
 
-    assert result["results"] == []
-    assert result["failed_urls"] == ["https://example.com/demo.txt"]
-    assert len(result["failed_details"]) == 1
-    assert "mock parse error" in result["failed_details"][0]["error"]
+    assert result.results == []
+    assert result.failed_urls == ["https://example.com/demo.txt"]
+    assert len(result.failed_details) == 1
+    assert "mock parse error" in result.failed_details[0].error
     assert source_path.exists()
 
 
@@ -378,7 +378,7 @@ def test_import_knowledge_service_batches_are_strictly_serial(
         token_size=50,
     )
 
-    assert result["failed_urls"] == []
+    assert result.failed_urls == []
     assert trace == ["embed-2", "insert-2", "embed-1", "insert-1"]
 
 
