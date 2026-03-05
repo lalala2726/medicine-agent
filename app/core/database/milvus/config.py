@@ -1,5 +1,6 @@
+from __future__ import annotations
+
 import os
-from typing import Optional
 from urllib.parse import urlparse
 
 from pymilvus import MilvusClient
@@ -9,19 +10,12 @@ from app.core.exception.exceptions import ServiceException
 
 
 def _build_milvus_uri() -> str:
-    """
-    功能描述:
-        构建 Milvus 连接 URI。
-        优先读取 `MILVUS_URI`，未配置时回退 `MILVUS_HOST` + `MILVUS_PORT` 组合。
+    """构建 Milvus 连接 URI。
 
-    参数说明:
-        无。
+    优先读取 `MILVUS_URI`，未配置时回退 `MILVUS_HOST + MILVUS_PORT`。
 
-    返回值:
+    Returns:
         str: 可用于 `MilvusClient` 初始化的完整 URI。
-
-    异常说明:
-        无。
     """
     uri = os.getenv("MILVUS_URI")
     if uri:
@@ -40,18 +34,16 @@ def _build_milvus_uri() -> str:
     return uri
 
 
-def _parse_milvus_timeout(timeout_value: str | None) -> Optional[float]:
-    """
-    功能描述:
-        解析 Milvus 客户端超时时间配置。
+def _parse_milvus_timeout(timeout_value: str | None) -> float | None:
+    """解析 Milvus 客户端超时配置。
 
-    参数说明:
-        timeout_value (str | None): 环境变量 `MILVUS_TIMEOUT` 原始值；默认值为 `None`。
+    Args:
+        timeout_value: 环境变量 `MILVUS_TIMEOUT` 原始值。
 
-    返回值:
-        Optional[float]: 解析后的超时秒数；未配置时返回 `None`。
+    Returns:
+        float | None: 解析后的超时秒数；未配置时返回 `None`。
 
-    异常说明:
+    Raises:
         ServiceException: 当 `MILVUS_TIMEOUT` 不是数字时抛出。
     """
     if not timeout_value:
@@ -66,19 +58,13 @@ def _parse_milvus_timeout(timeout_value: str | None) -> Optional[float]:
 
 
 def get_milvus_client() -> MilvusClient:
-    """
-    功能描述:
-        按环境变量配置创建 Milvus 客户端实例。
+    """按环境变量配置创建 Milvus 客户端实例。
 
-    参数说明:
-        无。
+    Returns:
+        MilvusClient: 可执行集合管理与向量写入/检索的客户端对象。
 
-    返回值:
-        MilvusClient: 可直接执行集合管理与向量查询写入的客户端对象。
-
-    异常说明:
-        ServiceException:
-            - `MILVUS_TIMEOUT` 非法时抛出。
+    Raises:
+        ServiceException: 配置非法时抛出。
     """
     uri = _build_milvus_uri()
     user = os.getenv("MILVUS_USER") or os.getenv("MILVUS_USERNAME", "")

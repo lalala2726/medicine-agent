@@ -1,6 +1,7 @@
+from __future__ import annotations
+
 import os
 from functools import lru_cache
-from typing import Optional
 
 from pymongo import MongoClient
 from pymongo.database import Database
@@ -9,32 +10,28 @@ from pymongo.errors import PyMongoError
 from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException
 
-DEFAULT_MONGODB_URI = "mongodb://localhost:27017"
-DEFAULT_MONGODB_DB_NAME = "medicine_ai_agent"
-DEFAULT_MONGODB_TIMEOUT_MS = 3000
-DEFAULT_CONVERSATIONS_COLLECTION = "conversations"
-DEFAULT_MESSAGES_COLLECTION = "messages"
-DEFAULT_MESSAGE_TRACES_COLLECTION = "message_traces"
-DEFAULT_MESSAGE_TTS_USAGES_COLLECTION = "message_tts_usages"
-DEFAULT_CONVERSATION_SUMMARIES_COLLECTION = "conversation_summaries"
-DEFAULT_MONGODB_STARTUP_PING_ENABLED = False
+DEFAULT_MONGODB_URI = "mongodb://localhost:27017"  # MongoDB 默认连接地址
+DEFAULT_MONGODB_DB_NAME = "medicine_ai_agent"  # MongoDB 默认数据库名
+DEFAULT_MONGODB_TIMEOUT_MS = 3000  # MongoDB 默认超时（毫秒）
+DEFAULT_CONVERSATIONS_COLLECTION = "conversations"  # 会话集合名
+DEFAULT_MESSAGES_COLLECTION = "messages"  # 消息集合名
+DEFAULT_MESSAGE_TRACES_COLLECTION = "message_traces"  # 消息追踪集合名
+DEFAULT_MESSAGE_TTS_USAGES_COLLECTION = "message_tts_usages"  # 语音用量集合名
+DEFAULT_CONVERSATION_SUMMARIES_COLLECTION = "conversation_summaries"  # 会话摘要集合名
+DEFAULT_MONGODB_STARTUP_PING_ENABLED = False  # 启动期是否执行 MongoDB ping
 
 
-def _parse_timeout_ms(value: Optional[str]) -> int:
-    """
-    功能描述:
-        解析并校验 MongoDB 超时配置（毫秒）。
+def _parse_timeout_ms(value: str | None) -> int:
+    """解析并校验 MongoDB 超时配置（毫秒）。
 
-    参数说明:
-        value (Optional[str]): 环境变量 `MONGODB_TIMEOUT_MS` 原始值；默认值为 `None`。
+    Args:
+        value: 环境变量 `MONGODB_TIMEOUT_MS` 原始值。
 
-    返回值:
+    Returns:
         int: 合法超时毫秒数。
 
-    异常说明:
-        ServiceException:
-            - 配置不是整数时抛出；
-            - 配置小于等于 0 时抛出。
+    Raises:
+        ServiceException: 配置不是正整数时抛出。
     """
     if value is None or value == "":
         return DEFAULT_MONGODB_TIMEOUT_MS
@@ -56,18 +53,13 @@ def _parse_timeout_ms(value: Optional[str]) -> int:
 
 @lru_cache(maxsize=1)
 def get_mongo_client() -> MongoClient:
-    """
-    功能描述:
-        创建并缓存 MongoDB 客户端，统一管理连接配置。
+    """创建并缓存 MongoDB 客户端。
 
-    参数说明:
-        无。
-
-    返回值:
+    Returns:
         MongoClient: 进程级复用的 MongoDB 客户端。
 
-    异常说明:
-        ServiceException: 当超时配置非法时由 `_parse_timeout_ms` 抛出。
+    Raises:
+        ServiceException: 超时配置非法时抛出。
     """
     uri = os.getenv("MONGODB_URI", DEFAULT_MONGODB_URI)
     timeout_ms = _parse_timeout_ms(os.getenv("MONGODB_TIMEOUT_MS"))
@@ -80,18 +72,13 @@ def get_mongo_client() -> MongoClient:
 
 
 def get_mongo_database() -> Database:
-    """
-    功能描述:
-        获取当前服务配置对应的 MongoDB 数据库实例。
+    """获取当前业务 MongoDB 数据库实例。
 
-    参数说明:
-        无。
+    Returns:
+        Database: 业务数据库对象。
 
-    返回值:
-        Database: 业务 MongoDB 数据库对象。
-
-    异常说明:
-        ServiceException: 当 `MONGODB_DB_NAME` 为空字符串时抛出。
+    Raises:
+        ServiceException: 数据库名为空时抛出。
     """
     db_name = (os.getenv("MONGODB_DB_NAME") or DEFAULT_MONGODB_DB_NAME).strip()
     if not db_name:
@@ -103,18 +90,13 @@ def get_mongo_database() -> Database:
 
 
 def verify_mongodb_connection() -> None:
-    """
-    功能描述:
-        执行 MongoDB 连通性检查，用于启动阶段 fail-fast。
+    """执行 MongoDB 连通性检查。
 
-    参数说明:
-        无。
-
-    返回值:
+    Returns:
         None: 校验成功时无返回值。
 
-    异常说明:
-        ServiceException: 当 MongoDB 不可达或鉴权失败时抛出。
+    Raises:
+        ServiceException: MongoDB 不可达或鉴权失败时抛出。
     """
     try:
         get_mongo_client().admin.command("ping")
