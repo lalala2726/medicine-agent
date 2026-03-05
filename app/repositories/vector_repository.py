@@ -76,7 +76,7 @@ def _build_collection_schema(embedding_dim: int, description: str) -> Collection
             description="文档ID",
         ),
         FieldSchema(
-            name="chunk_no",
+            name="chunk_index",
             dtype=DataType.INT64,
             description="文档内切片顺序号（从 1 开始）",
             nullable=True,
@@ -432,7 +432,7 @@ def insert_embeddings(
         embeddings: list[list[float]],
         texts: list[str],
         *,
-        start_chunk_no: int = 1,
+        start_chunk_index: int = 1,
         chunk_strategy: str | None = None,
         chunk_size: int | None = None,
         token_size: int | None = None,
@@ -449,7 +449,7 @@ def insert_embeddings(
         document_id (int): 文档 ID。
         embeddings (list[list[float]]): 向量列表。
         texts (list[str]): 文本列表。
-        start_chunk_no (int): 本批首个 chunk 序号（从 1 开始）。
+        start_chunk_index (int): 本批首个 chunk 序号（从 1 开始）。
         chunk_strategy (str | None): 切片策略快照，默认值为 None。
         chunk_size (int | None): 字符切片大小快照，默认值为 None。
         token_size (int | None): token 切片大小快照，默认值为 None。
@@ -481,7 +481,7 @@ def insert_embeddings(
     data = [
         {
             "document_id": document_id,
-            "chunk_no": start_chunk_no + index,
+            "chunk_index": start_chunk_index + index,
             "embedding": embedding,
             "content": text,
             "char_count": (
@@ -612,7 +612,7 @@ def list_document_chunks(
             output_fields=[
                 "id",
                 "document_id",
-                "chunk_no",
+                "chunk_index",
                 "content",
                 "char_count",
                 "chunk_strategy",
@@ -629,7 +629,11 @@ def list_document_chunks(
             code=ResponseCode.OPERATION_FAILED,
             message=f"查询知识库失败: {exc}",
         ) from exc
-    return rows or [], total
+    sorted_rows = sorted(
+        rows or [],
+        key=lambda row: int(row.get("chunk_index") or 0),
+    )
+    return sorted_rows, total
 
 
 def count_document_chunks(

@@ -456,7 +456,7 @@ def import_single_file(
                 document_id=document_id,
                 embeddings=batch_embeddings,
                 texts=batch_texts,
-                start_chunk_no=vector_count + 1,
+                start_chunk_index=vector_count + 1,
                 chunk_strategy=chunk_strategy.name.lower(),
                 chunk_size=chunk_size,
                 token_size=token_size,

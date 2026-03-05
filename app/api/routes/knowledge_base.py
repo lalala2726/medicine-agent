@@ -4,7 +4,8 @@ from fastapi import APIRouter, Depends, Path, Query
 from pydantic import BaseModel, Field, field_validator
 
 from app.core.exception.exceptions import ServiceException
-from app.schemas.response import ApiResponse, PageResponse
+from app.core.security import allow_anonymous
+from app.schemas.response import ApiResponse
 from app.services.knowledge_base_service import (
     create_collection,
     delete_document,
@@ -143,13 +144,24 @@ class ListDocumentChunksRequest(BaseModel):
     )
     document_id: int = Field(..., gt=0, description="文档ID")
     page: int = Field(default=1, gt=0, description="页码")
-    page_size: int = Field(default=10, ge=1, le=100, description="每页数量")
+    page_size: int = Field(default=50, ge=1, le=100, description="每页数量")
+
+
+class DocumentChunksPageResponse(BaseModel):
+    """文档切片分页响应数据"""
+
+    rows: list[dict] = Field(..., description="当前页数据列表")
+    total: int = Field(..., description="数据总数")
+    page_num: int = Field(..., description="当前页码")
+    page_size: int = Field(..., description="每页数量")
+    has_next: bool = Field(..., description="是否存在下一页")
 
 
 @router.get("/document/chunks/list", summary="分页查询文档切片")
+@allow_anonymous
 async def list_document_chunks(
         request: ListDocumentChunksRequest = Depends(),
-) -> ApiResponse[PageResponse[dict]]:
+) -> ApiResponse[DocumentChunksPageResponse]:
     """
     分页查询文档切片
 
@@ -157,7 +169,7 @@ async def list_document_chunks(
         request: 分页查询请求参数
 
     Returns:
-        ApiResponse[PageResponse[dict]]: 分页响应数据
+        ApiResponse[DocumentChunksPageResponse]: 分页响应数据
     """
     rows, total = list_knowledge_chunks(
         knowledge_name=request.knowledge_name,
@@ -165,11 +177,15 @@ async def list_document_chunks(
         page_num=request.page,
         page_size=request.page_size,
     )
-    return ApiResponse.page(
-        rows=rows,
-        total=total,
-        page_num=request.page,
-        page_size=request.page_size,
+    has_next = (request.page * request.page_size) < total
+    return ApiResponse.success(
+        data=DocumentChunksPageResponse(
+            rows=rows,
+            total=total,
+            page_num=request.page,
+            page_size=request.page_size,
+            has_next=has_next,
+        )
     )
 
 

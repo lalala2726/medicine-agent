@@ -225,8 +225,8 @@ def test_import_single_file_runs_vectorization_and_insert_batches(
     assert first.embedding_model == "text-embedding-v4"
     assert first.embedding_dim == 1024
     assert len(insert_calls) == 2
-    assert insert_calls[0]["start_chunk_no"] == 1
-    assert insert_calls[1]["start_chunk_no"] == 3
+    assert insert_calls[0]["start_chunk_index"] == 1
+    assert insert_calls[1]["start_chunk_index"] == 3
     assert insert_calls[0]["chunk_strategy"] == "character"
     assert insert_calls[0]["chunk_size"] == 200
     assert insert_calls[0]["token_size"] == 50

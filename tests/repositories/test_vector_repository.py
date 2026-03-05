@@ -92,7 +92,7 @@ def test_build_collection_schema_contains_standard_12_fields() -> None:
     assert field_names == [
         "id",
         "document_id",
-        "chunk_no",
+        "chunk_index",
         "content",
         "char_count",
         "embedding",
@@ -109,7 +109,7 @@ def test_build_collection_schema_contains_standard_12_fields() -> None:
     assert fields["id"].is_primary is True
     assert fields["id"].auto_id is True
     assert fields["document_id"].dtype == DataType.INT64
-    assert fields["chunk_no"].dtype == DataType.INT64
+    assert fields["chunk_index"].dtype == DataType.INT64
     assert fields["content"].dtype == DataType.VARCHAR
     assert (
             fields["content"].params["max_length"]
@@ -281,7 +281,13 @@ def test_list_document_chunks_queries_with_expected_filter_and_fields(
         {
             "id": 1,
             "document_id": 10,
-            "chunk_no": 1,
+            "chunk_index": 2,
+            "content": "demo-2",
+        },
+        {
+            "id": 2,
+            "document_id": 10,
+            "chunk_index": 1,
             "content": "demo",
         }
     ]
@@ -295,7 +301,20 @@ def test_list_document_chunks_queries_with_expected_filter_and_fields(
     )
 
     assert total == 3
-    assert rows == client.rows_result
+    assert rows == [
+        {
+            "id": 2,
+            "document_id": 10,
+            "chunk_index": 1,
+            "content": "demo",
+        },
+        {
+            "id": 1,
+            "document_id": 10,
+            "chunk_index": 2,
+            "content": "demo-2",
+        },
+    ]
     assert len(client.query_calls) == 2
     count_query = client.query_calls[0]
     rows_query = client.query_calls[1]
@@ -306,7 +325,7 @@ def test_list_document_chunks_queries_with_expected_filter_and_fields(
     assert rows_query["output_fields"] == [
         "id",
         "document_id",
-        "chunk_no",
+        "chunk_index",
         "content",
         "char_count",
         "chunk_strategy",
@@ -402,8 +421,8 @@ def test_insert_embeddings_builds_full_payload_fields(
         monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """
-    测试目的：验证向量写入会补齐 chunk_no/char_count/策略快照/时间戳等字段。
-    预期结果：insert 数据包含完整业务字段，且 chunk_no 从 start_chunk_no 开始递增。
+    测试目的：验证向量写入会补齐 chunk_index/char_count/策略快照/时间戳等字段。
+    预期结果：insert 数据包含完整业务字段，且 chunk_index 从 start_chunk_index 开始递增。
     """
     client = _FakeMilvusClient(has_collection_result=True)
     monkeypatch.setattr(repository_module, "get_milvus_client", lambda: client)
@@ -413,7 +432,7 @@ def test_insert_embeddings_builds_full_payload_fields(
         document_id=99,
         embeddings=[[0.1, 0.2], [0.3, 0.4]],
         texts=["A", "BC"],
-        start_chunk_no=7,
+        start_chunk_index=7,
         chunk_strategy="character",
         chunk_size=500,
         token_size=100,
@@ -427,8 +446,8 @@ def test_insert_embeddings_builds_full_payload_fields(
     assert payload["collection_name"] == "demo_kb"
     rows = payload["data"]
     assert len(rows) == 2
-    assert rows[0]["chunk_no"] == 7
-    assert rows[1]["chunk_no"] == 8
+    assert rows[0]["chunk_index"] == 7
+    assert rows[1]["chunk_index"] == 8
     assert rows[0]["char_count"] == 1
     assert rows[1]["char_count"] == 2
     assert rows[0]["chunk_strategy"] == "character"
