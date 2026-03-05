@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Path, Query
 from pydantic import BaseModel, Field, field_validator
 
 from app.core.exception.exceptions import ServiceException
-from app.core.security import allow_anonymous
+from app.core.security import allow_system
 from app.schemas.response import ApiResponse
 from app.services.knowledge_base_service import (
     create_collection,
@@ -40,6 +40,7 @@ class CreateCollectionRequest(BaseModel):
 
 
 @router.post(path="", summary="创建知识库")
+@allow_system
 async def create_knowledge_base(request: CreateCollectionRequest) -> ApiResponse[dict]:
     """
     创建知识库
@@ -69,6 +70,7 @@ class DeleteKnowledgeRequest(BaseModel):
 
 
 @router.delete("", summary="删除知识库")
+@allow_system
 async def delete_knowledge_base(
         request: DeleteKnowledgeRequest,
 ) -> ApiResponse[dict]:
@@ -98,6 +100,7 @@ class KnowledgeLoadRequest(BaseModel):
 
 
 @router.post(path="/load", summary="启用知识库")
+@allow_system
 async def load_knowledge_base(
         request: KnowledgeLoadRequest,
 ) -> ApiResponse[dict]:
@@ -118,6 +121,7 @@ async def load_knowledge_base(
 
 
 @router.post(path="/release", summary="关闭知识库")
+@allow_system
 async def release_knowledge_base(
         request: KnowledgeLoadRequest,
 ) -> ApiResponse[dict]:
@@ -158,7 +162,7 @@ class DocumentChunksPageResponse(BaseModel):
 
 
 @router.get("/document/chunks/list", summary="分页查询文档切片")
-@allow_anonymous
+@allow_system
 async def list_document_chunks(
         request: ListDocumentChunksRequest = Depends(),
 ) -> ApiResponse[DocumentChunksPageResponse]:

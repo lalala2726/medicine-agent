@@ -11,6 +11,18 @@ import httpx
 from dotenv import load_dotenv
 from loguru import logger
 
+from app.core.codes import ResponseCode
+from app.core.exception.exceptions import ServiceException
+from app.core.security.system_auth.canonical import build_canonical_string
+from app.core.security.system_auth.config import get_system_auth_settings
+from app.core.security.system_auth.constants import (
+    HEADER_X_AGENT_KEY,
+    HEADER_X_AGENT_NONCE,
+    HEADER_X_AGENT_SIGNATURE,
+    HEADER_X_AGENT_SIGN_VERSION,
+    HEADER_X_AGENT_TIMESTAMP,
+)
+from app.core.security.system_auth.signer import sign_hmac_sha256_base64url
 from app.core.security.auth_context import get_authorization_header
 
 
@@ -32,7 +44,21 @@ class HttpClient:
             headers: Optional[Mapping[str, str]] = None,
             timeout: Optional[float] = 30.0,
             agent_key: Optional[str] = None,
+            default_use_system_signature: Optional[bool] = None,
     ) -> None:
+        """初始化 HTTP 客户端。
+
+        Args:
+            base_url: 默认基础地址。
+            headers: 默认请求头。
+            timeout: 默认超时时间（秒）。
+            agent_key: 系统签名请求头中的 `X-Agent-Key`。
+            default_use_system_signature: 系统签名默认开关。
+                - `True`：默认强制签名；
+                - `False`：默认不签名；
+                - `None`：自动模式（存在用户 Authorization 时不签名；否则若配置了 `X_AGENT_KEY`
+                  且存在 `SYSTEM_AUTH_LOCAL_SECRET` 则签名）。
+        """
         self._ensure_env_loaded()
         if base_url is None:
             base_url = os.getenv("HTTP_BASE_URL", "http://localhost:8083")
@@ -40,6 +66,7 @@ class HttpClient:
             os.getenv("HTTP_CLIENT_LOG_ENABLED")
         )
         self._agent_key = agent_key or os.getenv("X_AGENT_KEY", "")
+        self._default_use_system_signature = default_use_system_signature
         self._default_headers = dict(headers or {})
         self._client = httpx.AsyncClient(
             base_url=base_url or "",
@@ -81,6 +108,7 @@ class HttpClient:
             "proxy-authorization",
             "x-api-key",
             "x-agent-key",
+            "x-agent-signature",
         }
         return {
             key: "***" if key.lower() in sensitive_keys else value
@@ -102,29 +130,176 @@ class HttpClient:
             return f"{text[:limit]}...(truncated)"
         return text
 
-    def _build_headers(self, headers: Optional[Mapping[str, str]]) -> Mapping[str, str]:
+    def _is_system_signing_mode(self) -> bool:
+        """判断是否启用系统签名模式。
+
+        Returns:
+            bool: 配置了 `X-Agent-Key` 时返回 True。
         """
-        合并请求头并注入当前请求的 Authorization。
-        - 显式传入的 headers 优先
-        - 若未显式传入 Authorization，则从请求上下文注入
-        - 自动添加 X-Agent-Key、X-Agent-Timestamp、X-Agent-Nonce
+        return self._agent_key.strip() != ""
+
+    def _resolve_system_signing_secret(self) -> tuple[str, str]:
+        """解析当前服务出站签名密钥与签名版本。
+
+        Returns:
+            tuple[str, str]: `(secret, sign_version)`。
+
+        Raises:
+            ServiceException: 本地签名配置缺失或禁用时抛出。
+        """
+        settings = get_system_auth_settings()
+        if not settings.enabled:
+            raise ServiceException(
+                code=ResponseCode.SERVICE_UNAVAILABLE,
+                message="系统签名认证已禁用，禁止发送系统签名请求",
+            )
+        if settings.local_secret == "":
+            raise ServiceException(
+                code=ResponseCode.INTERNAL_ERROR,
+                message="系统签名请求缺少 SYSTEM_AUTH_LOCAL_SECRET 配置",
+            )
+        return settings.local_secret, settings.default_sign_version
+
+    @staticmethod
+    def _try_get_authorization_header() -> Optional[str]:
+        """尝试读取当前请求上下文中的 Authorization 头。
+
+        Returns:
+            Optional[str]: 读取成功返回原始 Authorization；不存在时返回 `None`。
+
+        Raises:
+            ServiceException: 非“缺少 Authorization”场景异常会透传。
+        """
+        try:
+            return get_authorization_header()
+        except ServiceException as exc:
+            if exc.code == ResponseCode.UNAUTHORIZED.code:
+                return None
+            raise
+
+    def _resolve_use_system_signature(
+            self,
+            *,
+            use_system_signature: Optional[bool],
+            has_authorization: bool,
+    ) -> bool:
+        """解析本次请求是否启用系统签名。
+
+        Args:
+            use_system_signature: 本次请求显式开关。
+            has_authorization: 当前请求头中是否已有 Authorization。
+
+        Returns:
+            bool: 是否启用系统签名。
+        """
+        if use_system_signature is not None:
+            return use_system_signature
+        if self._default_use_system_signature is not None:
+            return self._default_use_system_signature
+        return self._is_system_signing_mode() and not has_authorization
+
+    def _build_headers(
+            self,
+            headers: Optional[Mapping[str, str]],
+            *,
+            use_system_signature: Optional[bool] = None,
+    ) -> tuple[Mapping[str, str], bool]:
+        """
+        合并请求头并注入当前请求的 Authorization / X-Agent 基础头。
+
+        Args:
+            headers: 显式传入请求头。
+            use_system_signature: 本次请求是否启用系统签名。`None` 为自动模式。
+
+        Returns:
+            tuple[Mapping[str, str], bool]: `(合并后的请求头, 是否启用系统签名)`。
         """
         merged = dict(self._default_headers)
         if headers:
             merged.update(headers)
         lower_keys = {key.lower() for key in merged}
+
         if "authorization" not in lower_keys:
-            auth = get_authorization_header()
+            auth = self._try_get_authorization_header()
             if auth:
                 merged["Authorization"] = auth
+                lower_keys.add("authorization")
 
-        # 添加 Agent 相关请求头
-        if self._agent_key:
-            merged["X-Agent-Key"] = self._agent_key
-        merged["X-Agent-Timestamp"] = str(int(time.time()))
-        merged["X-Agent-Nonce"] = str(uuid.uuid4())
+        should_use_system_signature = self._resolve_use_system_signature(
+            use_system_signature=use_system_signature,
+            has_authorization="authorization" in lower_keys,
+        )
+        if should_use_system_signature and not self._is_system_signing_mode():
+            raise ServiceException(
+                code=ResponseCode.INTERNAL_ERROR,
+                message="系统签名请求缺少 X_AGENT_KEY 配置",
+            )
+        if not should_use_system_signature and "authorization" not in lower_keys:
+            raise ServiceException(
+                code=ResponseCode.UNAUTHORIZED,
+                message="缺少 Authorization 请求头",
+            )
 
-        return merged
+        # 添加 Agent 相关请求头（仅系统签名开启时）
+        if should_use_system_signature:
+            _, sign_version = self._resolve_system_signing_secret()
+            merged[HEADER_X_AGENT_KEY] = self._agent_key
+            merged[HEADER_X_AGENT_TIMESTAMP] = str(int(time.time()))
+            merged[HEADER_X_AGENT_NONCE] = str(uuid.uuid4())
+            merged[HEADER_X_AGENT_SIGN_VERSION] = sign_version
+
+        return merged, should_use_system_signature
+
+    def _attach_system_signature(
+            self,
+            request: httpx.Request,
+            *,
+            use_system_signature: bool,
+    ) -> None:
+        """为请求附加系统签名头。
+
+        Args:
+            request: 已构建但尚未发送的 httpx 请求对象。
+            use_system_signature: 本次请求是否启用系统签名。
+
+        Returns:
+            None
+
+        Raises:
+            ServiceException: 系统签名参数缺失或配置非法时抛出。
+        """
+        if not use_system_signature:
+            return
+        timestamp_text = (request.headers.get(HEADER_X_AGENT_TIMESTAMP) or "").strip()
+        nonce = (request.headers.get(HEADER_X_AGENT_NONCE) or "").strip()
+        if timestamp_text == "" or nonce == "":
+            raise ServiceException(
+                code=ResponseCode.INTERNAL_ERROR,
+                message="系统签名头构造失败：缺少时间戳或 nonce",
+            )
+        try:
+            timestamp = int(timestamp_text)
+        except ValueError as exc:
+            raise ServiceException(
+                code=ResponseCode.INTERNAL_ERROR,
+                message="系统签名头构造失败：时间戳非法",
+            ) from exc
+
+        secret, sign_version = self._resolve_system_signing_secret()
+        canonical_string = build_canonical_string(
+            method=request.method,
+            path=request.url.path,
+            query_pairs=request.url.params.multi_items(),
+            timestamp=timestamp,
+            nonce=nonce,
+            body_bytes=request.content or b"",
+        )
+        signature = sign_hmac_sha256_base64url(
+            secret=secret,
+            canonical_string=canonical_string,
+        )
+        request.headers[HEADER_X_AGENT_SIGN_VERSION] = sign_version
+        request.headers[HEADER_X_AGENT_SIGNATURE] = signature
 
     async def close(self) -> None:
         """关闭底层连接池。"""
@@ -149,6 +324,7 @@ class HttpClient:
             timeout: Optional[float] = None,
             response_format: Literal["raw", "json"] = "raw",
             include_envelope: bool = False,
+            use_system_signature: Optional[bool] = None,
     ) -> Any:
         """
         统一请求入口。
@@ -166,11 +342,18 @@ class HttpClient:
                 `json` 返回 Python 对象。
             include_envelope: 当 `response_format` 为 `json` 时，
                 是否保留 `code/message/data/timestamp` 包裹结构。
+            use_system_signature: 本次请求系统签名开关。
+                - `True`：强制系统签名；
+                - `False`：强制不签名（走用户 Authorization）；
+                - `None`：自动模式。
         """
         log_enabled = self._is_log_enabled()
         start = time.monotonic()
         try:
-            built_headers = self._build_headers(headers)
+            built_headers, should_use_system_signature = self._build_headers(
+                headers,
+                use_system_signature=use_system_signature,
+            )
         except Exception as exc:
             if log_enabled:
                 logger.warning(
@@ -193,7 +376,7 @@ class HttpClient:
                 len(content) if content else 0,
             )
         try:
-            response = await self._client.request(
+            request_obj = self._client.build_request(
                 method=method,
                 url=url,
                 headers=built_headers,
@@ -201,6 +384,13 @@ class HttpClient:
                 json=json,
                 data=data,
                 content=content,
+            )
+            self._attach_system_signature(
+                request_obj,
+                use_system_signature=should_use_system_signature,
+            )
+            response = await self._client.send(
+                request_obj,
                 timeout=timeout,
             )
         except httpx.HTTPError as exc:
@@ -276,6 +466,7 @@ class HttpClient:
             timeout: Optional[float] = None,
             response_format: Literal["raw", "json"] = "raw",
             include_envelope: bool = False,
+            use_system_signature: Optional[bool] = None,
     ) -> Any:
         """发送 GET 请求。"""
         return await self.request(
@@ -286,6 +477,7 @@ class HttpClient:
             timeout=timeout,
             response_format=response_format,
             include_envelope=include_envelope,
+            use_system_signature=use_system_signature,
         )
 
     async def post(
@@ -300,6 +492,7 @@ class HttpClient:
             timeout: Optional[float] = None,
             response_format: Literal["raw", "json"] = "raw",
             include_envelope: bool = False,
+            use_system_signature: Optional[bool] = None,
     ) -> Any:
         """发送 POST 请求。"""
         return await self.request(
@@ -313,6 +506,7 @@ class HttpClient:
             timeout=timeout,
             response_format=response_format,
             include_envelope=include_envelope,
+            use_system_signature=use_system_signature,
         )
 
     async def put(
@@ -327,6 +521,7 @@ class HttpClient:
             timeout: Optional[float] = None,
             response_format: Literal["raw", "json"] = "raw",
             include_envelope: bool = False,
+            use_system_signature: Optional[bool] = None,
     ) -> Any:
         """发送 PUT 请求。"""
         return await self.request(
@@ -340,6 +535,7 @@ class HttpClient:
             timeout=timeout,
             response_format=response_format,
             include_envelope=include_envelope,
+            use_system_signature=use_system_signature,
         )
 
     async def delete(
@@ -354,6 +550,7 @@ class HttpClient:
             timeout: Optional[float] = None,
             response_format: Literal["raw", "json"] = "raw",
             include_envelope: bool = False,
+            use_system_signature: Optional[bool] = None,
     ) -> Any:
         """发送 DELETE 请求。"""
         return await self.request(
@@ -367,4 +564,5 @@ class HttpClient:
             timeout=timeout,
             response_format=response_format,
             include_envelope=include_envelope,
+            use_system_signature=use_system_signature,
         )

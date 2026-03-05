@@ -18,6 +18,7 @@ from app.core.mq.consumers.lifecycle import (
     stop_import_consumer,
 )
 from app.core.security.anonymous_access import is_anonymous_request
+from app.core.security.system_auth import is_system_request, verify_system_request
 from app.core.security.auth_context import (
     reset_authorization_header,
     reset_current_user,
@@ -41,8 +42,8 @@ OPENAPI_DESCRIPTION = """
 
 ## 认证说明
 
-除 `/docs`、`/redoc`、`/openapi.json` 以及显式标注 `allow_anonymous` 的接口外，
-其他接口均需要认证。
+除 `/docs`、`/redoc`、`/openapi.json`、显式标注 `allow_anonymous`（匿名）与
+`allow_system`（系统签名）的接口外，其他接口均需要用户认证。
 
 请由药品服务端提供访问令牌，并在请求头中携带：
 
@@ -121,14 +122,22 @@ async def authorization_header_middleware(
     user_token = set_current_user(None)
     try:
         if not _should_skip_authorization(request):
-            try:
-                current_user = await verify_authorization()
-            except ServiceException as exc:
-                return await ExceptionHandlers.service_exception_handler(request, exc)
-            except Exception as exc:
-                return await ExceptionHandlers.unhandled_exception_handler(request, exc)
-            reset_current_user(user_token)
-            user_token = set_current_user(current_user)
+            if is_system_request(request):
+                try:
+                    await verify_system_request(request)
+                except ServiceException as exc:
+                    return await ExceptionHandlers.service_exception_handler(request, exc)
+                except Exception as exc:
+                    return await ExceptionHandlers.unhandled_exception_handler(request, exc)
+            else:
+                try:
+                    current_user = await verify_authorization()
+                except ServiceException as exc:
+                    return await ExceptionHandlers.service_exception_handler(request, exc)
+                except Exception as exc:
+                    return await ExceptionHandlers.unhandled_exception_handler(request, exc)
+                reset_current_user(user_token)
+                user_token = set_current_user(current_user)
         return await call_next(request)
     finally:
         reset_current_user(user_token)

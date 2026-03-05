@@ -89,6 +89,17 @@
 - Rate limit configuration (optional): `RATE_LIMIT_KEY_PREFIX` (defaults to `rate_limit`),
   `RATE_LIMIT_TRUST_X_FORWARDED_FOR` (default false; when true, fallback to `X-Forwarded-For`
   only if `request.client.host` is unavailable).
+- System auth configuration (optional):
+  `SYSTEM_AUTH_ENABLED` (default true),
+  `SYSTEM_AUTH_MAX_SKEW_SECONDS` (default `300`),
+  `SYSTEM_AUTH_NONCE_TTL_SECONDS` (default `600`),
+  `SYSTEM_AUTH_NONCE_KEY_PREFIX` (default `system_auth:nonce`),
+  `SYSTEM_AUTH_CLIENTS_JSON` (JSON array, element keys: `app_id`, `secret`, `enabled`),
+  `SYSTEM_AUTH_DEFAULT_SIGN_VERSION` (default `v1`),
+  `X_AGENT_KEY` (AI 侧出站系统调用使用的 app_id),
+  `SYSTEM_AUTH_LOCAL_SECRET` (AI 侧出站系统调用使用的本地签名密钥).
+  Header contract: `X-Agent-Key`, `X-Agent-Timestamp`, `X-Agent-Nonce`,
+  `X-Agent-Signature`, `X-Agent-Sign-Version`.
 - RabbitMQ configuration (optional): `RABBITMQ_URL`, `RABBITMQ_EXCHANGE`,
   `RABBITMQ_COMMAND_QUEUE`, `RABBITMQ_COMMAND_ROUTING_KEY`, `RABBITMQ_RESULT_ROUTING_KEY`,
   `RABBITMQ_PREFETCH_COUNT`, `MQ_CONSUMER_ENABLED`,
