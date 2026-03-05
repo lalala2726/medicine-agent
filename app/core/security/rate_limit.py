@@ -15,8 +15,8 @@ from loguru import logger
 from redis.exceptions import RedisError
 
 from app.core.codes import ResponseCode
+from app.core.database.redis.config import get_redis_connection
 from app.core.exception.exceptions import ServiceException
-from app.core.redis import get_redis_connection
 from app.core.security.auth_context import get_user_id
 from app.utils.resource_text_utils import load_resource_text
 

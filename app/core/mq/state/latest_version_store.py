@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from redis.exceptions import RedisError
+
+from app.core.codes import ResponseCode
+from app.core.database.redis.config import get_redis_connection
 from app.core.exception.exceptions import ServiceException
 from app.core.mq.config.settings import RabbitMQSettings, get_rabbitmq_settings
-from app.core.redis import get_redis_connection
 
 
 def build_latest_version_key(*, biz_key: str, settings: RabbitMQSettings) -> str:
@@ -29,11 +32,19 @@ def get_latest_version(*, biz_key: str, settings: RabbitMQSettings | None = None
         int | None: 读取成功返回版本号，未找到返回 None。
 
     Raises:
-        ServiceException: Redis 中值不是整数时抛出。
+        ServiceException: Redis 读取失败或值不是整数时抛出。
     """
     resolved_settings = settings or get_rabbitmq_settings()
     redis_client = get_redis_connection()
-    raw_value = redis_client.get(build_latest_version_key(biz_key=biz_key, settings=resolved_settings))
+    try:
+        raw_value = redis_client.get(
+            build_latest_version_key(biz_key=biz_key, settings=resolved_settings)
+        )
+    except RedisError as exc:
+        raise ServiceException(
+            code=ResponseCode.OPERATION_FAILED,
+            message=f"读取 latest version 失败: biz_key={biz_key}, error={exc}",
+        ) from exc
     if raw_value is None:
         return None
     if isinstance(raw_value, bytes):
@@ -44,7 +55,10 @@ def get_latest_version(*, biz_key: str, settings: RabbitMQSettings | None = None
     try:
         parsed = int(raw_text)
     except ValueError as exc:
-        raise ServiceException(message=f"latest version 不是整数: biz_key={biz_key}") from exc
+        raise ServiceException(
+            code=ResponseCode.OPERATION_FAILED,
+            message=f"latest version 不是整数: biz_key={biz_key}",
+        ) from exc
     return parsed
 
 

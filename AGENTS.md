@@ -85,6 +85,7 @@
   `MONGODB_STARTUP_PING_ENABLED` (default false, set true to fail fast
   on startup when MongoDB is unreachable/unauthorized).
 - Redis configuration (optional): `REDIS_URL`, `REDIS_HOST`, `REDIS_PORT`, `REDIS_DB`, `REDIS_PASSWORD`, `REDIS_SSL`.
+  Redis connection/config entry is `app/core/database/redis/config.py`.
 - Rate limit configuration (optional): `RATE_LIMIT_KEY_PREFIX` (defaults to `rate_limit`),
   `RATE_LIMIT_TRUST_X_FORWARDED_FOR` (default false; when true, fallback to `X-Forwarded-For`
   only if `request.client.host` is unavailable).
@@ -100,7 +101,7 @@
   `chunking`, `embedding`, `inserting`.
   AI consumer enforces latest-version semantics by reading Redis key
   `kb:latest:{biz_key}` (prefix configurable) and dropping stale messages (`version < latest`).
-- Knowledge import structured logging (`app/core/mq/import_logger.py`):
+- Knowledge import structured logging (`app/core/mq/observability/import_logger.py`):
   `ImportStage` enum identifies each pipeline step. Use `import_log(stage, task_uuid, **metrics)`
   for one-line structured log output; log level is auto-selected (error / warning / info).
 - HTTP client configuration (optional): `HTTP_BASE_URL` (defaults to `http://localhost:8080`).

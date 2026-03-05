@@ -1,3 +1,7 @@
+import pytest
+from redis.exceptions import RedisError
+
+from app.core.exception.exceptions import ServiceException
 from app.core.mq.config.settings import RabbitMQSettings
 from app.core.mq.state.latest_version_store import (
     build_latest_version_key,
@@ -12,6 +16,12 @@ class _FakeRedis:
 
     def get(self, key: str):
         return self.values.get(key)
+
+
+class _ErrorRedis:
+    def get(self, key: str):
+        del key
+        raise RedisError("mock redis down")
 
 
 def _build_settings() -> RabbitMQSettings:
@@ -61,3 +71,25 @@ def test_is_stale_message_true_when_lower_than_latest(monkeypatch) -> None:
 
     assert is_stale_message(biz_key="demo:1", version=8, settings=_build_settings()) is True
     assert is_stale_message(biz_key="demo:1", version=9, settings=_build_settings()) is False
+
+
+def test_get_latest_version_raises_service_exception_on_invalid_value(monkeypatch) -> None:
+    """验证 Redis 中版本值非法时抛出 ServiceException。"""
+    monkeypatch.setattr(
+        "app.core.mq.state.latest_version_store.get_redis_connection",
+        lambda: _FakeRedis(values={"kb:latest:demo:1": b"abc"}),
+    )
+
+    with pytest.raises(ServiceException, match="latest version 不是整数"):
+        get_latest_version(biz_key="demo:1", settings=_build_settings())
+
+
+def test_get_latest_version_raises_service_exception_on_redis_error(monkeypatch) -> None:
+    """验证 Redis 调用异常会被包装为 ServiceException。"""
+    monkeypatch.setattr(
+        "app.core.mq.state.latest_version_store.get_redis_connection",
+        lambda: _ErrorRedis(),
+    )
+
+    with pytest.raises(ServiceException, match="读取 latest version 失败"):
+        get_latest_version(biz_key="demo:1", settings=_build_settings())

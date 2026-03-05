@@ -13,6 +13,17 @@ from app.core.database.mongodb import (
     get_mongo_database,
     verify_mongodb_connection,
 )
+from app.core.database.redis import (
+    RedisCache,
+    RedisHashCache,
+    RedisListCache,
+    RedisSetCache,
+    RedisSettings,
+    RedisZSetCache,
+    clear_redis_connection_cache,
+    get_redis_connection,
+    get_redis_settings,
+)
 
 __all__ = [
     "DEFAULT_CONVERSATIONS_COLLECTION",
@@ -24,8 +35,17 @@ __all__ = [
     "DEFAULT_MONGODB_STARTUP_PING_ENABLED",
     "DEFAULT_MONGODB_TIMEOUT_MS",
     "DEFAULT_MONGODB_URI",
+    "RedisCache",
+    "RedisHashCache",
+    "RedisListCache",
+    "RedisSetCache",
+    "RedisSettings",
+    "RedisZSetCache",
+    "clear_redis_connection_cache",
     "get_milvus_client",
     "get_mongo_client",
     "get_mongo_database",
+    "get_redis_connection",
+    "get_redis_settings",
     "verify_mongodb_connection",
 ]
