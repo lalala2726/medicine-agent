@@ -61,6 +61,11 @@ def test_import_single_file_emits_processing_stage_callbacks(
         lambda **_kwargs: None,
     )
     monkeypatch.setattr(
+        knowledge_base_service.vector_repository,
+        "count_document_chunks",
+        lambda **_kwargs: 3,
+    )
+    monkeypatch.setattr(
         knowledge_base_service,
         "_split_parsed_text",
         lambda *_args, **_kwargs: [
@@ -182,6 +187,11 @@ def test_import_single_file_runs_vectorization_and_insert_batches(
         knowledge_base_service.vector_repository,
         "insert_embeddings",
         lambda **kwargs: insert_calls.append(kwargs),
+    )
+    monkeypatch.setattr(
+        knowledge_base_service.vector_repository,
+        "count_document_chunks",
+        lambda **_kwargs: 3,
     )
     monkeypatch.setattr(
         knowledge_base_service,
@@ -327,6 +337,11 @@ def test_import_single_file_batches_are_strictly_serial(
         _fake_insert,
     )
     monkeypatch.setattr(
+        knowledge_base_service.vector_repository,
+        "count_document_chunks",
+        lambda **_kwargs: 3,
+    )
+    monkeypatch.setattr(
         knowledge_base_service,
         "_split_parsed_text",
         lambda *_args, **_kwargs: [
@@ -348,6 +363,93 @@ def test_import_single_file_batches_are_strictly_serial(
 
     assert result.status == "success"
     assert trace == ["embed-2", "insert-2", "embed-1", "insert-1"]
+
+
+def test_import_single_file_fails_when_insert_visibility_check_not_passed(
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+) -> None:
+    """验证写入可见性校验失败时返回 failed，避免误发 completed。"""
+    source_path = tmp_path / "demo.txt"
+    source_path.write_text("dummy", encoding="utf-8")
+
+    monkeypatch.setenv("KNOWLEDGE_VECTOR_BATCH_SIZE", "2")
+    monkeypatch.setattr(
+        knowledge_base_service,
+        "DEFAULT_INSERT_VERIFY_MAX_RETRIES",
+        2,
+    )
+    monkeypatch.setattr(
+        knowledge_base_service,
+        "DEFAULT_INSERT_VERIFY_INTERVAL_SECONDS",
+        0.0,
+    )
+    monkeypatch.setattr(
+        knowledge_base_service,
+        "_download_file",
+        lambda _url: ("demo.txt", source_path),
+    )
+    monkeypatch.setattr(
+        knowledge_base_service,
+        "parse_downloaded_file",
+        lambda **_: ParsedDocument(
+            file_kind=FileKind.TEXT,
+            mime_type="text/plain",
+            source_extension=".txt",
+            text="第一段\n\n第二段",
+        ),
+    )
+    monkeypatch.setattr(
+        knowledge_base_service.vector_repository,
+        "ensure_collection_exists",
+        lambda **_: None,
+    )
+    monkeypatch.setattr(
+        knowledge_base_service.vector_repository,
+        "get_collection_embedding_dim",
+        lambda **_: 1024,
+    )
+    monkeypatch.setattr(
+        knowledge_base_service,
+        "_create_embedding_client",
+        lambda **_: object(),
+    )
+    monkeypatch.setattr(
+        knowledge_base_service,
+        "embed_texts",
+        lambda texts, **_: [[0.1, 0.2] for _ in texts],
+    )
+    monkeypatch.setattr(
+        knowledge_base_service.vector_repository,
+        "insert_embeddings",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        knowledge_base_service.vector_repository,
+        "count_document_chunks",
+        lambda **_kwargs: 0,
+    )
+    monkeypatch.setattr(
+        knowledge_base_service,
+        "_split_parsed_text",
+        lambda *_args, **_kwargs: [
+            SplitChunk(text="A", stats=ChunkStats(char_count=1)),
+            SplitChunk(text="B", stats=ChunkStats(char_count=1)),
+        ],
+    )
+
+    result = knowledge_base_service.import_single_file(
+        url="https://example.com/demo.txt",
+        knowledge_name="demo",
+        document_id=9,
+        embedding_model="text-embedding-v4",
+        chunk_strategy=ChunkStrategyType.CHARACTER,
+        chunk_size=200,
+        token_size=50,
+    )
+
+    assert result.status == "failed"
+    assert "切片写入校验失败" in result.error
 
 
 def _raise_parse_error() -> ParsedDocument:

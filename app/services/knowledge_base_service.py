@@ -2,7 +2,7 @@ import hashlib
 import os
 from collections.abc import Callable
 from pathlib import Path
-from time import time
+from time import sleep, time
 
 from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException
@@ -26,6 +26,8 @@ DEFAULT_TOKEN_SIZE = 100  # 默认 token 切片长度
 DEFAULT_CHUNK_OVERLAP = 50  # 默认切片重叠长度（字符）
 EMBED_MAX_TOKEN_SIZE = 8192  # 向量化前单文本最大 token 限制
 DEFAULT_VECTOR_BATCH_SIZE = 20  # 向量化与入库默认批次大小
+DEFAULT_INSERT_VERIFY_MAX_RETRIES = 5  # 写入后可见性校验最大重试次数
+DEFAULT_INSERT_VERIFY_INTERVAL_SECONDS = 0.2  # 写入后可见性校验重试间隔（秒）
 ProcessingStageCallback = Callable[[ProcessingStageDetail], None]
 
 
@@ -288,6 +290,48 @@ def _notify_processing_stage(
         return
 
 
+def _ensure_document_visible_after_insert(
+        *,
+        knowledge_name: str,
+        document_id: int,
+        expected_count: int,
+) -> None:
+    """校验文档切片写入后在向量库中可见。
+
+    Args:
+        knowledge_name: 知识库名称。
+        document_id: 文档 ID。
+        expected_count: 期望最小切片数量。
+
+    Returns:
+        None。
+
+    Raises:
+        ServiceException: 在重试窗口内仍未查询到期望数量时抛出。
+    """
+    if expected_count <= 0:
+        return
+
+    observed_count = 0
+    for attempt in range(DEFAULT_INSERT_VERIFY_MAX_RETRIES):
+        observed_count = vector_repository.count_document_chunks(
+            knowledge_name=knowledge_name,
+            document_id=document_id,
+        )
+        if observed_count >= expected_count:
+            return
+        if attempt < DEFAULT_INSERT_VERIFY_MAX_RETRIES - 1:
+            sleep(DEFAULT_INSERT_VERIFY_INTERVAL_SECONDS)
+
+    raise ServiceException(
+        code=ResponseCode.OPERATION_FAILED,
+        message=(
+            "切片写入校验失败: "
+            f"document_id={document_id}, expected={expected_count}, observed={observed_count}"
+        ),
+    )
+
+
 def import_single_file(
         url: str,
         knowledge_name: str,
@@ -422,6 +466,12 @@ def import_single_file(
             )
             vector_count += len(batch_chunks)
             insert_batches += 1
+
+        _ensure_document_visible_after_insert(
+            knowledge_name=knowledge_name,
+            document_id=document_id,
+            expected_count=vector_count,
+        )
 
         import_log(
             ImportStage.INSERT_DONE,

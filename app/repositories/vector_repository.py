@@ -632,6 +632,34 @@ def list_document_chunks(
     return rows or [], total
 
 
+def count_document_chunks(
+        knowledge_name: str,
+        document_id: int,
+        *,
+        status: int | None = None,
+) -> int:
+    """
+    功能描述:
+        统计指定文档在集合中的切片数量。
+
+    参数说明:
+        knowledge_name (str): 集合名称。
+        document_id (int): 文档 ID。
+        status (int | None): 可选状态过滤；传 None 表示不过滤状态。
+
+    返回值:
+        int: 命中切片总数。
+
+    异常说明:
+        ServiceException: Milvus 查询失败时抛出。
+    """
+    client = get_milvus_client()
+    filter_expr = f"document_id == {document_id}"
+    if status is not None:
+        filter_expr = f"{filter_expr} and status == {int(status)}"
+    return _count_by_filter(client, knowledge_name, filter_expr)
+
+
 def delete_document_chunks(knowledge_name: str, document_id: int) -> None:
     """
     功能描述:

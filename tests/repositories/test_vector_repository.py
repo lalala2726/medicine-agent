@@ -335,6 +335,33 @@ def test_delete_document_chunks_calls_milvus_delete_with_document_filter(
     assert payload["filter"] == "document_id == 42"
 
 
+def test_count_document_chunks_supports_optional_status_filter(
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    测试目的：验证切片计数支持按 document_id 统计，并可附加 status 过滤。
+    预期结果：返回 count(*) 值，且查询过滤表达式符合预期。
+    """
+    client = _FakeMilvusClient(has_collection_result=True)
+    client.count_result = [{"count(*)": 7}]
+    monkeypatch.setattr(repository_module, "get_milvus_client", lambda: client)
+
+    total_all = repository_module.count_document_chunks(
+        knowledge_name="demo_kb",
+        document_id=10,
+    )
+    total_enabled = repository_module.count_document_chunks(
+        knowledge_name="demo_kb",
+        document_id=10,
+        status=0,
+    )
+
+    assert total_all == 7
+    assert total_enabled == 7
+    assert client.query_calls[0]["filter"] == "document_id == 10"
+    assert client.query_calls[1]["filter"] == "document_id == 10 and status == 0"
+
+
 def test_get_collection_embedding_dim_reads_dim_from_schema(
         monkeypatch: pytest.MonkeyPatch,
 ) -> None:
