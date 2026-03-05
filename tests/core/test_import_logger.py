@@ -1,6 +1,6 @@
 """import_logger 模块单元测试。"""
 
-from app.core.mq.import_logger import ImportStage, import_log
+from app.core.mq.observability.import_logger import ImportStage, import_log
 
 
 def test_import_log_info_stage_does_not_raise() -> None:
@@ -32,14 +32,14 @@ def test_import_log_error_stage_does_not_raise() -> None:
 
 def test_import_log_warning_stage_does_not_raise() -> None:
     """
-    测试目的：验证 WARNING 级别阶段（如 RETRY_SCHEDULED）不抛异常。
+    测试目的：验证 WARNING 级别阶段（如 TASK_STALE_DROPPED）不抛异常。
     预期结果：函数正常返回 None。
     """
     result = import_log(
-        ImportStage.RETRY_SCHEDULED,
+        ImportStage.TASK_STALE_DROPPED,
         "uuid-3",
-        attempt=2,
-        delay_seconds=30,
+        biz_key="demo:1",
+        version=2,
     )
     assert result is None
 

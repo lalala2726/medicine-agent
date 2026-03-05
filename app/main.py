@@ -13,7 +13,7 @@ from starlette.responses import Response
 from app.api.main import api_router
 from app.core.exception.exception_handlers import ExceptionHandlers
 from app.core.exception.exceptions import ServiceException
-from app.core.mq.lifecycle import (
+from app.core.mq.consumers.lifecycle import (
     start_import_consumer_if_enabled,
     stop_import_consumer,
 )

@@ -60,25 +60,3 @@ class ImportSingleFileFailedResult(BaseModel):
 ImportSingleFileResult: TypeAlias = (
         ImportSingleFileSuccessResult | ImportSingleFileFailedResult
 )
-
-
-class ImportKnowledgeSuccessResult(ImportSingleFileSuccessResult):
-    """知识库批量导入中，单文件成功结果。"""
-
-    callback_status: Literal["PENDING"] = "PENDING"
-
-    @classmethod
-    def from_single_file_success(
-            cls,
-            result: ImportSingleFileSuccessResult,
-    ) -> "ImportKnowledgeSuccessResult":
-        """从单文件成功结果构造批量导入成功结果。"""
-        return cls(**result.model_dump())
-
-
-class ImportKnowledgeServiceResult(BaseModel):
-    """知识库批量导入返回结果。"""
-
-    results: list[ImportKnowledgeSuccessResult] = Field(default_factory=list)
-    failed_urls: list[str] = Field(default_factory=list)
-    failed_details: list[ImportSingleFileFailedResult] = Field(default_factory=list)

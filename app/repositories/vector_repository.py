@@ -122,7 +122,6 @@ def _build_collection_schema(embedding_dim: int, description: str) -> Collection
             name="status",
             dtype=DataType.INT32,
             description="知识库状态（0=启用，1=禁用）",
-            default_value=DEFAULT_KNOWLEDGE_STATUS,
         ),
         FieldSchema(
             name="source_hash",
@@ -493,6 +492,7 @@ def insert_embeddings(
             "chunk_strategy": chunk_strategy,
             "chunk_size": chunk_size,
             "token_size": token_size,
+            "status": DEFAULT_KNOWLEDGE_STATUS,
             "source_hash": source_hash,
             "created_at_ts": created_at_ts,
         }

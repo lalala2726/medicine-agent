@@ -1,21 +1,19 @@
 import hashlib
 import os
+from collections.abc import Callable
 from pathlib import Path
 from time import time
 
 from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException
 from app.core.llms import create_embedding_model
-from app.core.mq.import_logger import ImportStage, import_log
-from app.core.mq.models import KnowledgeImportMessage
-from app.core.mq.publisher import publish_import_messages
+from app.core.mq.contracts.models import ProcessingStageDetail
+from app.core.mq.observability.import_logger import ImportStage, import_log
 from app.rag.chunking import ChunkStrategyType, SplitChunk, SplitConfig, split_text
 from app.rag.file_loader import parse_downloaded_file, validate_url_extension
 from app.repositories import vector_repository
 from app.schemas.knowledge_import import (
     ImportChunk,
-    ImportKnowledgeServiceResult,
-    ImportKnowledgeSuccessResult,
     ImportSingleFileFailedResult,
     ImportSingleFileResult,
     ImportSingleFileSuccessResult,
@@ -28,81 +26,7 @@ DEFAULT_TOKEN_SIZE = 100  # 默认 token 切片长度
 DEFAULT_CHUNK_OVERLAP = 50  # 默认切片重叠长度（字符）
 EMBED_MAX_TOKEN_SIZE = 8192  # 向量化前单文本最大 token 限制
 DEFAULT_VECTOR_BATCH_SIZE = 20  # 向量化与入库默认批次大小
-
-
-async def submit_import_to_queue(
-        knowledge_name: str,
-        document_id: int,
-        file_url: list[str] | str,
-        embedding_model: str,
-        chunk_strategy: ChunkStrategyType = ChunkStrategyType.CHARACTER,
-        chunk_size: int = DEFAULT_CHUNK_SIZE,
-        token_size: int = DEFAULT_TOKEN_SIZE,
-) -> dict:
-    """
-    提交导入请求到 RabbitMQ。
-
-    Args:
-        knowledge_name: 知识库名称。
-        document_id: 文档 ID。
-        file_url: 文件 URL（字符串或字符串列表）。
-        embedding_model: 向量模型名称。
-        chunk_strategy: 切片策略，默认 `character`。
-        chunk_size: 字符切片大小，默认 `500`。
-        token_size: token 切片大小，默认 `100`。
-
-    Returns:
-        投递结果字典，包含 `accepted_count` 和 `task_uuids`。
-
-    Raises:
-        ServiceException: URL 为空/非法、后缀不支持或 MQ 投递失败。
-    """
-    normalized_urls = _normalize_import_urls(file_url)
-    if not normalized_urls:
-        raise ServiceException(
-            code=ResponseCode.BAD_REQUEST,
-            message="导入文件不能为空",
-        )
-    try:
-        vector_repository.ensure_collection_exists(knowledge_name=knowledge_name)
-    except ServiceException as exc:
-        message = str(exc)
-        if int(exc.code) == ResponseCode.NOT_FOUND.code:
-            message = "知识库不存在，无法提交导入任务"
-        raise ServiceException(
-            code=exc.code,
-            message=message,
-        ) from exc
-
-    messages: list[KnowledgeImportMessage] = []
-    for url in normalized_urls:
-        validate_url_extension(url)
-        messages.append(
-            KnowledgeImportMessage.build(
-                knowledge_name=knowledge_name,
-                document_id=document_id,
-                file_url=url,
-                embedding_model=embedding_model,
-                chunk_strategy=chunk_strategy,
-                chunk_size=chunk_size,
-                token_size=token_size,
-            )
-        )
-
-    try:
-        await publish_import_messages(messages)
-    except ServiceException:
-        raise
-    except Exception as exc:
-        raise ServiceException(
-            code=ResponseCode.OPERATION_FAILED,
-            message=f"导入任务投递失败: {exc}",
-        ) from exc
-    task_uuids = [message.task_uuid for message in messages]
-    return {
-        "accepted_count": len(messages),
-        "task_uuids": task_uuids,
-    }
+ProcessingStageCallback = Callable[[ProcessingStageDetail], None]
 
 
 def _split_batches(items: list, batch_size: int) -> list[list]:
@@ -342,6 +266,28 @@ def _validate_file_not_empty(file_path: Path) -> None:
         )
 
 
+def _notify_processing_stage(
+        callback: ProcessingStageCallback | None,
+        detail: ProcessingStageDetail,
+) -> None:
+    """安全触发一次处理阶段回调。
+
+    Args:
+        callback: 调用方提供的可选回调函数。
+        detail: 当前处理步骤对应的阶段枚举。
+
+    Returns:
+        None。
+    """
+    if callback is None:
+        return
+    try:
+        callback(detail)
+    except Exception:
+        # 阶段回调失败不应影响主导入流程。
+        return
+
+
 def import_single_file(
         url: str,
         knowledge_name: str,
@@ -351,6 +297,7 @@ def import_single_file(
         chunk_size: int = DEFAULT_CHUNK_SIZE,
         token_size: int = DEFAULT_TOKEN_SIZE,
         task_uuid: str = "-",
+        on_processing_stage: ProcessingStageCallback | None = None,
 ) -> ImportSingleFileResult:
     """
     执行单个文件的完整导入流程：校验 → 下载 → 解析 → 切片 → 向量化 → 入库。
@@ -366,6 +313,7 @@ def import_single_file(
         chunk_size: 字符切片大小。
         token_size: token 切片大小。
         task_uuid: 导入任务唯一标识（用于日志关联），默认 ``"-"``。
+        on_processing_stage: 可选阶段回调，按下载/解析/切片/向量化/入库触发。
 
     Returns:
         成功时返回 `ImportSingleFileSuccessResult`；
@@ -379,10 +327,10 @@ def import_single_file(
     embedding_dim = 0
 
     try:
-        # Step 1: URL 后缀校验
+        # 步骤 1：URL 后缀校验
         source_extension = validate_url_extension(url)
 
-        # Step 2: 知识库 + 模型准备
+        # 步骤 2：知识库与模型准备
         vector_repository.ensure_collection_exists(knowledge_name=knowledge_name)
         embedding_dim = vector_repository.get_collection_embedding_dim(
             knowledge_name=knowledge_name
@@ -392,14 +340,16 @@ def import_single_file(
             embedding_dim=embedding_dim,
         )
 
-        # Step 3: 下载
+        # 步骤 3：下载
+        _notify_processing_stage(on_processing_stage, ProcessingStageDetail.DOWNLOADING)
         import_log(ImportStage.DOWNLOAD_START, task_uuid, url=url)
         filename, file_path = _download_file(url)
         _validate_file_not_empty(file_path)
         file_size = file_path.stat().st_size
         import_log(ImportStage.DOWNLOAD_DONE, task_uuid, filename=filename, size=file_size)
 
-        # Step 4: 解析
+        # 步骤 4：解析
+        _notify_processing_stage(on_processing_stage, ProcessingStageDetail.PARSING)
         parsed_document = parse_downloaded_file(
             file_path=file_path,
             source_url=url,
@@ -413,7 +363,8 @@ def import_single_file(
             text_length=len(parsed_text),
         )
 
-        # Step 5: 切片
+        # 步骤 5：切片
+        _notify_processing_stage(on_processing_stage, ProcessingStageDetail.CHUNKING)
         effective_chunk_size = (
             token_size
             if chunk_strategy == ChunkStrategyType.TOKEN
@@ -432,12 +383,15 @@ def import_single_file(
             chunk_size=effective_chunk_size,
         )
 
-        # Step 6: 分批向量化 + 入库
+        # 步骤 6：分批向量化并入库
         source_hash = _build_source_hash(parsed_text)
         vector_count = 0
         insert_batches = 0
         batch_chunks_list = _split_batches(chunks, vector_batch_size)
         total_batches = len(batch_chunks_list)
+        if batch_chunks_list:
+            _notify_processing_stage(on_processing_stage, ProcessingStageDetail.EMBEDDING)
+            _notify_processing_stage(on_processing_stage, ProcessingStageDetail.INSERTING)
 
         for batch_index, batch_chunks in enumerate(batch_chunks_list, start=1):
             batch_texts = [chunk.text for chunk in batch_chunks]
@@ -512,92 +466,6 @@ def import_single_file(
             embedding_model=embedding_model,
             embedding_dim=embedding_dim,
         )
-
-
-def import_knowledge_service(
-        knowledge_name: str,
-        document_id: int,
-        file_url: list[str] | str,
-        embedding_model: str,
-        chunk_strategy: ChunkStrategyType = ChunkStrategyType.CHARACTER,
-        chunk_size: int = DEFAULT_CHUNK_SIZE,
-        token_size: int = DEFAULT_TOKEN_SIZE,
-) -> ImportKnowledgeServiceResult:
-    """
-    执行导入主流程（多 URL 兼容包装）：逐个调用 import_single_file。
-
-    Args:
-        knowledge_name: 知识库名称。
-        document_id: 文档 ID。
-        file_url: 文件 URL（字符串或字符串列表）。
-        embedding_model: 向量模型名称。
-        chunk_strategy: 切片策略。
-        chunk_size: 字符切片大小。
-        token_size: token 切片大小。
-
-    Returns:
-        导入结果对象，包含 `results`、`failed_urls`、`failed_details`。
-
-    Raises:
-        ServiceException: 参数非法时抛出（其他文件级异常会记录并计入失败列表）。
-    """
-    normalized_urls = _normalize_import_urls(file_url)
-    if not normalized_urls:
-        raise ServiceException(
-            code=ResponseCode.BAD_REQUEST, message="导入文件不能为空"
-        )
-
-    failed_urls: list[str] = []
-    failed_details: list[ImportSingleFileFailedResult] = []
-    results: list[ImportKnowledgeSuccessResult] = []
-
-    for url in normalized_urls:
-        result = import_single_file(
-            url=url,
-            knowledge_name=knowledge_name,
-            document_id=document_id,
-            embedding_model=embedding_model,
-            chunk_strategy=chunk_strategy,
-            chunk_size=chunk_size,
-            token_size=token_size,
-        )
-
-        if result.status == "success":
-            results.append(ImportKnowledgeSuccessResult.from_single_file_success(result))
-        else:
-            failed_urls.append(url)
-            failed_details.append(result)
-
-    return ImportKnowledgeServiceResult(
-        results=results,
-        failed_urls=failed_urls,
-        failed_details=failed_details,
-    )
-
-
-def _normalize_import_urls(file_url: list[str] | str) -> list[str]:
-    """
-    标准化导入 URL 入参。
-
-    Args:
-        file_url: 原始 URL 入参。
-
-    Returns:
-        清洗后的 URL 列表（去除空白项）。
-
-    Raises:
-        ServiceException: 参数类型不是字符串或字符串列表。
-    """
-    if isinstance(file_url, str):
-        normalized = [file_url.strip()] if file_url.strip() else []
-    elif isinstance(file_url, list):
-        normalized = [str(item).strip() for item in file_url if str(item).strip()]
-    else:
-        raise ServiceException(
-            code=ResponseCode.BAD_REQUEST,
-            message="file_url 参数类型错误，必须是字符串或字符串列表",
-        )
-    return normalized
 
 
 def _split_parsed_text(

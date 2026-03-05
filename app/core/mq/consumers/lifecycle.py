@@ -4,12 +4,12 @@ import asyncio
 
 from loguru import logger
 
-from app.core.mq.consumer import run_import_consumer
-from app.core.mq.settings import (
+from app.core.mq.config.settings import (
     has_rabbitmq_url_configured,
     is_aio_pika_installed,
     is_mq_consumer_enabled,
 )
+from app.core.mq.consumers.import_consumer import run_import_consumer
 
 _consumer_task: asyncio.Task[None] | None = None
 
@@ -43,9 +43,9 @@ async def start_import_consumer_if_enabled() -> None:
         return
     _consumer_task = asyncio.create_task(
         run_import_consumer(),
-        name="knowledge-import-consumer",
+        name="knowledge-import-command-consumer",
     )
-    logger.info("知识库导入 MQ 消费者已启动")
+    logger.info("知识库导入命令 MQ 消费者已启动")
 
 
 async def stop_import_consumer() -> None:
@@ -72,4 +72,4 @@ async def stop_import_consumer() -> None:
         except asyncio.CancelledError:
             pass
     _consumer_task = None
-    logger.info("知识库导入 MQ 消费者已停止")
+    logger.info("知识库导入命令 MQ 消费者已停止")

@@ -126,10 +126,7 @@ def test_build_collection_schema_contains_standard_12_fields() -> None:
     assert fields["chunk_size"].dtype == DataType.INT32
     assert fields["token_size"].dtype == DataType.INT32
     assert fields["status"].dtype == DataType.INT32
-    assert (
-            fields["status"].default_value.long_data
-            == repository_module.DEFAULT_KNOWLEDGE_STATUS
-    )
+    assert not fields["status"].params.get("default_value")
     assert fields["source_hash"].dtype == DataType.VARCHAR
     assert (
             fields["source_hash"].params["max_length"]
@@ -410,5 +407,7 @@ def test_insert_embeddings_builds_full_payload_fields(
     assert rows[0]["chunk_strategy"] == "character"
     assert rows[0]["chunk_size"] == 500
     assert rows[0]["token_size"] == 100
+    assert rows[0]["status"] == repository_module.DEFAULT_KNOWLEDGE_STATUS
+    assert rows[1]["status"] == repository_module.DEFAULT_KNOWLEDGE_STATUS
     assert rows[0]["source_hash"] == "hash-1"
     assert rows[0]["created_at_ts"] == 1234567890

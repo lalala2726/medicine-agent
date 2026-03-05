@@ -1,82 +1,56 @@
 import pytest
 
 from app.core.exception.exceptions import ServiceException
-from app.core.mq.settings import get_rabbitmq_settings
+from app.core.mq.config.settings import get_rabbitmq_settings
 
 
-def test_get_rabbitmq_settings_supports_duration_suffixes(
+def test_get_rabbitmq_settings_loads_defaults(
         monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """
-    测试目的：验证 MQ_RETRY_DELAYS_SECONDS 支持 s/m/h 单位并可正确换算为秒。
-    预期结果：配置解析后的 retry_delays_seconds 与预期秒数一致，且默认 max_retries 等于延迟项数量。
-    """
+    """验证可选环境变量缺失时会加载默认值。"""
     monkeypatch.setenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
-    monkeypatch.setenv(
-        "KNOWLEDGE_IMPORT_CALLBACK_URL",
-        "http://localhost:8083/api/knowledge/callback",
-    )
-    monkeypatch.setenv(
-        "MQ_RETRY_DELAYS_SECONDS",
-        "15s,15s,30s,3m,10m,20m,30m,30m,30m,60m,3h,3h,3h,6h,6h",
-    )
-    monkeypatch.delenv("MQ_MAX_RETRIES", raising=False)
+    monkeypatch.delenv("RABBITMQ_EXCHANGE", raising=False)
+    monkeypatch.delenv("RABBITMQ_COMMAND_QUEUE", raising=False)
+    monkeypatch.delenv("RABBITMQ_COMMAND_ROUTING_KEY", raising=False)
+    monkeypatch.delenv("RABBITMQ_RESULT_ROUTING_KEY", raising=False)
+    monkeypatch.delenv("RABBITMQ_PREFETCH_COUNT", raising=False)
+    monkeypatch.delenv("KNOWLEDGE_LATEST_VERSION_KEY_PREFIX", raising=False)
 
     get_rabbitmq_settings.cache_clear()
     settings = get_rabbitmq_settings()
 
-    assert settings.retry_delays_seconds == (
-        15,
-        15,
-        30,
-        180,
-        600,
-        1200,
-        1800,
-        1800,
-        1800,
-        3600,
-        10800,
-        10800,
-        10800,
-        21600,
-        21600,
-    )
-    assert settings.max_retries == 15
+    assert settings.exchange == "knowledge.import"
+    assert settings.command_queue == "knowledge.import.command.q"
+    assert settings.command_routing_key == "knowledge.import.command"
+    assert settings.result_routing_key == "knowledge.import.result"
+    assert settings.prefetch_count == 1
+    assert settings.latest_version_key_prefix == "kb:latest"
+
     get_rabbitmq_settings.cache_clear()
 
 
-def test_get_rabbitmq_settings_rejects_invalid_duration_token(
+def test_get_rabbitmq_settings_requires_rabbitmq_url(
         monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """
-    测试目的：验证 MQ_RETRY_DELAYS_SECONDS 存在非法时间单位时会抛出配置异常。
-    预期结果：读取配置时抛出 ServiceException，阻止错误重试参数生效。
-    """
-    monkeypatch.setenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
-    monkeypatch.setenv(
-        "KNOWLEDGE_IMPORT_CALLBACK_URL",
-        "http://localhost:8083/api/knowledge/callback",
-    )
-    monkeypatch.setenv("MQ_RETRY_DELAYS_SECONDS", "15s,3x")
+    """验证缺少 RabbitMQ URL 时会抛出配置异常。"""
+    monkeypatch.delenv("RABBITMQ_URL", raising=False)
     get_rabbitmq_settings.cache_clear()
 
     with pytest.raises(ServiceException):
         get_rabbitmq_settings()
+
     get_rabbitmq_settings.cache_clear()
 
 
-def test_get_rabbitmq_settings_requires_callback_url(
+def test_get_rabbitmq_settings_rejects_non_positive_prefetch(
         monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """
-    测试目的：验证导入回调地址缺失时会拒绝加载 MQ 配置。
-    预期结果：未配置 KNOWLEDGE_IMPORT_CALLBACK_URL 时抛出 ServiceException。
-    """
+    """验证非法 prefetch 配置会被拒绝。"""
     monkeypatch.setenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
-    monkeypatch.delenv("KNOWLEDGE_IMPORT_CALLBACK_URL", raising=False)
+    monkeypatch.setenv("RABBITMQ_PREFETCH_COUNT", "0")
     get_rabbitmq_settings.cache_clear()
 
     with pytest.raises(ServiceException):
         get_rabbitmq_settings()
+
     get_rabbitmq_settings.cache_clear()

@@ -88,18 +88,18 @@
 - Rate limit configuration (optional): `RATE_LIMIT_KEY_PREFIX` (defaults to `rate_limit`),
   `RATE_LIMIT_TRUST_X_FORWARDED_FOR` (default false; when true, fallback to `X-Forwarded-For`
   only if `request.client.host` is unavailable).
-- RabbitMQ configuration (optional): `RABBITMQ_URL`, `RABBITMQ_EXCHANGE`, `RABBITMQ_QUEUE`,
-  `RABBITMQ_ROUTING_KEY`, `RABBITMQ_PREFETCH_COUNT`, `MQ_CONSUMER_ENABLED`,
-  `MQ_MAX_RETRIES`, `MQ_RETRY_DELAYS_SECONDS`,
-  `KNOWLEDGE_IMPORT_CALLBACK_URL`, `KNOWLEDGE_IMPORT_CALLBACK_TIMEOUT_SECONDS`,
-  `KNOWLEDGE_CALLBACK_MAX_RETRIES`, `KNOWLEDGE_CALLBACK_RETRY_DELAYS_SECONDS`,
-  `KNOWLEDGE_VECTOR_BATCH_SIZE`.
-- Knowledge import callback protocol: callback uses **POST + JSON body** (not GET).
-  Callback stages: `STARTED` (task accepted), `PROCESSING` (pipeline in progress),
-  `COMPLETED` (success), `FAILED` (terminal error). Body includes `stage_detail`
-  (nullable) for sub-step context. Consumer uses sender-side state merging
-  (`CallbackTracker`): intermediate stages are fire-and-forget; only the latest
-  pending payload is kept. Terminal stages (`COMPLETED` / `FAILED`) use full retry.
+- RabbitMQ configuration (optional): `RABBITMQ_URL`, `RABBITMQ_EXCHANGE`,
+  `RABBITMQ_COMMAND_QUEUE`, `RABBITMQ_COMMAND_ROUTING_KEY`, `RABBITMQ_RESULT_ROUTING_KEY`,
+  `RABBITMQ_PREFETCH_COUNT`, `MQ_CONSUMER_ENABLED`,
+  `KNOWLEDGE_LATEST_VERSION_KEY_PREFIX`, `KNOWLEDGE_VECTOR_BATCH_SIZE`.
+- Knowledge import MQ protocol:
+  business service publishes command messages (`routing_key=knowledge.import.command`);
+  AI service publishes result messages (`routing_key=knowledge.import.result`).
+  Result stages: `STARTED`, `PROCESSING`, `COMPLETED`, `FAILED`.
+  `PROCESSING` includes `stage_detail` values: `downloading`, `parsing`,
+  `chunking`, `embedding`, `inserting`.
+  AI consumer enforces latest-version semantics by reading Redis key
+  `kb:latest:{biz_key}` (prefix configurable) and dropping stale messages (`version < latest`).
 - Knowledge import structured logging (`app/core/mq/import_logger.py`):
   `ImportStage` enum identifies each pipeline step. Use `import_log(stage, task_uuid, **metrics)`
   for one-line structured log output; log level is auto-selected (error / warning / info).

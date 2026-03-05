@@ -1,9 +1,9 @@
 import asyncio
 from datetime import datetime, timezone
 
-from app.core.mq.models import KnowledgeImportMessage
-from app.core.mq.publisher import publish_import_messages
-from app.core.mq.settings import RabbitMQSettings
+from app.core.mq.config.settings import RabbitMQSettings
+from app.core.mq.contracts.models import KnowledgeImportCommandMessage
+from app.core.mq.producers.command_publisher import publish_import_commands
 from app.rag.chunking import ChunkStrategyType
 
 
@@ -27,15 +27,11 @@ class _FakeChannel:
     def __init__(self, exchange: _FakeExchange, queue: _FakeQueue) -> None:
         self.exchange = exchange
         self.queue = queue
-        self.exchange_declared: tuple[str, str, bool] | None = None
-        self.queue_declared: tuple[str, bool] | None = None
 
-    async def declare_exchange(self, name: str, exchange_type, durable: bool):
-        self.exchange_declared = (name, str(exchange_type), durable)
+    async def declare_exchange(self, *_args, **_kwargs):
         return self.exchange
 
-    async def declare_queue(self, name: str, durable: bool):
-        self.queue_declared = (name, durable)
+    async def declare_queue(self, *_args, **_kwargs):
         return self.queue
 
 
@@ -70,11 +66,8 @@ class _FakeMessage:
         self.delivery_mode = delivery_mode
 
 
-def test_publish_import_messages_serializes_and_publishes(monkeypatch) -> None:
-    """
-    测试目的：验证发布器会将消息序列化并按配置路由发布到 RabbitMQ。
-    预期结果：发布次数与输入消息数一致，routing_key 使用配置值。
-    """
+def test_publish_import_commands_serializes_and_publishes(monkeypatch) -> None:
+    """验证命令发布器会按命令路由键投递消息。"""
     exchange = _FakeExchange()
     queue = _FakeQueue()
     channel = _FakeChannel(exchange, queue)
@@ -82,31 +75,26 @@ def test_publish_import_messages_serializes_and_publishes(monkeypatch) -> None:
     settings = RabbitMQSettings(
         url="amqp://guest:guest@localhost:5672/",
         exchange="knowledge.import",
-        queue="knowledge.import.submit.q",
-        routing_key="knowledge.import.submit",
+        command_queue="knowledge.import.command.q",
+        command_routing_key="knowledge.import.command",
+        result_routing_key="knowledge.import.result",
         prefetch_count=1,
-        max_retries=3,
-        retry_delays_seconds=(5, 30, 120),
-        callback_url="http://localhost:8083/api/knowledge/callback",
-        callback_timeout_seconds=5,
-        callback_max_retries=3,
-        callback_retry_delays_seconds=(5, 30, 120),
+        latest_version_key_prefix="kb:latest",
     )
 
     async def _fake_connect(_url: str):
         return connection
 
+    monkeypatch.setattr("app.core.mq.producers.command_publisher.get_rabbitmq_settings", lambda: settings)
     monkeypatch.setattr(
-        "app.core.mq.publisher.get_rabbitmq_settings",
-        lambda: settings,
-    )
-    monkeypatch.setattr(
-        "app.core.mq.publisher._load_aio_pika",
+        "app.core.mq.producers.command_publisher._load_aio_pika",
         lambda: (_fake_connect, _FakeExchangeType, _FakeMessage, _FakeDeliveryMode),
     )
 
-    message = KnowledgeImportMessage(
+    message = KnowledgeImportCommandMessage(
         task_uuid="task-1",
+        biz_key="demo:1",
+        version=1,
         knowledge_name="demo",
         document_id=1,
         file_url="https://example.com/a.txt",
@@ -116,35 +104,29 @@ def test_publish_import_messages_serializes_and_publishes(monkeypatch) -> None:
         token_size=100,
         created_at=datetime.now(timezone.utc),
     )
-    asyncio.run(publish_import_messages([message]))
+    asyncio.run(publish_import_commands([message]))
 
     assert len(exchange.published) == 1
     _, routing_key = exchange.published[0]
-    assert routing_key == "knowledge.import.submit"
-    assert queue.bind_calls[0][1] == "knowledge.import.submit"
+    assert routing_key == "knowledge.import.command"
+    assert queue.bind_calls[0][1] == "knowledge.import.command"
     assert connection.publisher_confirms is True
 
 
-def test_publish_import_messages_noop_when_empty(monkeypatch) -> None:
-    """
-    测试目的：验证空消息列表不会触发 RabbitMQ 连接和发布动作。
-    预期结果：connect_robust 不被调用，函数正常返回。
-    """
+def test_publish_import_commands_noop_when_empty(monkeypatch) -> None:
+    """验证输入为空时不会触发 MQ 连接。"""
     called = {"load": False}
 
     monkeypatch.setattr(
-        "app.core.mq.publisher._load_aio_pika",
+        "app.core.mq.producers.command_publisher._load_aio_pika",
         lambda: (_mark_load_called(called), _FakeExchangeType, _FakeMessage, _FakeDeliveryMode),
     )
-    asyncio.run(publish_import_messages([]))
+    asyncio.run(publish_import_commands([]))
     assert called["load"] is False
 
 
 def _mark_load_called(called: dict[str, bool]):
-    """
-    测试目的：构造用于断言懒加载是否触发的 connect_robust 假函数。
-    预期结果：当函数被调用时，called["load"] 被置为 True。
-    """
+    """构造用于空输入断言的假连接函数。"""
 
     async def _fake_connect(_url: str):
         called["load"] = True
