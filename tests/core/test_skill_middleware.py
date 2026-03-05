@@ -12,9 +12,9 @@ from langchain_core.messages import AIMessage, SystemMessage
 from loguru import logger
 
 import app.core.agent.base_prompt_middleware as base_prompt_module
-import app.core.skill.discovery.scope as scope_module
+import app.core.agent.skill.discovery.scope as scope_module
 from app.core.agent.base_prompt_middleware import BasePromptMiddleware
-from app.core.skill import (
+from app.core.agent.skill import (
     SkillMiddleware,
     create_list_skill_resources_tool,
     create_load_skill_resource_tool,
@@ -1061,8 +1061,8 @@ def test_old_skill_module_path_removed() -> None:
         防止调用方继续依赖已废弃的旧导入路径。
 
     预期结果：
-        导入 `app.core.agent.skill` 抛出 `ModuleNotFoundError`。
+        导入 `app.core.skill` 抛出 `ModuleNotFoundError`。
     """
 
     with pytest.raises(ModuleNotFoundError):
-        importlib.import_module("app.core.agent.skill")
+        importlib.import_module("app.core.skill")

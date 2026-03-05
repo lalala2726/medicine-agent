@@ -8,7 +8,7 @@ from langchain_core.messages import AIMessage, SystemMessage
 
 import app.core.agent.base_prompt_middleware as base_prompt_module
 from app.core.agent.base_prompt_middleware import BasePromptMiddleware
-from app.core.skill.prompt.templates import build_skills_prompt
+from app.core.agent.skill.prompt.templates import build_skills_prompt
 
 
 def _make_request(system_text: str) -> ModelRequest:
