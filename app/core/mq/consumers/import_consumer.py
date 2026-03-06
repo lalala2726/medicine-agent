@@ -7,40 +7,19 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from app.core.mq.config.settings import RabbitMQSettings, get_rabbitmq_settings
-from app.core.mq.contracts.models import (
+from app.core.mq._aio_pika_loader import load_aio_pika_consumer
+from app.core.mq.config.import_settings import ImportRabbitMQSettings, get_import_settings
+from app.core.mq.contracts.import_models import (
     ImportResultStage,
     KnowledgeImportCommandMessage,
     KnowledgeImportResultMessage,
     ProcessingStageDetail,
 )
 from app.core.mq.observability.import_logger import ImportStage, import_log
-from app.core.mq.producers.result_publisher import publish_import_result_message
-from app.core.mq.state.latest_version_store import is_stale_message
+from app.core.mq.producers.import_result_publisher import publish_import_result
+from app.core.mq.state.import_version_store import is_stale
 from app.schemas.knowledge_import import ImportSingleFileSuccessResult
 from app.services.knowledge_base_service import import_single_file
-
-
-def _load_aio_pika() -> tuple[Any, Any]:
-    """懒加载消费者所需的 aio-pika 组件。
-
-    Returns:
-        tuple[Any, Any]: `connect_robust` 函数与 `ExchangeType` 枚举。
-
-    Raises:
-        ServiceException: 未安装 aio-pika 时抛出。
-    """
-    from app.core.codes import ResponseCode
-    from app.core.exception.exceptions import ServiceException
-
-    try:
-        from aio_pika import ExchangeType, connect_robust
-    except Exception as exc:
-        raise ServiceException(
-            code=ResponseCode.INTERNAL_ERROR,
-            message="缺少 aio-pika 依赖，无法启动 MQ 消费者",
-        ) from exc
-    return connect_robust, ExchangeType
 
 
 def parse_import_command(body: bytes) -> KnowledgeImportCommandMessage:
@@ -81,7 +60,7 @@ async def _publish_result_event(event: KnowledgeImportResultMessage) -> None:
     Returns:
         None。
     """
-    published = await publish_import_result_message(event)
+    published = await publish_import_result(event)
     if published:
         import_log(
             ImportStage.RESULT_PUBLISHED,
@@ -230,7 +209,7 @@ async def _emit_failed(
     await _publish_result_event(event)
 
 
-async def _handle_incoming_message(incoming: Any, settings: RabbitMQSettings) -> None:
+async def _handle_incoming_message(incoming: Any, settings: ImportRabbitMQSettings) -> None:
     """处理单条入站导入命令消息。
 
     Args:
@@ -243,6 +222,11 @@ async def _handle_incoming_message(incoming: Any, settings: RabbitMQSettings) ->
     acked = False
 
     async def _ack_once() -> None:
+        """确保同一条入站消息最多 ACK 一次。
+
+        Returns:
+            None。
+        """
         nonlocal acked
         if acked:
             return
@@ -270,7 +254,7 @@ async def _handle_incoming_message(incoming: Any, settings: RabbitMQSettings) ->
     started_at = datetime.now(timezone.utc)
 
     try:
-        if is_stale_message(
+        if is_stale(
                 biz_key=command.biz_key,
                 version=command.version,
                 settings=settings,
@@ -290,9 +274,22 @@ async def _handle_incoming_message(incoming: Any, settings: RabbitMQSettings) ->
         stage_queue: asyncio.Queue[ProcessingStageDetail | None] = asyncio.Queue()
 
         def _on_processing_stage(detail: ProcessingStageDetail) -> None:
+            """将线程中的处理阶段事件安全投递到异步队列。
+
+            Args:
+                detail: 当前处理子阶段。
+
+            Returns:
+                None。
+            """
             loop.call_soon_threadsafe(stage_queue.put_nowait, detail)
 
         async def _drain_processing_events() -> None:
+            """持续消费处理阶段事件并转发为 MQ 结果消息。
+
+            Returns:
+                None: 收到 ``None`` 哨兵值后结束。
+            """
             while True:
                 detail = await stage_queue.get()
                 if detail is None:
@@ -345,7 +342,7 @@ async def _handle_incoming_message(incoming: Any, settings: RabbitMQSettings) ->
         await _ack_once()
 
 
-async def _consume_once(settings: RabbitMQSettings) -> None:
+async def _consume_once(settings: ImportRabbitMQSettings) -> None:
     """持续消费导入命令队列直到连接中断或任务取消。
 
     Args:
@@ -354,7 +351,7 @@ async def _consume_once(settings: RabbitMQSettings) -> None:
     Returns:
         None。
     """
-    connect_robust, exchange_type_enum = _load_aio_pika()
+    connect_robust, exchange_type_enum = load_aio_pika_consumer()
     connection = await connect_robust(settings.url)
     async with connection:
         channel = await connection.channel()
@@ -379,7 +376,7 @@ async def _consume_once(settings: RabbitMQSettings) -> None:
 
 async def run_import_consumer() -> None:
     """启动导入命令消费者，并在异常时自动重连。"""
-    settings = get_rabbitmq_settings()
+    settings = get_import_settings()
     while True:
         try:
             await _consume_once(settings)

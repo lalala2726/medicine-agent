@@ -1,4 +1,7 @@
-"""知识库导入流程结构化日志工具。"""
+"""知识库导入流程结构化日志工具。
+
+该模块只负责统一导入链路的日志阶段枚举和输出格式，不参与业务处理。
+"""
 
 from __future__ import annotations
 
@@ -8,7 +11,26 @@ from loguru import logger
 
 
 class ImportStage(str, Enum):
-    """导入流程阶段枚举，覆盖命令消费与处理全链路。"""
+    """导入流程阶段枚举，覆盖命令消费与处理全链路。
+
+    Attributes:
+        TASK_RECEIVED: 成功接收到合法任务。
+        TASK_INVALID: 收到非法任务并丢弃。
+        TASK_STALE_DROPPED: 收到旧版本任务并丢弃。
+        DOWNLOAD_START: 开始下载文件。
+        DOWNLOAD_DONE: 文件下载完成。
+        PARSE_DONE: 文件解析完成。
+        CHUNK_DONE: 文本切片完成。
+        EMBED_BATCH: 单批次向量化执行中。
+        EMBED_DONE: 全部向量化完成。
+        INSERT_DONE: 向量写入完成。
+        COMPLETED: 整体任务成功结束。
+        FAILED: 整体任务失败结束。
+        RESULT_PUBLISHED: 结果消息投递成功。
+        RESULT_PUBLISH_FAILED: 结果消息投递失败。
+        CONSUMER_CONNECTED: 消费者成功建立连接。
+        CONSUMER_RECONNECTING: 消费者进入重连等待。
+    """
 
     TASK_RECEIVED = "task_received"
     TASK_INVALID = "task_invalid"
@@ -32,6 +54,7 @@ class ImportStage(str, Enum):
     CONSUMER_RECONNECTING = "consumer_reconnecting"
 
 
+# 需要按 error 级别输出的阶段集合。
 _ERROR_STAGES: frozenset[ImportStage] = frozenset(
     {
         ImportStage.FAILED,
@@ -40,6 +63,7 @@ _ERROR_STAGES: frozenset[ImportStage] = frozenset(
     }
 )
 
+# 需要按 warning 级别输出的阶段集合。
 _WARNING_STAGES: frozenset[ImportStage] = frozenset(
     {
         ImportStage.CONSUMER_RECONNECTING,

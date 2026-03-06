@@ -1,9 +1,9 @@
 import asyncio
 from datetime import datetime, timezone
 
-from app.core.mq.config.settings import RabbitMQSettings
+from app.core.mq.config.import_settings import ImportRabbitMQSettings
 from app.core.mq.consumers.import_consumer import _handle_incoming_message, parse_import_command
-from app.core.mq.contracts.models import (
+from app.core.mq.contracts.import_models import (
     ImportResultStage,
     KnowledgeImportCommandMessage,
     ProcessingStageDetail,
@@ -31,8 +31,8 @@ def _build_command() -> KnowledgeImportCommandMessage:
     )
 
 
-def _build_settings() -> RabbitMQSettings:
-    return RabbitMQSettings(
+def _build_settings() -> ImportRabbitMQSettings:
+    return ImportRabbitMQSettings(
         url="amqp://guest:guest@localhost:5672/",
         exchange="knowledge.import",
         command_queue="knowledge.import.command.q",
@@ -93,13 +93,13 @@ def test_handle_incoming_message_drops_stale_command(monkeypatch) -> None:
     incoming = _FakeIncoming(command.model_dump_json().encode("utf-8"))
     published = {"count": 0}
 
-    monkeypatch.setattr("app.core.mq.consumers.import_consumer.is_stale_message", lambda **_kwargs: True)
+    monkeypatch.setattr("app.core.mq.consumers.import_consumer.is_stale", lambda **_kwargs: True)
 
     async def _fake_publish(_event) -> bool:
         published["count"] += 1
         return True
 
-    monkeypatch.setattr("app.core.mq.consumers.import_consumer.publish_import_result_message", _fake_publish)
+    monkeypatch.setattr("app.core.mq.consumers.import_consumer.publish_import_result", _fake_publish)
 
     asyncio.run(_handle_incoming_message(incoming, _build_settings()))
 
@@ -113,7 +113,7 @@ def test_handle_incoming_message_emits_stage_events_on_success(monkeypatch) -> N
     incoming = _FakeIncoming(command.model_dump_json().encode("utf-8"))
     events = []
 
-    monkeypatch.setattr("app.core.mq.consumers.import_consumer.is_stale_message", lambda **_kwargs: False)
+    monkeypatch.setattr("app.core.mq.consumers.import_consumer.is_stale", lambda **_kwargs: False)
 
     async def _fake_publish(event) -> bool:
         events.append(event)
@@ -141,7 +141,7 @@ def test_handle_incoming_message_emits_stage_events_on_success(monkeypatch) -> N
             chunks=[],
         )
 
-    monkeypatch.setattr("app.core.mq.consumers.import_consumer.publish_import_result_message", _fake_publish)
+    monkeypatch.setattr("app.core.mq.consumers.import_consumer.publish_import_result", _fake_publish)
     monkeypatch.setattr("app.core.mq.consumers.import_consumer.import_single_file", _fake_import_single_file)
 
     asyncio.run(_handle_incoming_message(incoming, _build_settings()))
@@ -175,7 +175,7 @@ def test_handle_incoming_message_emits_failed_without_retry(monkeypatch) -> None
     incoming = _FakeIncoming(command.model_dump_json().encode("utf-8"))
     events = []
 
-    monkeypatch.setattr("app.core.mq.consumers.import_consumer.is_stale_message", lambda **_kwargs: False)
+    monkeypatch.setattr("app.core.mq.consumers.import_consumer.is_stale", lambda **_kwargs: False)
 
     async def _fake_publish(event) -> bool:
         events.append(event)
@@ -190,7 +190,7 @@ def test_handle_incoming_message_emits_failed_without_retry(monkeypatch) -> None
             embedding_dim=1024,
         )
 
-    monkeypatch.setattr("app.core.mq.consumers.import_consumer.publish_import_result_message", _fake_publish)
+    monkeypatch.setattr("app.core.mq.consumers.import_consumer.publish_import_result", _fake_publish)
     monkeypatch.setattr("app.core.mq.consumers.import_consumer.import_single_file", _fake_import_single_file)
 
     asyncio.run(_handle_incoming_message(incoming, _build_settings()))
@@ -208,7 +208,7 @@ def test_handle_incoming_message_acks_when_result_publish_fails(monkeypatch) -> 
     command = _build_command()
     incoming = _FakeIncoming(command.model_dump_json().encode("utf-8"))
 
-    monkeypatch.setattr("app.core.mq.consumers.import_consumer.is_stale_message", lambda **_kwargs: False)
+    monkeypatch.setattr("app.core.mq.consumers.import_consumer.is_stale", lambda **_kwargs: False)
 
     async def _always_fail_publish(_event) -> bool:
         return False
@@ -229,7 +229,7 @@ def test_handle_incoming_message_acks_when_result_publish_fails(monkeypatch) -> 
             chunks=[],
         )
 
-    monkeypatch.setattr("app.core.mq.consumers.import_consumer.publish_import_result_message", _always_fail_publish)
+    monkeypatch.setattr("app.core.mq.consumers.import_consumer.publish_import_result", _always_fail_publish)
     monkeypatch.setattr("app.core.mq.consumers.import_consumer.import_single_file", _fake_import_single_file)
 
     asyncio.run(_handle_incoming_message(incoming, _build_settings()))

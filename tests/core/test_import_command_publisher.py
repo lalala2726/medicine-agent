@@ -1,9 +1,9 @@
 import asyncio
 from datetime import datetime, timezone
 
-from app.core.mq.config.settings import RabbitMQSettings
-from app.core.mq.contracts.models import KnowledgeImportCommandMessage
-from app.core.mq.producers.command_publisher import publish_import_commands
+from app.core.mq.config.import_settings import ImportRabbitMQSettings
+from app.core.mq.contracts.import_models import KnowledgeImportCommandMessage
+from app.core.mq.producers.import_command_publisher import publish_import_commands
 from app.rag.chunking import ChunkStrategyType
 
 
@@ -72,7 +72,7 @@ def test_publish_import_commands_serializes_and_publishes(monkeypatch) -> None:
     queue = _FakeQueue()
     channel = _FakeChannel(exchange, queue)
     connection = _FakeConnection(channel)
-    settings = RabbitMQSettings(
+    settings = ImportRabbitMQSettings(
         url="amqp://guest:guest@localhost:5672/",
         exchange="knowledge.import",
         command_queue="knowledge.import.command.q",
@@ -85,9 +85,9 @@ def test_publish_import_commands_serializes_and_publishes(monkeypatch) -> None:
     async def _fake_connect(_url: str):
         return connection
 
-    monkeypatch.setattr("app.core.mq.producers.command_publisher.get_rabbitmq_settings", lambda: settings)
+    monkeypatch.setattr("app.core.mq.producers.import_command_publisher.get_import_settings", lambda: settings)
     monkeypatch.setattr(
-        "app.core.mq.producers.command_publisher._load_aio_pika",
+        "app.core.mq.producers.import_command_publisher.load_aio_pika_publisher",
         lambda: (_fake_connect, _FakeExchangeType, _FakeMessage, _FakeDeliveryMode),
     )
 
@@ -118,7 +118,7 @@ def test_publish_import_commands_noop_when_empty(monkeypatch) -> None:
     called = {"load": False}
 
     monkeypatch.setattr(
-        "app.core.mq.producers.command_publisher._load_aio_pika",
+        "app.core.mq.producers.import_command_publisher.load_aio_pika_publisher",
         lambda: (_mark_load_called(called), _FakeExchangeType, _FakeMessage, _FakeDeliveryMode),
     )
     asyncio.run(publish_import_commands([]))

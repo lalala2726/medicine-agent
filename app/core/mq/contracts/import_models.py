@@ -8,12 +8,21 @@ from pydantic import BaseModel, Field, model_validator
 
 from app.rag.chunking import ChunkStrategyType
 
-DEFAULT_COMMAND_CHUNK_SIZE = 500  # command 默认字符切片大小
-DEFAULT_COMMAND_TOKEN_SIZE = 100  # command 默认 token 切片大小
+# command 默认字符切片大小。
+DEFAULT_COMMAND_CHUNK_SIZE = 500
+# command 默认 token 切片大小。
+DEFAULT_COMMAND_TOKEN_SIZE = 100
 
 
 class ImportResultStage(str, Enum):
-    """导入结果事件阶段枚举。"""
+    """导入结果事件阶段枚举。
+
+    Attributes:
+        STARTED: 任务已接收，准备开始处理。
+        PROCESSING: 任务处理中，会携带更细粒度的处理阶段。
+        COMPLETED: 导入流程已成功完成。
+        FAILED: 导入流程执行失败。
+    """
 
     STARTED = "STARTED"
     PROCESSING = "PROCESSING"
@@ -22,7 +31,15 @@ class ImportResultStage(str, Enum):
 
 
 class ProcessingStageDetail(str, Enum):
-    """`PROCESSING` 阶段的细分步骤枚举。"""
+    """`PROCESSING` 阶段的细分步骤枚举。
+
+    Attributes:
+        DOWNLOADING: 文件下载阶段。
+        PARSING: 文件解析阶段。
+        CHUNKING: 文本切片阶段。
+        EMBEDDING: 文本向量化阶段。
+        INSERTING: Milvus 写入阶段。
+    """
 
     DOWNLOADING = "downloading"
     PARSING = "parsing"
@@ -32,7 +49,22 @@ class ProcessingStageDetail(str, Enum):
 
 
 class KnowledgeImportCommandMessage(BaseModel):
-    """智能服务消费的导入命令消息模型。"""
+    """智能服务消费的导入命令消息模型。
+
+    Attributes:
+        message_type: 固定消息类型，值为 ``knowledge_import_command``。
+        task_uuid: 业务侧生成的任务唯一标识。
+        biz_key: 用于 latest-version 判定的业务键。
+        version: 同一 ``biz_key`` 下的递增版本号。
+        knowledge_name: 目标知识库名称。
+        document_id: 业务文档 ID。
+        file_url: 待导入文件的访问地址。
+        embedding_model: 本次导入使用的向量模型。
+        chunk_strategy: 切片策略。
+        chunk_size: 字符切片大小。
+        token_size: token 切片大小。
+        created_at: 命令创建时间。
+    """
 
     message_type: Literal["knowledge_import_command"] = "knowledge_import_command"
     task_uuid: str = Field(..., min_length=1)
@@ -57,6 +89,9 @@ class KnowledgeImportCommandMessage(BaseModel):
 
         Returns:
             Any: 标准化后的入参。
+
+        Raises:
+            无。
         """
         if not isinstance(data, dict):
             return data
@@ -77,7 +112,27 @@ class KnowledgeImportCommandMessage(BaseModel):
 
 
 class KnowledgeImportResultMessage(BaseModel):
-    """智能服务发布的导入结果消息模型。"""
+    """智能服务发布的导入结果消息模型。
+
+    Attributes:
+        message_type: 固定消息类型，值为 ``knowledge_import_result``。
+        task_uuid: 对应 command 的任务 ID。
+        biz_key: 业务对象唯一键。
+        version: 对应的业务版本号。
+        stage: 当前结果阶段。
+        stage_detail: ``PROCESSING`` 阶段的细分步骤。
+        message: 阶段说明或失败原因。
+        knowledge_name: 知识库名称。
+        document_id: 业务文档 ID。
+        file_url: 导入文件地址。
+        filename: 下载后文件名。
+        chunk_count: 切片数量。
+        vector_count: 向量数量。
+        embedding_model: 实际执行的向量模型。
+        embedding_dim: 向量维度。
+        occurred_at: 当前结果事件时间。
+        duration_ms: 从任务开始到当前事件的耗时。
+    """
 
     message_type: Literal["knowledge_import_result"] = "knowledge_import_result"
     task_uuid: str = Field(..., min_length=1)

@@ -1,9 +1,13 @@
 """MQ 生产者子包。"""
 
-from app.core.mq.producers.command_publisher import publish_import_commands
-from app.core.mq.producers.result_publisher import publish_import_result_message
+from app.core.mq.producers.chunk_rebuild_result_publisher import (
+    publish_chunk_rebuild_result,
+)
+from app.core.mq.producers.import_command_publisher import publish_import_commands
+from app.core.mq.producers.import_result_publisher import publish_import_result
 
 __all__ = [
+    "publish_chunk_rebuild_result",
     "publish_import_commands",
-    "publish_import_result_message",
+    "publish_import_result",
 ]

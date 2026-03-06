@@ -4,32 +4,27 @@ import asyncio
 
 from loguru import logger
 
-from app.core.mq.config.settings import (
+from app.core.mq.config.common import (
     has_rabbitmq_url_configured,
     is_aio_pika_installed,
-    is_mq_consumer_enabled,
+    is_chunk_rebuild_consumer_enabled,
+    is_import_consumer_enabled,
 )
+from app.core.mq.consumers.chunk_rebuild_consumer import run_chunk_rebuild_consumer
 from app.core.mq.consumers.import_consumer import run_import_consumer
 
 _consumer_task: asyncio.Task[None] | None = None
+_chunk_rebuild_consumer_task: asyncio.Task[None] | None = None
 
 
 async def start_import_consumer_if_enabled() -> None:
-    """
-    功能描述:
-        按配置条件启动应用内导入消费者任务，避免重复启动。
+    """按配置条件启动应用内导入消费者任务，避免重复启动。
 
-    参数说明:
-        无。启用开关与连接配置由环境变量控制。
-
-    返回值:
+    Returns:
         None: 启动流程结束无返回值。
-
-    异常说明:
-        无。未满足条件时仅记录日志并跳过。
     """
     global _consumer_task
-    if not is_mq_consumer_enabled():
+    if not is_import_consumer_enabled():
         logger.info("MQ_CONSUMER_ENABLED=false，跳过导入消费者启动")
         return
     if not has_rabbitmq_url_configured():
@@ -49,18 +44,10 @@ async def start_import_consumer_if_enabled() -> None:
 
 
 async def stop_import_consumer() -> None:
-    """
-    功能描述:
-        停止应用内导入消费者任务并等待其优雅退出。
+    """停止应用内导入消费者任务并等待其优雅退出。
 
-    参数说明:
-        无。
-
-    返回值:
+    Returns:
         None: 停止流程结束无返回值。
-
-    异常说明:
-        无。取消异常会被吞掉以保证 shutdown 流程继续执行。
     """
     global _consumer_task
     if _consumer_task is None:
@@ -73,3 +60,48 @@ async def stop_import_consumer() -> None:
             pass
     _consumer_task = None
     logger.info("知识库导入命令 MQ 消费者已停止")
+
+
+async def start_chunk_rebuild_consumer_if_enabled() -> None:
+    """按配置条件启动应用内切片重建消费者任务，避免重复启动。
+
+    Returns:
+        None: 启动流程结束无返回值。
+    """
+    global _chunk_rebuild_consumer_task
+    if not is_chunk_rebuild_consumer_enabled():
+        logger.info("MQ_CHUNK_REBUILD_CONSUMER_ENABLED=false，跳过切片重建消费者启动")
+        return
+    if not has_rabbitmq_url_configured():
+        logger.warning("未配置 RABBITMQ_URL，跳过切片重建消费者启动")
+        return
+    if not is_aio_pika_installed():
+        logger.warning("未安装 aio-pika，跳过切片重建消费者启动")
+        return
+    if _chunk_rebuild_consumer_task and not _chunk_rebuild_consumer_task.done():
+        logger.info("切片重建 MQ 消费者已在运行，跳过重复启动")
+        return
+    _chunk_rebuild_consumer_task = asyncio.create_task(
+        run_chunk_rebuild_consumer(),
+        name="knowledge-chunk-rebuild-command-consumer",
+    )
+    logger.info("切片重建命令 MQ 消费者已启动")
+
+
+async def stop_chunk_rebuild_consumer() -> None:
+    """停止应用内切片重建消费者任务并等待其优雅退出。
+
+    Returns:
+        None: 停止流程结束无返回值。
+    """
+    global _chunk_rebuild_consumer_task
+    if _chunk_rebuild_consumer_task is None:
+        return
+    if not _chunk_rebuild_consumer_task.done():
+        _chunk_rebuild_consumer_task.cancel()
+        try:
+            await _chunk_rebuild_consumer_task
+        except asyncio.CancelledError:
+            pass
+    _chunk_rebuild_consumer_task = None
+    logger.info("切片重建命令 MQ 消费者已停止")

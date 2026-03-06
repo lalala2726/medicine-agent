@@ -104,6 +104,13 @@
   `RABBITMQ_COMMAND_QUEUE`, `RABBITMQ_COMMAND_ROUTING_KEY`, `RABBITMQ_RESULT_ROUTING_KEY`,
   `RABBITMQ_PREFETCH_COUNT`, `MQ_CONSUMER_ENABLED`,
   `KNOWLEDGE_LATEST_VERSION_KEY_PREFIX`, `KNOWLEDGE_VECTOR_BATCH_SIZE`.
+- Chunk rebuild MQ configuration (optional):
+  `RABBITMQ_CHUNK_REBUILD_EXCHANGE` (defaults to `knowledge.chunk_rebuild`),
+  `RABBITMQ_CHUNK_REBUILD_COMMAND_QUEUE` (defaults to `knowledge.chunk_rebuild.command.q`),
+  `RABBITMQ_CHUNK_REBUILD_COMMAND_ROUTING_KEY` (defaults to `knowledge.chunk_rebuild.command`),
+  `RABBITMQ_CHUNK_REBUILD_RESULT_ROUTING_KEY` (defaults to `knowledge.chunk_rebuild.result`),
+  `MQ_CHUNK_REBUILD_CONSUMER_ENABLED` (default true; controls in-process chunk rebuild consumer startup),
+  `KNOWLEDGE_CHUNK_EDIT_LATEST_VERSION_KEY_PREFIX` (defaults to `kb:chunk_edit:latest_version`).
 - Knowledge import MQ protocol:
   business service publishes command messages (`routing_key=knowledge.import.command`);
   AI service publishes result messages (`routing_key=knowledge.import.result`).
@@ -112,6 +119,15 @@
   `chunking`, `embedding`, `inserting`.
   AI consumer enforces latest-version semantics by reading Redis key
   `kb:latest:{biz_key}` (prefix configurable) and dropping stale messages (`version < latest`).
+- Knowledge chunk rebuild MQ protocol:
+  business service publishes command messages (`routing_key=knowledge.chunk_rebuild.command`);
+  AI service publishes result messages (`routing_key=knowledge.chunk_rebuild.result`).
+  Command payload carries `task_uuid`, `knowledge_name`, `document_id`, `vector_id`, `version`,
+  `content`, `embedding_model`, `created_at`.
+  Result stages only include `STARTED`, `COMPLETED`, `FAILED`.
+  This protocol only supports single-chunk rebuild. It uses shared Redis latest-version gating by
+  `vector_id`, with key format `{KNOWLEDGE_CHUNK_EDIT_LATEST_VERSION_KEY_PREFIX}:{vector_id}`; stale
+  messages are dropped with reason logging and do not update Milvus.
 - Knowledge import structured logging (`app/core/mq/observability/import_logger.py`):
   `ImportStage` enum identifies each pipeline step. Use `import_log(stage, task_uuid, **metrics)`
   for one-line structured log output; log level is auto-selected (error / warning / info).

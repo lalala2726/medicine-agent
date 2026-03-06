@@ -14,7 +14,9 @@ from app.api.main import api_router
 from app.core.exception.exception_handlers import ExceptionHandlers
 from app.core.exception.exceptions import ServiceException
 from app.core.mq.consumers.lifecycle import (
+    start_chunk_rebuild_consumer_if_enabled,
     start_import_consumer_if_enabled,
+    stop_chunk_rebuild_consumer,
     stop_import_consumer,
 )
 from app.core.security.anonymous_access import is_anonymous_request
@@ -66,11 +68,17 @@ async def lifespan(_app: FastAPI):
             if isinstance(result, Exception):
                 raise result
         _speech_startup_probe_done = True
-    await start_import_consumer_if_enabled()
+    await asyncio.gather(
+        start_import_consumer_if_enabled(),
+        start_chunk_rebuild_consumer_if_enabled(),
+    )
     try:
         yield
     finally:
-        await stop_import_consumer()
+        await asyncio.gather(
+            stop_import_consumer(),
+            stop_chunk_rebuild_consumer(),
+        )
 
 
 app = FastAPI(
