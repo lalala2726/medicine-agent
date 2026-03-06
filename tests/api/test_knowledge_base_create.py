@@ -5,39 +5,27 @@ from app.api.routes import knowledge_base as knowledge_base_route
 from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException
 from app.main import app
-from app.schemas.auth import AuthUser
+from app.core.security.system_auth.models import SystemAuthPrincipal
 
 
-def _auth_headers() -> dict[str, str]:
+def _mock_system_auth(monkeypatch) -> None:
     """
-    功能描述:
-        构造测试专用鉴权请求头。
-
-    参数说明:
-        无。
-
-    返回值:
-        dict[str, str]: 包含固定 Bearer Token 的请求头字典。
-
-    异常说明:
-        无。
-    """
-    return {"Authorization": "Bearer test-token"}
-
-
-def _mock_auth(monkeypatch) -> None:
-    """
-    测试目的：为受鉴权保护接口注入固定认证上下文，避免测试依赖真实鉴权服务。
-    预期结果：请求在携带测试 token 时可正常进入路由业务逻辑。
+    测试目的：为系统签名接口注入固定认证上下文，避免测试依赖真实签名与 Redis。
+    预期结果：allow_system 接口可正常进入路由业务逻辑。
     """
 
-    async def _fake_fetch_current_user() -> AuthUser:
-        return AuthUser(id=1, username="tester")
+    async def _fake_verify_system_request(_request) -> SystemAuthPrincipal:
+        return SystemAuthPrincipal(
+            app_id="biz-server",
+            sign_version="v1",
+            timestamp=1770000000,
+            nonce="nonce-1",
+        )
 
     monkeypatch.setattr(
         main_module,
-        "verify_authorization",
-        _fake_fetch_current_user,
+        "verify_system_request",
+        _fake_verify_system_request,
     )
 
 
@@ -46,7 +34,7 @@ def test_create_knowledge_base_requires_embedding_dim(monkeypatch) -> None:
     测试目的：验证创建知识库接口将 embedding_dim 作为必填参数校验。
     预期结果：缺少 embedding_dim 时返回 400，错误字段包含 embedding_dim。
     """
-    _mock_auth(monkeypatch)
+    _mock_system_auth(monkeypatch)
 
     def _unexpected_create(*_args, **_kwargs):
         raise AssertionError("参数校验失败时不应触发 create_collection")
@@ -56,7 +44,6 @@ def test_create_knowledge_base_requires_embedding_dim(monkeypatch) -> None:
 
     response = client.post(
         "/knowledge_base",
-        headers=_auth_headers(),
         json={
             "knowledge_name": "demo_kb",
             "description": "demo",
@@ -75,7 +62,7 @@ def test_create_knowledge_base_passes_required_fields_to_service(monkeypatch) ->
     测试目的：验证创建知识库接口会将核心参数透传给 service 层建库函数。
     预期结果：create_collection 被调用且参数包含 knowledge_name、embedding_dim、description。
     """
-    _mock_auth(monkeypatch)
+    _mock_system_auth(monkeypatch)
     called: dict[str, object] = {}
 
     def _fake_create_collection(
@@ -92,7 +79,6 @@ def test_create_knowledge_base_passes_required_fields_to_service(monkeypatch) ->
 
     response = client.post(
         "/knowledge_base",
-        headers=_auth_headers(),
         json={
             "knowledge_name": "demo_kb",
             "embedding_dim": 1024,
@@ -115,7 +101,7 @@ def test_load_knowledge_base_passes_knowledge_name_and_returns_state(monkeypatch
     测试目的：验证启用接口透传 knowledge_name 并返回 load_state。
     预期结果：load_collection_state 被调用且响应 message 为“启用成功”。
     """
-    _mock_auth(monkeypatch)
+    _mock_system_auth(monkeypatch)
     called: dict[str, object] = {}
 
     def _fake_load_collection_state(knowledge_name: str) -> dict:
@@ -134,7 +120,6 @@ def test_load_knowledge_base_passes_knowledge_name_and_returns_state(monkeypatch
 
     response = client.post(
         "/knowledge_base/load",
-        headers=_auth_headers(),
         json={"knowledge_name": "demo_kb"},
     )
 
@@ -152,7 +137,7 @@ def test_release_knowledge_base_passes_knowledge_name_and_returns_state(monkeypa
     测试目的：验证关闭接口透传 knowledge_name 并返回 load_state。
     预期结果：release_collection_state 被调用且响应 message 为“关闭成功”。
     """
-    _mock_auth(monkeypatch)
+    _mock_system_auth(monkeypatch)
     called: dict[str, object] = {}
 
     def _fake_release_collection_state(knowledge_name: str) -> dict:
@@ -171,7 +156,6 @@ def test_release_knowledge_base_passes_knowledge_name_and_returns_state(monkeypa
 
     response = client.post(
         "/knowledge_base/release",
-        headers=_auth_headers(),
         json={"knowledge_name": "demo_kb"},
     )
 
@@ -189,7 +173,7 @@ def test_load_knowledge_base_requires_knowledge_name(monkeypatch) -> None:
     测试目的：验证启用接口将 knowledge_name 作为必填参数校验。
     预期结果：缺少 knowledge_name 时返回 400，且不触发 service。
     """
-    _mock_auth(monkeypatch)
+    _mock_system_auth(monkeypatch)
 
     def _unexpected_load_collection_state(*_args, **_kwargs):
         raise AssertionError("参数校验失败时不应触发 load_collection_state")
@@ -203,7 +187,6 @@ def test_load_knowledge_base_requires_knowledge_name(monkeypatch) -> None:
 
     response = client.post(
         "/knowledge_base/load",
-        headers=_auth_headers(),
         json={},
     )
 
@@ -219,7 +202,7 @@ def test_load_knowledge_base_returns_not_found_when_service_raises(monkeypatch) 
     测试目的：验证启用接口可透传 service 层 NOT_FOUND 业务异常。
     预期结果：响应状态码与业务 code 均为 404。
     """
-    _mock_auth(monkeypatch)
+    _mock_system_auth(monkeypatch)
 
     def _raise_not_found(_knowledge_name: str) -> dict:
         raise ServiceException(
@@ -236,7 +219,6 @@ def test_load_knowledge_base_returns_not_found_when_service_raises(monkeypatch) 
 
     response = client.post(
         "/knowledge_base/load",
-        headers=_auth_headers(),
         json={"knowledge_name": "demo_kb"},
     )
 

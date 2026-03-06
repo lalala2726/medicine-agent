@@ -1,6 +1,6 @@
-from typing import Optional
+from typing import Literal, Optional
 
-from fastapi import APIRouter, Depends, Path, Query
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field, field_validator
 
 from app.core.exception.exceptions import ServiceException
@@ -8,11 +8,12 @@ from app.core.security import allow_system
 from app.schemas.response import ApiResponse
 from app.services.knowledge_base_service import (
     create_collection,
-    delete_document,
+    delete_documents,
     delete_knowledge,
     load_collection_state,
     list_knowledge_chunks,
     release_collection_state,
+    update_document_status,
 )
 
 router = APIRouter(prefix="/knowledge_base", tags=["知识库管理"])
@@ -161,6 +162,48 @@ class DocumentChunksPageResponse(BaseModel):
     has_next: bool = Field(..., description="是否存在下一页")
 
 
+class UpdateDocumentStatusRequest(BaseModel):
+    """修改文档状态请求参数"""
+
+    knowledge_name: str = Field(
+        ...,
+        pattern=r"^[A-Za-z][A-Za-z0-9_]*$",
+        description="知识库名称",
+    )
+    vector_id: int = Field(..., gt=0, description="向量数据库主键ID")
+    status: Literal[0, 1] = Field(..., description="状态：0启用，1禁用")
+
+
+class DeleteDocumentsRequest(BaseModel):
+    """批量删除文档请求参数"""
+
+    knowledge_name: str = Field(
+        ...,
+        pattern=r"^[A-Za-z][A-Za-z0-9_]*$",
+        description="知识库名称",
+    )
+    document_ids: list[int] = Field(
+        ...,
+        min_length=1,
+        description="待删除的文档ID列表",
+    )
+
+    @field_validator("document_ids")
+    @classmethod
+    def validate_document_ids(cls, value: list[int]) -> list[int]:
+        """验证文档 ID 列表并去重。"""
+        normalized_ids: list[int] = []
+        seen_ids: set[int] = set()
+        for document_id in value:
+            if document_id <= 0:
+                raise ServiceException("文档ID必须大于 0")
+            if document_id in seen_ids:
+                continue
+            seen_ids.add(document_id)
+            normalized_ids.append(document_id)
+        return normalized_ids
+
+
 @router.get("/document/chunks/list", summary="分页查询文档切片")
 @allow_system
 async def list_document_chunks(
@@ -193,31 +236,57 @@ async def list_document_chunks(
     )
 
 
-@router.delete("/document/{id}", summary="删除文档切片")
-async def delete_document_chunk(
-        id: int = Path(..., gt=0, description="文档ID"),
-        knowledge_name: str = Query(
-            ...,
-            min_length=1,
-            pattern=r"^[A-Za-z][A-Za-z0-9_]*$",
-            description="知识库名称",
-        ),
+@router.put("/document/status", summary="修改文档状态")
+@allow_system
+async def update_document_chunk_status(
+        request: UpdateDocumentStatusRequest,
 ) -> ApiResponse[dict]:
     """
-    删除文档，当删除文档之后相关知识库中的文档切片也会被删除
+    按 Milvus 主键修改文档切片状态。
 
     Args:
-        id: 文档ID
-        knowledge_name: 知识库名称
+        request: 修改状态请求参数。
+
+    Returns:
+        ApiResponse[dict]: 更新成功响应。
+    """
+    update_document_status(
+        knowledge_name=request.knowledge_name,
+        primary_id=request.vector_id,
+        status=request.status,
+    )
+    return ApiResponse.success(
+        data={
+            "knowledge_name": request.knowledge_name,
+            "vector_id": request.vector_id,
+            "status": request.status,
+        },
+        message="更新成功",
+    )
+
+
+@router.delete("/document", summary="批量删除文档")
+@allow_system
+async def delete_document_chunk(
+        request: DeleteDocumentsRequest,
+) -> ApiResponse[dict]:
+    """
+    批量删除文档及其在知识库中的全部切片记录。
+
+    Args:
+        request: 批量删除请求参数
 
     Returns:
         ApiResponse[dict]: 删除成功响应
     """
-    delete_document(
-        knowledge_name=knowledge_name,
-        document_id=id,
+    delete_documents(
+        knowledge_name=request.knowledge_name,
+        document_ids=request.document_ids,
     )
     return ApiResponse.success(
-        data={"id": id},
+        data={
+            "document_ids": request.document_ids,
+            "knowledge_name": request.knowledge_name,
+        },
         message="删除成功",
     )

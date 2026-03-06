@@ -561,13 +561,13 @@ def _print_chunks_to_console(*, filename: str, chunks: list[SplitChunk]) -> None
     return None
 
 
-def delete_document(knowledge_name: str, document_id: int) -> None:
+def delete_documents(knowledge_name: str, document_ids: list[int]) -> None:
     """
-    删除文档在知识库中的全部切片。
+    批量删除文档在知识库中的全部切片。
 
     Args:
         knowledge_name: 知识库名称。
-        document_id: 文档 ID。
+        document_ids: 文档 ID 列表。
 
     Returns:
         None。
@@ -578,7 +578,34 @@ def delete_document(knowledge_name: str, document_id: int) -> None:
     vector_repository.ensure_collection_exists(knowledge_name=knowledge_name)
     vector_repository.delete_document_chunks(
         knowledge_name=knowledge_name,
-        document_id=document_id,
+        document_ids=document_ids,
+    )
+
+
+def update_document_status(
+        knowledge_name: str,
+        primary_id: int,
+        status: int,
+) -> None:
+    """
+    按向量主键更新文档切片状态。
+
+    Args:
+        knowledge_name: 知识库名称。
+        primary_id: 向量数据库主键 ID。
+        status: 状态值，仅允许 0（启用）或 1（禁用）。
+
+    Returns:
+        None。
+
+    Raises:
+        ServiceException: 知识库不存在、状态非法或更新失败。
+    """
+    vector_repository.ensure_collection_exists(knowledge_name=knowledge_name)
+    vector_repository.update_document_chunk_status(
+        knowledge_name=knowledge_name,
+        primary_id=primary_id,
+        status=status,
     )
 
 

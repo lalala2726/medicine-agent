@@ -21,6 +21,53 @@ DEFAULT_KNOWLEDGE_STATUS = KNOWLEDGE_STATUS_ENABLED
 DEFAULT_VECTOR_INDEX_TYPE = "AUTOINDEX"
 DEFAULT_VECTOR_METRIC_TYPE = "COSINE"
 COUNT_FALLBACK_LIMIT = 1000
+ALLOWED_KNOWLEDGE_STATUS_VALUES = {
+    KNOWLEDGE_STATUS_ENABLED,
+    KNOWLEDGE_STATUS_DISABLED,
+}
+DOCUMENT_CHUNK_OUTPUT_FIELDS = [
+    "id",
+    "document_id",
+    "chunk_index",
+    "content",
+    "char_count",
+    "embedding",
+    "chunk_strategy",
+    "chunk_size",
+    "token_size",
+    "status",
+    "source_hash",
+    "created_at_ts",
+]
+
+
+def _validate_knowledge_status(status: int) -> int:
+    """
+    功能描述:
+        校验知识切片状态值，仅允许 0（启用）或 1（禁用）。
+
+    参数说明:
+        status (int): 待校验状态值。
+
+    返回值:
+        int: 校验通过后的状态值。
+
+    异常说明:
+        ServiceException: 状态值不在允许范围时抛出。
+    """
+    try:
+        normalized_status = int(status)
+    except (TypeError, ValueError) as exc:
+        raise ServiceException(
+            code=ResponseCode.BAD_REQUEST,
+            message="status 只能为 0 或 1",
+        ) from exc
+    if normalized_status not in ALLOWED_KNOWLEDGE_STATUS_VALUES:
+        raise ServiceException(
+            code=ResponseCode.BAD_REQUEST,
+            message="status 只能为 0 或 1",
+        )
+    return normalized_status
 
 
 def _build_index_params(client: MilvusClient):
@@ -618,6 +665,7 @@ def list_document_chunks(
                 "chunk_strategy",
                 "chunk_size",
                 "token_size",
+                "status",
                 "source_hash",
                 "created_at_ts",
             ],
@@ -664,14 +712,14 @@ def count_document_chunks(
     return _count_by_filter(client, knowledge_name, filter_expr)
 
 
-def delete_document_chunks(knowledge_name: str, document_id: int) -> None:
+def delete_document_chunks(knowledge_name: str, document_ids: list[int]) -> None:
     """
     功能描述:
-        删除指定文档在集合中的全部切片记录。
+        批量删除指定文档在集合中的全部切片记录。
 
     参数说明:
         knowledge_name (str): 集合名称。
-        document_id (int): 文档 ID。
+        document_ids (list[int]): 文档 ID 列表。
 
     返回值:
         None: 删除成功无返回值。
@@ -680,7 +728,8 @@ def delete_document_chunks(knowledge_name: str, document_id: int) -> None:
         ServiceException: Milvus 删除失败时抛出。
     """
     client = get_milvus_client()
-    filter_expr = f"document_id == {document_id}"
+    joined_ids = ", ".join(str(document_id) for document_id in document_ids)
+    filter_expr = f"document_id in [{joined_ids}]"
     try:
         client.delete(
             collection_name=knowledge_name,
@@ -690,4 +739,63 @@ def delete_document_chunks(knowledge_name: str, document_id: int) -> None:
         raise ServiceException(
             code=ResponseCode.OPERATION_FAILED,
             message=f"删除文档切片失败: {exc}",
+        ) from exc
+
+
+def update_document_chunk_status(
+        knowledge_name: str,
+        primary_id: int,
+        status: int,
+) -> None:
+    """
+    功能描述:
+        按向量主键更新指定切片记录的状态字段。
+
+    参数说明:
+        knowledge_name (str): 集合名称。
+        primary_id (int): Milvus 主键 ID。
+        status (int): 状态值，仅允许 0 或 1。
+
+    返回值:
+        None: 更新成功无返回值。
+
+    异常说明:
+        ServiceException:
+            - 状态值非法时抛出；
+            - 记录不存在时抛出；
+            - Milvus 读写失败时抛出。
+    """
+    normalized_status = _validate_knowledge_status(status)
+    client = get_milvus_client()
+    try:
+        rows = client.get(
+            collection_name=knowledge_name,
+            ids=primary_id,
+            output_fields=DOCUMENT_CHUNK_OUTPUT_FIELDS,
+        )
+    except milvus_exceptions.MilvusException as exc:
+        raise ServiceException(
+            code=ResponseCode.OPERATION_FAILED,
+            message=f"读取文档切片失败: {exc}",
+        ) from exc
+
+    if not rows:
+        raise ServiceException(
+            code=ResponseCode.NOT_FOUND,
+            message="向量记录不存在",
+        )
+
+    persisted_row = dict(rows[0])
+    persisted_row["id"] = int(persisted_row.get("id") or primary_id)
+    persisted_row["status"] = normalized_status
+
+    try:
+        client.upsert(
+            collection_name=knowledge_name,
+            data=[persisted_row],
+        )
+    except milvus_exceptions.MilvusException as exc:
+        raise ServiceException(
+            code=ResponseCode.OPERATION_FAILED,
+            message=f"更新文档状态失败: {exc}",
         ) from exc

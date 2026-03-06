@@ -24,9 +24,12 @@ class _FakeMilvusClient:
         self.release_collection_calls: list[dict[str, object]] = []
         self.get_load_state_calls: list[dict[str, object]] = []
         self.query_calls: list[dict[str, object]] = []
+        self.get_calls: list[dict[str, object]] = []
         self.delete_calls: list[dict[str, object]] = []
         self.insert_calls: list[dict[str, object]] = []
+        self.upsert_calls: list[dict[str, object]] = []
         self.rows_result: list[dict] = []
+        self.get_result: list[dict] = []
         self.count_result: list[dict] = [{"count(*)": 0}]
         self.load_state_result: dict = {"state": LoadState.NotLoad}
         self.describe_result: dict = {
@@ -69,11 +72,18 @@ class _FakeMilvusClient:
             return []
         return self.rows_result
 
+    def get(self, **kwargs):
+        self.get_calls.append(kwargs)
+        return self.get_result
+
     def delete(self, **kwargs) -> None:
         self.delete_calls.append(kwargs)
 
     def insert(self, **kwargs) -> None:
         self.insert_calls.append(kwargs)
+
+    def upsert(self, **kwargs) -> None:
+        self.upsert_calls.append(kwargs)
 
     def describe_collection(self, _name: str) -> dict:
         return self.describe_result
@@ -331,27 +341,31 @@ def test_list_document_chunks_queries_with_expected_filter_and_fields(
         "chunk_strategy",
         "chunk_size",
         "token_size",
+        "status",
         "source_hash",
         "created_at_ts",
     ]
 
 
-def test_delete_document_chunks_calls_milvus_delete_with_document_filter(
+def test_delete_document_chunks_calls_milvus_delete_with_document_ids_filter(
         monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """
-    测试目的：验证删除文档切片时会按 document_id 过滤调用 Milvus delete。
-    预期结果：delete 被调用一次且过滤表达式为 document_id == 指定值。
+    测试目的：验证批量删除文档切片时会按 document_id 列表过滤调用 Milvus delete。
+    预期结果：delete 被调用一次且过滤表达式为 document_id in 指定列表。
     """
     client = _FakeMilvusClient(has_collection_result=True)
     monkeypatch.setattr(repository_module, "get_milvus_client", lambda: client)
 
-    repository_module.delete_document_chunks(knowledge_name="demo_kb", document_id=42)
+    repository_module.delete_document_chunks(
+        knowledge_name="demo_kb",
+        document_ids=[42, 43],
+    )
 
     assert len(client.delete_calls) == 1
     payload = client.delete_calls[0]
     assert payload["collection_name"] == "demo_kb"
-    assert payload["filter"] == "document_id == 42"
+    assert payload["filter"] == "document_id in [42, 43]"
 
 
 def test_count_document_chunks_supports_optional_status_filter(
@@ -379,6 +393,89 @@ def test_count_document_chunks_supports_optional_status_filter(
     assert total_enabled == 7
     assert client.query_calls[0]["filter"] == "document_id == 10"
     assert client.query_calls[1]["filter"] == "document_id == 10 and status == 0"
+
+
+def test_update_document_chunk_status_reads_then_upserts(
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    测试目的：验证按向量主键更新状态时，会先读取原记录，再以 upsert 覆盖 status。
+    预期结果：get/upsert 各调用一次，且仅 status 被更新为目标值。
+    """
+    client = _FakeMilvusClient(has_collection_result=True)
+    client.get_result = [
+        {
+            "id": 101,
+            "document_id": 42,
+            "chunk_index": 3,
+            "content": "demo",
+            "char_count": 4,
+            "embedding": [0.1, 0.2],
+            "chunk_strategy": "character",
+            "chunk_size": 500,
+            "token_size": 100,
+            "status": repository_module.KNOWLEDGE_STATUS_ENABLED,
+            "source_hash": "hash-1",
+            "created_at_ts": 1234567890,
+        }
+    ]
+    monkeypatch.setattr(repository_module, "get_milvus_client", lambda: client)
+
+    repository_module.update_document_chunk_status(
+        knowledge_name="demo_kb",
+        primary_id=101,
+        status=repository_module.KNOWLEDGE_STATUS_DISABLED,
+    )
+
+    assert client.get_calls == [
+        {
+            "collection_name": "demo_kb",
+            "ids": 101,
+            "output_fields": repository_module.DOCUMENT_CHUNK_OUTPUT_FIELDS,
+        }
+    ]
+    assert len(client.upsert_calls) == 1
+    payload = client.upsert_calls[0]
+    assert payload["collection_name"] == "demo_kb"
+    row = payload["data"][0]
+    assert row["id"] == 101
+    assert row["document_id"] == 42
+    assert row["status"] == repository_module.KNOWLEDGE_STATUS_DISABLED
+    assert row["embedding"] == [0.1, 0.2]
+
+
+def test_update_document_chunk_status_rejects_invalid_status() -> None:
+    """
+    测试目的：验证状态只允许 0 或 1。
+    预期结果：传入非法值时抛出统一业务异常。
+    """
+    with pytest.raises(ServiceException, match="status 只能为 0 或 1"):
+        repository_module.update_document_chunk_status(
+            knowledge_name="demo_kb",
+            primary_id=101,
+            status=2,
+        )
+
+
+def test_update_document_chunk_status_raises_when_vector_row_missing(
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    测试目的：验证目标向量主键不存在时返回 404 业务异常。
+    预期结果：get 命中空列表时抛出 ServiceException，code=404。
+    """
+    client = _FakeMilvusClient(has_collection_result=True)
+    monkeypatch.setattr(repository_module, "get_milvus_client", lambda: client)
+
+    with pytest.raises(ServiceException) as exc_info:
+        repository_module.update_document_chunk_status(
+            knowledge_name="demo_kb",
+            primary_id=101,
+            status=repository_module.KNOWLEDGE_STATUS_ENABLED,
+        )
+
+    assert exc_info.value.code == ResponseCode.NOT_FOUND.code
+    assert exc_info.value.message == "向量记录不存在"
 
 
 def test_get_collection_embedding_dim_reads_dim_from_schema(
