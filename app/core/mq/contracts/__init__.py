@@ -10,7 +10,6 @@ from app.core.mq.contracts.document import (
     KnowledgeChunkRebuildResultMessage,
     KnowledgeImportCommandMessage,
     KnowledgeImportResultMessage,
-    ProcessingStageDetail,
 )
 
 __all__ = [
@@ -23,5 +22,4 @@ __all__ = [
     "KnowledgeChunkRebuildResultMessage",
     "KnowledgeImportCommandMessage",
     "KnowledgeImportResultMessage",
-    "ProcessingStageDetail",
 ]

@@ -115,8 +115,7 @@
   business service publishes command messages (`routing_key=knowledge.import.command`);
   AI service publishes result messages (`routing_key=knowledge.import.result`).
   Result stages: `STARTED`, `PROCESSING`, `COMPLETED`, `FAILED`.
-  `PROCESSING` includes `stage_detail` values: `downloading`, `parsing`,
-  `chunking`, `embedding`, `inserting`.
+  `PROCESSING` is a coarse-grained in-progress stage and no longer carries any detailed sub-stage field.
   AI consumer enforces latest-version semantics by reading Redis key
   `kb:latest:{biz_key}` (prefix configurable) and dropping stale messages (`version < latest`).
 - Knowledge chunk rebuild MQ protocol:

@@ -16,7 +16,6 @@ from app.core.mq.contracts.document.import_models import (
     ImportResultStage,
     KnowledgeImportCommandMessage,
     KnowledgeImportResultMessage,
-    ProcessingStageDetail,
 )
 from app.core.mq.observability.document.import_logger import ImportStage, import_log
 from app.core.mq.producers.document.import_result_publisher import publish_import_result
@@ -40,19 +39,6 @@ def parse_import_command(body: bytes) -> KnowledgeImportCommandMessage:
     """
     payload = json.loads(body.decode("utf-8"))
     return KnowledgeImportCommandMessage.model_validate(payload)
-
-
-def _processing_message(detail: ProcessingStageDetail) -> str:
-    """构造处理阶段的用户可读消息。
-
-    Args:
-        detail: 处理子阶段枚举。
-
-    Returns:
-        str: 对应的阶段消息文本。
-    """
-    return f"处理中: {detail.value}"
-
 
 async def _publish_result_event(event: KnowledgeImportResultMessage) -> None:
     """发布单条结果事件并记录结构化日志。
@@ -115,14 +101,12 @@ async def _emit_processing(
         command: KnowledgeImportCommandMessage,
         *,
         started_at: datetime,
-        detail: ProcessingStageDetail,
 ) -> None:
-    """发送 `PROCESSING` 结果事件。
+    """发送粗粒度 `PROCESSING` 结果事件。
 
     Args:
         command: 导入命令消息。
         started_at: 任务开始时间。
-        detail: 当前处理子阶段。
 
     Returns:
         None。
@@ -132,8 +116,7 @@ async def _emit_processing(
         biz_key=command.biz_key,
         version=command.version,
         stage=ImportResultStage.PROCESSING,
-        stage_detail=detail,
-        message=_processing_message(detail),
+        message="任务处理中",
         knowledge_name=command.knowledge_name,
         document_id=command.document_id,
         file_url=command.file_url,
@@ -272,34 +255,6 @@ async def _handle_incoming_message(incoming: Any, settings: ImportRabbitMQSettin
             return
 
         await _emit_started(command, started_at=started_at)
-
-        loop = asyncio.get_running_loop()
-        stage_queue: asyncio.Queue[ProcessingStageDetail | None] = asyncio.Queue()
-
-        def _on_processing_stage(detail: ProcessingStageDetail) -> None:
-            """将线程中的处理阶段事件安全投递到异步队列。
-
-            Args:
-                detail: 当前处理子阶段。
-
-            Returns:
-                None。
-            """
-            loop.call_soon_threadsafe(stage_queue.put_nowait, detail)
-
-        async def _drain_processing_events() -> None:
-            """持续消费处理阶段事件并转发为 MQ 结果消息。
-
-            Returns:
-                None: 收到 ``None`` 哨兵值后结束。
-            """
-            while True:
-                detail = await stage_queue.get()
-                if detail is None:
-                    return
-                await _emit_processing(command, started_at=started_at, detail=detail)
-
-        drain_task = asyncio.create_task(_drain_processing_events())
         result = await asyncio.to_thread(
             import_single_file,
             url=command.file_url,
@@ -310,12 +265,10 @@ async def _handle_incoming_message(incoming: Any, settings: ImportRabbitMQSettin
             chunk_size=command.chunk_size,
             token_size=command.token_size,
             task_uuid=command.task_uuid,
-            on_processing_stage=_on_processing_stage,
         )
-        loop.call_soon_threadsafe(stage_queue.put_nowait, None)
-        await drain_task
 
         if result.status == "success":
+            await _emit_processing(command, started_at=started_at)
             await _emit_completed(command, started_at=started_at, result=result)
         else:
             import_log(

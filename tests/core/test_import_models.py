@@ -6,7 +6,6 @@ from app.core.mq.contracts.document.import_models import (
     ImportResultStage,
     KnowledgeImportCommandMessage,
     KnowledgeImportResultMessage,
-    ProcessingStageDetail,
 )
 from app.rag.chunking import ChunkStrategyType
 
@@ -17,16 +16,6 @@ def test_import_result_stage_enum_values() -> None:
     assert ImportResultStage.PROCESSING.value == "PROCESSING"
     assert ImportResultStage.COMPLETED.value == "COMPLETED"
     assert ImportResultStage.FAILED.value == "FAILED"
-
-
-def test_processing_stage_detail_enum_values() -> None:
-    """验证处理中子阶段枚举值保持稳定。"""
-    assert ProcessingStageDetail.DOWNLOADING.value == "downloading"
-    assert ProcessingStageDetail.PARSING.value == "parsing"
-    assert ProcessingStageDetail.CHUNKING.value == "chunking"
-    assert ProcessingStageDetail.EMBEDDING.value == "embedding"
-    assert ProcessingStageDetail.INSERTING.value == "inserting"
-
 
 def test_command_message_serialization() -> None:
     """验证命令消息序列化包含必要字段。"""
@@ -64,8 +53,7 @@ def test_result_message_build_sets_duration() -> None:
         biz_key="demo:7",
         version=3,
         stage=ImportResultStage.PROCESSING,
-        stage_detail=ProcessingStageDetail.PARSING,
-        message="处理中: parsing",
+        message="任务处理中",
         knowledge_name="demo",
         document_id=7,
         file_url="https://example.com/a.txt",
@@ -76,7 +64,24 @@ def test_result_message_build_sets_duration() -> None:
 
     assert result.message_type == "knowledge_import_result"
     assert result.stage == ImportResultStage.PROCESSING
-    assert result.stage_detail == ProcessingStageDetail.PARSING
+    payload = result.model_dump(exclude_none=True)
+    assert set(payload.keys()) == {
+        "message_type",
+        "task_uuid",
+        "biz_key",
+        "version",
+        "stage",
+        "message",
+        "knowledge_name",
+        "document_id",
+        "file_url",
+        "chunk_count",
+        "vector_count",
+        "embedding_model",
+        "embedding_dim",
+        "occurred_at",
+        "duration_ms",
+    }
     assert result.duration_ms == 2000
 
     serialized = result.to_json_bytes()

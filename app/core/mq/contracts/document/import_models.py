@@ -19,7 +19,7 @@ class ImportResultStage(str, Enum):
 
     Attributes:
         STARTED: 任务已接收，准备开始处理。
-        PROCESSING: 任务处理中，会携带更细粒度的处理阶段。
+        PROCESSING: 任务处理中，表示导入主流程正在执行。
         COMPLETED: 导入流程已成功完成。
         FAILED: 导入流程执行失败。
     """
@@ -28,24 +28,6 @@ class ImportResultStage(str, Enum):
     PROCESSING = "PROCESSING"
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
-
-
-class ProcessingStageDetail(str, Enum):
-    """`PROCESSING` 阶段的细分步骤枚举。
-
-    Attributes:
-        DOWNLOADING: 文件下载阶段。
-        PARSING: 文件解析阶段。
-        CHUNKING: 文本切片阶段。
-        EMBEDDING: 文本向量化阶段。
-        INSERTING: Milvus 写入阶段。
-    """
-
-    DOWNLOADING = "downloading"
-    PARSING = "parsing"
-    CHUNKING = "chunking"
-    EMBEDDING = "embedding"
-    INSERTING = "inserting"
 
 
 class KnowledgeImportCommandMessage(BaseModel):
@@ -120,7 +102,6 @@ class KnowledgeImportResultMessage(BaseModel):
         biz_key: 业务对象唯一键。
         version: 对应的业务版本号。
         stage: 当前结果阶段。
-        stage_detail: ``PROCESSING`` 阶段的细分步骤。
         message: 阶段说明或失败原因。
         knowledge_name: 知识库名称。
         document_id: 业务文档 ID。
@@ -139,7 +120,6 @@ class KnowledgeImportResultMessage(BaseModel):
     biz_key: str = Field(..., min_length=1)
     version: int = Field(..., ge=1)
     stage: ImportResultStage
-    stage_detail: ProcessingStageDetail | None = None
     message: str = Field(..., min_length=1)
     knowledge_name: str = Field(..., min_length=1)
     document_id: int = Field(..., gt=0)
@@ -165,7 +145,6 @@ class KnowledgeImportResultMessage(BaseModel):
             document_id: int,
             file_url: str,
             embedding_model: str,
-            stage_detail: ProcessingStageDetail | None = None,
             filename: str | None = None,
             chunk_count: int = 0,
             vector_count: int = 0,
@@ -185,7 +164,6 @@ class KnowledgeImportResultMessage(BaseModel):
             document_id: 文档 ID。
             file_url: 文件 URL。
             embedding_model: 向量模型名称。
-            stage_detail: 可选处理子阶段。
             filename: 可选下载文件名。
             chunk_count: 成功时切片总数。
             vector_count: 成功时向量总数。
@@ -206,7 +184,6 @@ class KnowledgeImportResultMessage(BaseModel):
             biz_key=biz_key,
             version=version,
             stage=stage,
-            stage_detail=stage_detail,
             message=message,
             knowledge_name=knowledge_name,
             document_id=document_id,

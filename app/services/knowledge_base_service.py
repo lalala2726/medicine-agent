@@ -1,12 +1,10 @@
 import hashlib
 import os
-from collections.abc import Callable
 from pathlib import Path
 from time import sleep, time
 
 from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException
-from app.core.mq.contracts.document.import_models import ProcessingStageDetail
 from app.core.mq.observability.document.import_logger import ImportStage, import_log
 from app.rag.chunking import ChunkStrategyType, SplitChunk, SplitConfig, split_text
 from app.rag.file_loader import parse_downloaded_file, validate_url_extension
@@ -26,7 +24,6 @@ DEFAULT_CHUNK_OVERLAP = 50  # 默认切片重叠长度（字符）
 DEFAULT_VECTOR_BATCH_SIZE = 20  # 向量化与入库默认批次大小
 DEFAULT_INSERT_VERIFY_MAX_RETRIES = 5  # 写入后可见性校验最大重试次数
 DEFAULT_INSERT_VERIFY_INTERVAL_SECONDS = 0.2  # 写入后可见性校验重试间隔（秒）
-ProcessingStageCallback = Callable[[ProcessingStageDetail], None]
 
 
 def _split_batches(items: list, batch_size: int) -> list[list]:
@@ -205,29 +202,6 @@ def _validate_file_not_empty(file_path: Path) -> None:
             code=ResponseCode.BAD_REQUEST, message="文件为空，无法导入"
         )
 
-
-def _notify_processing_stage(
-        callback: ProcessingStageCallback | None,
-        detail: ProcessingStageDetail,
-) -> None:
-    """安全触发一次处理阶段回调。
-
-    Args:
-        callback: 调用方提供的可选回调函数。
-        detail: 当前处理步骤对应的阶段枚举。
-
-    Returns:
-        None。
-    """
-    if callback is None:
-        return
-    try:
-        callback(detail)
-    except Exception:
-        # 阶段回调失败不应影响主导入流程。
-        return
-
-
 def _ensure_document_visible_after_insert(
         *,
         knowledge_name: str,
@@ -279,7 +253,6 @@ def import_single_file(
         chunk_size: int = DEFAULT_CHUNK_SIZE,
         token_size: int = DEFAULT_TOKEN_SIZE,
         task_uuid: str = "-",
-        on_processing_stage: ProcessingStageCallback | None = None,
 ) -> ImportSingleFileResult:
     """
     执行单个文件的完整导入流程：校验 → 下载 → 解析 → 切片 → 向量化 → 入库。
@@ -295,7 +268,6 @@ def import_single_file(
         chunk_size: 字符切片大小。
         token_size: token 切片大小。
         task_uuid: 导入任务唯一标识（用于日志关联），默认 ``"-"``。
-        on_processing_stage: 可选阶段回调，按下载/解析/切片/向量化/入库触发。
 
     Returns:
         成功时返回 `ImportSingleFileSuccessResult`；
@@ -323,7 +295,6 @@ def import_single_file(
         )
 
         # 步骤 3：下载
-        _notify_processing_stage(on_processing_stage, ProcessingStageDetail.DOWNLOADING)
         import_log(ImportStage.DOWNLOAD_START, task_uuid, url=url)
         filename, file_path = _download_file(url)
         _validate_file_not_empty(file_path)
@@ -331,7 +302,6 @@ def import_single_file(
         import_log(ImportStage.DOWNLOAD_DONE, task_uuid, filename=filename, size=file_size)
 
         # 步骤 4：解析
-        _notify_processing_stage(on_processing_stage, ProcessingStageDetail.PARSING)
         parsed_document = parse_downloaded_file(
             file_path=file_path,
             source_url=url,
@@ -346,7 +316,6 @@ def import_single_file(
         )
 
         # 步骤 5：切片
-        _notify_processing_stage(on_processing_stage, ProcessingStageDetail.CHUNKING)
         effective_chunk_size = (
             token_size
             if chunk_strategy == ChunkStrategyType.TOKEN
@@ -371,9 +340,6 @@ def import_single_file(
         insert_batches = 0
         batch_chunks_list = _split_batches(chunks, vector_batch_size)
         total_batches = len(batch_chunks_list)
-        if batch_chunks_list:
-            _notify_processing_stage(on_processing_stage, ProcessingStageDetail.EMBEDDING)
-            _notify_processing_stage(on_processing_stage, ProcessingStageDetail.INSERTING)
 
         for batch_index, batch_chunks in enumerate(batch_chunks_list, start=1):
             batch_texts = [chunk.text for chunk in batch_chunks]

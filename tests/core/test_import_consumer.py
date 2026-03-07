@@ -9,7 +9,6 @@ from app.core.mq.consumers.document.import_consumer import (
 from app.core.mq.contracts.document.import_models import (
     ImportResultStage,
     KnowledgeImportCommandMessage,
-    ProcessingStageDetail,
 )
 from app.rag.chunking import ChunkStrategyType
 from app.schemas.knowledge_import import (
@@ -117,7 +116,7 @@ def test_handle_incoming_message_drops_stale_command(monkeypatch) -> None:
 
 
 def test_handle_incoming_message_emits_stage_events_on_success(monkeypatch) -> None:
-    """验证成功链路会依次发送 STARTED、PROCESSING 明细和 COMPLETED。"""
+    """验证成功链路会依次发送 STARTED、PROCESSING、COMPLETED。"""
     command = _build_command()
     incoming = _FakeIncoming(command.model_dump_json().encode("utf-8"))
     events = []
@@ -131,15 +130,25 @@ def test_handle_incoming_message_emits_stage_events_on_success(monkeypatch) -> N
         events.append(event)
         return True
 
-    def _fake_import_single_file(**kwargs):
-        on_processing_stage = kwargs["on_processing_stage"]
-        on_processing_stage(ProcessingStageDetail.DOWNLOADING)
-        on_processing_stage(ProcessingStageDetail.PARSING)
-        on_processing_stage(ProcessingStageDetail.CHUNKING)
-        on_processing_stage(ProcessingStageDetail.EMBEDDING)
-        on_processing_stage(ProcessingStageDetail.INSERTING)
+    def _fake_import_single_file(
+            *,
+            url,
+            knowledge_name,
+            document_id,
+            embedding_model,
+            chunk_strategy,
+            chunk_size,
+            token_size,
+            task_uuid,
+    ):
+        assert knowledge_name == command.knowledge_name
+        assert document_id == command.document_id
+        assert chunk_strategy == command.chunk_strategy
+        assert chunk_size == command.chunk_size
+        assert token_size == command.token_size
+        assert task_uuid == command.task_uuid
         return ImportSingleFileSuccessResult(
-            file_url=kwargs["url"],
+            file_url=url,
             filename="a.txt",
             source_extension=".txt",
             file_kind="text",
@@ -148,7 +157,7 @@ def test_handle_incoming_message_emits_stage_events_on_success(monkeypatch) -> N
             chunk_count=3,
             vector_count=3,
             insert_batches=1,
-            embedding_model=kwargs["embedding_model"],
+            embedding_model=embedding_model,
             embedding_dim=1024,
             chunks=[],
         )
@@ -168,19 +177,27 @@ def test_handle_incoming_message_emits_stage_events_on_success(monkeypatch) -> N
     assert [event.stage for event in events] == [
         ImportResultStage.STARTED,
         ImportResultStage.PROCESSING,
-        ImportResultStage.PROCESSING,
-        ImportResultStage.PROCESSING,
-        ImportResultStage.PROCESSING,
-        ImportResultStage.PROCESSING,
         ImportResultStage.COMPLETED,
     ]
-    assert [event.stage_detail for event in events[1:6]] == [
-        ProcessingStageDetail.DOWNLOADING,
-        ProcessingStageDetail.PARSING,
-        ProcessingStageDetail.CHUNKING,
-        ProcessingStageDetail.EMBEDDING,
-        ProcessingStageDetail.INSERTING,
-    ]
+    assert events[1].message == "任务处理中"
+    processing_payload = events[1].model_dump(exclude_none=True)
+    assert set(processing_payload.keys()) == {
+        "message_type",
+        "task_uuid",
+        "biz_key",
+        "version",
+        "stage",
+        "message",
+        "knowledge_name",
+        "document_id",
+        "file_url",
+        "chunk_count",
+        "vector_count",
+        "embedding_model",
+        "embedding_dim",
+        "occurred_at",
+        "duration_ms",
+    }
     assert events[-1].chunk_count == 3
     assert events[-1].vector_count == 3
     assert all(event.task_uuid == "task-1" for event in events)
@@ -202,12 +219,28 @@ def test_handle_incoming_message_emits_failed_without_retry(monkeypatch) -> None
         events.append(event)
         return True
 
-    def _fake_import_single_file(**kwargs):
+    def _fake_import_single_file(
+            *,
+            url,
+            knowledge_name,
+            document_id,
+            embedding_model,
+            chunk_strategy,
+            chunk_size,
+            token_size,
+            task_uuid,
+    ):
+        assert knowledge_name == command.knowledge_name
+        assert document_id == command.document_id
+        assert chunk_strategy == command.chunk_strategy
+        assert chunk_size == command.chunk_size
+        assert token_size == command.token_size
+        assert task_uuid == command.task_uuid
         return ImportSingleFileFailedResult(
-            file_url=kwargs["url"],
+            file_url=url,
             filename="a.txt",
             error="mock failure",
-            embedding_model=kwargs["embedding_model"],
+            embedding_model=embedding_model,
             embedding_dim=1024,
         )
 
@@ -243,9 +276,25 @@ def test_handle_incoming_message_acks_when_result_publish_fails(monkeypatch) -> 
     async def _always_fail_publish(_event) -> bool:
         return False
 
-    def _fake_import_single_file(**kwargs):
+    def _fake_import_single_file(
+            *,
+            url,
+            knowledge_name,
+            document_id,
+            embedding_model,
+            chunk_strategy,
+            chunk_size,
+            token_size,
+            task_uuid,
+    ):
+        assert knowledge_name == command.knowledge_name
+        assert document_id == command.document_id
+        assert chunk_strategy == command.chunk_strategy
+        assert chunk_size == command.chunk_size
+        assert token_size == command.token_size
+        assert task_uuid == command.task_uuid
         return ImportSingleFileSuccessResult(
-            file_url=kwargs["url"],
+            file_url=url,
             filename="a.txt",
             source_extension=".txt",
             file_kind="text",
@@ -254,7 +303,7 @@ def test_handle_incoming_message_acks_when_result_publish_fails(monkeypatch) -> 
             chunk_count=1,
             vector_count=1,
             insert_batches=1,
-            embedding_model=kwargs["embedding_model"],
+            embedding_model=embedding_model,
             embedding_dim=1024,
             chunks=[],
         )

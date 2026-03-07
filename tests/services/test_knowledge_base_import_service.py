@@ -4,20 +4,18 @@ import pytest
 
 from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException
-from app.core.mq.contracts.document.import_models import ProcessingStageDetail
 from app.rag.chunking import ChunkStats, ChunkStrategyType, SplitChunk
 from app.rag.file_loader.types import FileKind, ParsedDocument
 from app.services import knowledge_base_service
 
 
-def test_import_single_file_emits_processing_stage_callbacks(
+def test_import_single_file_succeeds_without_processing_stage_callback(
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
 ) -> None:
-    """验证 import_single_file 会按预期顺序触发处理阶段回调。"""
+    """验证 import_single_file 不依赖阶段回调也能完成主流程。"""
     source_path = tmp_path / "demo.txt"
     source_path.write_text("dummy", encoding="utf-8")
-    observed: list[ProcessingStageDetail] = []
 
     monkeypatch.setenv("KNOWLEDGE_VECTOR_BATCH_SIZE", "2")
     monkeypatch.setattr(
@@ -83,17 +81,11 @@ def test_import_single_file_emits_processing_stage_callbacks(
         chunk_strategy=ChunkStrategyType.CHARACTER,
         chunk_size=200,
         token_size=50,
-        on_processing_stage=observed.append,
     )
 
     assert result.status == "success"
-    assert observed == [
-        ProcessingStageDetail.DOWNLOADING,
-        ProcessingStageDetail.PARSING,
-        ProcessingStageDetail.CHUNKING,
-        ProcessingStageDetail.EMBEDDING,
-        ProcessingStageDetail.INSERTING,
-    ]
+    assert result.chunk_count == 3
+    assert result.vector_count == 3
 
 
 def test_import_single_file_rejects_url_without_supported_suffix(
