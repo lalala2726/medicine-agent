@@ -70,6 +70,11 @@ def is_chunk_rebuild_consumer_enabled() -> bool:
     return parse_bool(os.getenv("MQ_CHUNK_REBUILD_CONSUMER_ENABLED"), default=True)
 
 
+def is_chunk_add_consumer_enabled() -> bool:
+    """检查是否启用应用内手工新增切片 MQ 消费者。"""
+    return parse_bool(os.getenv("MQ_CHUNK_ADD_CONSUMER_ENABLED"), default=True)
+
+
 def is_aio_pika_installed() -> bool:
     """检查是否已安装 aio-pika 依赖。"""
     return importlib_util.find_spec("aio_pika") is not None

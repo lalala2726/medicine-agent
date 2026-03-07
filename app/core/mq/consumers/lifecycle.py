@@ -7,14 +7,17 @@ from loguru import logger
 from app.core.mq.config.common import (
     has_rabbitmq_url_configured,
     is_aio_pika_installed,
+    is_chunk_add_consumer_enabled,
     is_chunk_rebuild_consumer_enabled,
     is_import_consumer_enabled,
 )
+from app.core.mq.consumers.chunk_add_consumer import run_chunk_add_consumer
 from app.core.mq.consumers.chunk_rebuild_consumer import run_chunk_rebuild_consumer
 from app.core.mq.consumers.import_consumer import run_import_consumer
 
 _consumer_task: asyncio.Task[None] | None = None
 _chunk_rebuild_consumer_task: asyncio.Task[None] | None = None
+_chunk_add_consumer_task: asyncio.Task[None] | None = None
 
 
 async def start_import_consumer_if_enabled() -> None:
@@ -105,3 +108,48 @@ async def stop_chunk_rebuild_consumer() -> None:
             pass
     _chunk_rebuild_consumer_task = None
     logger.info("切片重建命令 MQ 消费者已停止")
+
+
+async def start_chunk_add_consumer_if_enabled() -> None:
+    """按配置条件启动应用内手工新增切片消费者任务，避免重复启动。
+
+    Returns:
+        None: 启动流程结束无返回值。
+    """
+    global _chunk_add_consumer_task
+    if not is_chunk_add_consumer_enabled():
+        logger.info("MQ_CHUNK_ADD_CONSUMER_ENABLED=false，跳过手工新增切片消费者启动")
+        return
+    if not has_rabbitmq_url_configured():
+        logger.warning("未配置 RABBITMQ_URL，跳过手工新增切片消费者启动")
+        return
+    if not is_aio_pika_installed():
+        logger.warning("未安装 aio-pika，跳过手工新增切片消费者启动")
+        return
+    if _chunk_add_consumer_task and not _chunk_add_consumer_task.done():
+        logger.info("手工新增切片 MQ 消费者已在运行，跳过重复启动")
+        return
+    _chunk_add_consumer_task = asyncio.create_task(
+        run_chunk_add_consumer(),
+        name="knowledge-chunk-add-command-consumer",
+    )
+    logger.info("手工新增切片命令 MQ 消费者已启动")
+
+
+async def stop_chunk_add_consumer() -> None:
+    """停止应用内手工新增切片消费者任务并等待其优雅退出。
+
+    Returns:
+        None: 停止流程结束无返回值。
+    """
+    global _chunk_add_consumer_task
+    if _chunk_add_consumer_task is None:
+        return
+    if not _chunk_add_consumer_task.done():
+        _chunk_add_consumer_task.cancel()
+        try:
+            await _chunk_add_consumer_task
+        except asyncio.CancelledError:
+            pass
+    _chunk_add_consumer_task = None
+    logger.info("手工新增切片命令 MQ 消费者已停止")
