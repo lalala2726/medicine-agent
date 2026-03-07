@@ -25,7 +25,7 @@ from app.core.mq.producers.document.chunk_rebuild_result_publisher import (
     publish_chunk_rebuild_result,
 )
 from app.core.mq.state.document.chunk_rebuild_version_store import get_latest_version
-from app.services.chunk_service import (
+from app.services.document_chunk_service import (
     ChunkRebuildMessageStaleError,
     ChunkRebuildSuccessResult,
     rebuild_document_chunk,

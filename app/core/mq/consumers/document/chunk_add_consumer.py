@@ -24,7 +24,7 @@ from app.core.mq.observability.document.chunk_add_logger import (
 from app.core.mq.producers.document.chunk_add_result_publisher import (
     publish_chunk_add_result,
 )
-from app.services.chunk_service import (
+from app.services.document_chunk_service import (
     ChunkAddSuccessResult,
     add_document_chunk,
 )

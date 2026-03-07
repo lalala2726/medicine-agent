@@ -21,7 +21,7 @@ from app.core.mq.observability.document.import_logger import ImportStage, import
 from app.core.mq.producers.document.import_result_publisher import publish_import_result
 from app.core.mq.state.document.import_version_store import is_stale
 from app.schemas.knowledge_import import ImportSingleFileSuccessResult
-from app.services.knowledge_base_service import import_single_file
+from app.services.document_chunk_service import import_single_file
 
 
 def parse_import_command(body: bytes) -> KnowledgeImportCommandMessage:

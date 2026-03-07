@@ -6,7 +6,7 @@ from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException
 from app.rag.chunking import ChunkStats, ChunkStrategyType, SplitChunk
 from app.rag.file_loader.types import FileKind, ParsedDocument
-from app.services import knowledge_base_service
+from app.services import document_chunk_service as service_module
 
 
 def test_import_single_file_succeeds_without_processing_stage_callback(
@@ -19,12 +19,12 @@ def test_import_single_file_succeeds_without_processing_stage_callback(
 
     monkeypatch.setenv("KNOWLEDGE_VECTOR_BATCH_SIZE", "2")
     monkeypatch.setattr(
-        knowledge_base_service,
+        service_module,
         "_download_file",
         lambda _url: ("demo.txt", source_path),
     )
     monkeypatch.setattr(
-        knowledge_base_service,
+        service_module,
         "parse_downloaded_file",
         lambda **_: ParsedDocument(
             file_kind=FileKind.TEXT,
@@ -34,37 +34,37 @@ def test_import_single_file_succeeds_without_processing_stage_callback(
         ),
     )
     monkeypatch.setattr(
-        knowledge_base_service.vector_repository,
+        service_module.vector_repository,
         "ensure_collection_exists",
         lambda **_: None,
     )
     monkeypatch.setattr(
-        knowledge_base_service.vector_repository,
+        service_module.vector_repository,
         "get_collection_embedding_dim",
         lambda **_: 1024,
     )
     monkeypatch.setattr(
-        knowledge_base_service,
+        service_module,
         "create_embedding_client",
         lambda **_: object(),
     )
     monkeypatch.setattr(
-        knowledge_base_service,
+        service_module,
         "embed_texts",
         lambda texts, **_: [[0.1, 0.2] for _ in texts],
     )
     monkeypatch.setattr(
-        knowledge_base_service.vector_repository,
+        service_module.vector_repository,
         "insert_embeddings",
         lambda **_kwargs: None,
     )
     monkeypatch.setattr(
-        knowledge_base_service.vector_repository,
+        service_module.vector_repository,
         "count_document_chunks",
         lambda **_kwargs: 3,
     )
     monkeypatch.setattr(
-        knowledge_base_service,
+        service_module,
         "_split_parsed_text",
         lambda *_args, **_kwargs: [
             SplitChunk(text="A", stats=ChunkStats(char_count=1)),
@@ -73,7 +73,7 @@ def test_import_single_file_succeeds_without_processing_stage_callback(
         ],
     )
 
-    result = knowledge_base_service.import_single_file(
+    result = service_module.import_single_file(
         url="https://example.com/demo.txt",
         knowledge_name="demo",
         document_id=2,
@@ -98,24 +98,24 @@ def test_import_single_file_rejects_url_without_supported_suffix(
         called["download"] = True
         return "a.txt", Path("/tmp/a.txt")
 
-    monkeypatch.setattr(knowledge_base_service, "_download_file", _fake_download)
+    monkeypatch.setattr(service_module, "_download_file", _fake_download)
     monkeypatch.setattr(
-        knowledge_base_service.vector_repository,
+        service_module.vector_repository,
         "ensure_collection_exists",
         lambda **_: None,
     )
     monkeypatch.setattr(
-        knowledge_base_service.vector_repository,
+        service_module.vector_repository,
         "get_collection_embedding_dim",
         lambda **_: 1024,
     )
     monkeypatch.setattr(
-        knowledge_base_service,
+        service_module,
         "create_embedding_client",
         lambda **_: object(),
     )
 
-    result = knowledge_base_service.import_single_file(
+    result = service_module.import_single_file(
         url="https://example.com/file.bin",
         knowledge_name="demo",
         document_id=1,
@@ -141,12 +141,12 @@ def test_import_single_file_runs_vectorization_and_insert_batches(
 
     monkeypatch.setenv("KNOWLEDGE_VECTOR_BATCH_SIZE", "2")
     monkeypatch.setattr(
-        knowledge_base_service,
+        service_module,
         "_download_file",
         lambda _url: ("demo.txt", source_path),
     )
     monkeypatch.setattr(
-        knowledge_base_service,
+        service_module,
         "parse_downloaded_file",
         lambda **_: ParsedDocument(
             file_kind=FileKind.TEXT,
@@ -156,37 +156,37 @@ def test_import_single_file_runs_vectorization_and_insert_batches(
         ),
     )
     monkeypatch.setattr(
-        knowledge_base_service.vector_repository,
+        service_module.vector_repository,
         "ensure_collection_exists",
         lambda **_: None,
     )
     monkeypatch.setattr(
-        knowledge_base_service.vector_repository,
+        service_module.vector_repository,
         "get_collection_embedding_dim",
         lambda **_: 1024,
     )
     monkeypatch.setattr(
-        knowledge_base_service,
+        service_module,
         "create_embedding_client",
         lambda **_: object(),
     )
     monkeypatch.setattr(
-        knowledge_base_service,
+        service_module,
         "embed_texts",
         lambda texts, **_: [[0.1, 0.2] for _ in texts],
     )
     monkeypatch.setattr(
-        knowledge_base_service.vector_repository,
+        service_module.vector_repository,
         "insert_embeddings",
         lambda **kwargs: insert_calls.append(kwargs),
     )
     monkeypatch.setattr(
-        knowledge_base_service.vector_repository,
+        service_module.vector_repository,
         "count_document_chunks",
         lambda **_kwargs: 3,
     )
     monkeypatch.setattr(
-        knowledge_base_service,
+        service_module,
         "_split_parsed_text",
         lambda *_args, **_kwargs: [
             SplitChunk(text="A", stats=ChunkStats(char_count=1)),
@@ -195,7 +195,7 @@ def test_import_single_file_runs_vectorization_and_insert_batches(
         ],
     )
 
-    result = knowledge_base_service.import_single_file(
+    result = service_module.import_single_file(
         url="https://example.com/demo.txt",
         knowledge_name="demo",
         document_id=2,
@@ -233,32 +233,32 @@ def test_import_single_file_keeps_downloaded_file_on_parse_failure(
     source_path.write_text("dummy", encoding="utf-8")
 
     monkeypatch.setattr(
-        knowledge_base_service,
+        service_module,
         "_download_file",
         lambda _url: ("demo.txt", source_path),
     )
     monkeypatch.setattr(
-        knowledge_base_service.vector_repository,
+        service_module.vector_repository,
         "ensure_collection_exists",
         lambda **_: None,
     )
     monkeypatch.setattr(
-        knowledge_base_service.vector_repository,
+        service_module.vector_repository,
         "get_collection_embedding_dim",
         lambda **_: 1024,
     )
     monkeypatch.setattr(
-        knowledge_base_service,
+        service_module,
         "create_embedding_client",
         lambda **_: object(),
     )
     monkeypatch.setattr(
-        knowledge_base_service,
+        service_module,
         "parse_downloaded_file",
         lambda **_: (_raise_parse_error()),
     )
 
-    result = knowledge_base_service.import_single_file(
+    result = service_module.import_single_file(
         url="https://example.com/demo.txt",
         knowledge_name="demo",
         document_id=3,
@@ -285,12 +285,12 @@ def test_import_single_file_batches_are_strictly_serial(
 
     monkeypatch.setenv("KNOWLEDGE_VECTOR_BATCH_SIZE", "2")
     monkeypatch.setattr(
-        knowledge_base_service,
+        service_module,
         "_download_file",
         lambda _url: ("demo.txt", source_path),
     )
     monkeypatch.setattr(
-        knowledge_base_service,
+        service_module,
         "parse_downloaded_file",
         lambda **_: ParsedDocument(
             file_kind=FileKind.TEXT,
@@ -300,17 +300,17 @@ def test_import_single_file_batches_are_strictly_serial(
         ),
     )
     monkeypatch.setattr(
-        knowledge_base_service.vector_repository,
+        service_module.vector_repository,
         "ensure_collection_exists",
         lambda **_: None,
     )
     monkeypatch.setattr(
-        knowledge_base_service.vector_repository,
+        service_module.vector_repository,
         "get_collection_embedding_dim",
         lambda **_: 1024,
     )
     monkeypatch.setattr(
-        knowledge_base_service,
+        service_module,
         "create_embedding_client",
         lambda **_: object(),
     )
@@ -322,19 +322,19 @@ def test_import_single_file_batches_are_strictly_serial(
     def _fake_insert(**kwargs) -> None:
         trace.append(f"insert-{len(kwargs['texts'])}")
 
-    monkeypatch.setattr(knowledge_base_service, "embed_texts", _fake_embed)
+    monkeypatch.setattr(service_module, "embed_texts", _fake_embed)
     monkeypatch.setattr(
-        knowledge_base_service.vector_repository,
+        service_module.vector_repository,
         "insert_embeddings",
         _fake_insert,
     )
     monkeypatch.setattr(
-        knowledge_base_service.vector_repository,
+        service_module.vector_repository,
         "count_document_chunks",
         lambda **_kwargs: 3,
     )
     monkeypatch.setattr(
-        knowledge_base_service,
+        service_module,
         "_split_parsed_text",
         lambda *_args, **_kwargs: [
             SplitChunk(text="A", stats=ChunkStats(char_count=1)),
@@ -343,7 +343,7 @@ def test_import_single_file_batches_are_strictly_serial(
         ],
     )
 
-    result = knowledge_base_service.import_single_file(
+    result = service_module.import_single_file(
         url="https://example.com/demo.txt",
         knowledge_name="demo",
         document_id=6,
@@ -367,22 +367,22 @@ def test_import_single_file_fails_when_insert_visibility_check_not_passed(
 
     monkeypatch.setenv("KNOWLEDGE_VECTOR_BATCH_SIZE", "2")
     monkeypatch.setattr(
-        knowledge_base_service,
+        service_module,
         "DEFAULT_INSERT_VERIFY_MAX_RETRIES",
         2,
     )
     monkeypatch.setattr(
-        knowledge_base_service,
+        service_module,
         "DEFAULT_INSERT_VERIFY_INTERVAL_SECONDS",
         0.0,
     )
     monkeypatch.setattr(
-        knowledge_base_service,
+        service_module,
         "_download_file",
         lambda _url: ("demo.txt", source_path),
     )
     monkeypatch.setattr(
-        knowledge_base_service,
+        service_module,
         "parse_downloaded_file",
         lambda **_: ParsedDocument(
             file_kind=FileKind.TEXT,
@@ -392,37 +392,37 @@ def test_import_single_file_fails_when_insert_visibility_check_not_passed(
         ),
     )
     monkeypatch.setattr(
-        knowledge_base_service.vector_repository,
+        service_module.vector_repository,
         "ensure_collection_exists",
         lambda **_: None,
     )
     monkeypatch.setattr(
-        knowledge_base_service.vector_repository,
+        service_module.vector_repository,
         "get_collection_embedding_dim",
         lambda **_: 1024,
     )
     monkeypatch.setattr(
-        knowledge_base_service,
+        service_module,
         "create_embedding_client",
         lambda **_: object(),
     )
     monkeypatch.setattr(
-        knowledge_base_service,
+        service_module,
         "embed_texts",
         lambda texts, **_: [[0.1, 0.2] for _ in texts],
     )
     monkeypatch.setattr(
-        knowledge_base_service.vector_repository,
+        service_module.vector_repository,
         "insert_embeddings",
         lambda **_kwargs: None,
     )
     monkeypatch.setattr(
-        knowledge_base_service.vector_repository,
+        service_module.vector_repository,
         "count_document_chunks",
         lambda **_kwargs: 0,
     )
     monkeypatch.setattr(
-        knowledge_base_service,
+        service_module,
         "_split_parsed_text",
         lambda *_args, **_kwargs: [
             SplitChunk(text="A", stats=ChunkStats(char_count=1)),
@@ -430,7 +430,7 @@ def test_import_single_file_fails_when_insert_visibility_check_not_passed(
         ],
     )
 
-    result = knowledge_base_service.import_single_file(
+    result = service_module.import_single_file(
         url="https://example.com/demo.txt",
         knowledge_name="demo",
         document_id=9,

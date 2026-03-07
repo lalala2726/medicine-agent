@@ -2,7 +2,7 @@
 
 RabbitMQ 基础设施层，负责 MQ 通讯公共能力：配置、协议、收发、状态判定、可观测性。
 
-业务处理逻辑在 `app/services/`（`knowledge_base_service.py`、`chunk_rebuild_service.py`）。
+业务处理逻辑在 `app/services/`（`knowledge_base_service.py`、`document_chunk_service.py`）。
 
 ## 目录结构
 

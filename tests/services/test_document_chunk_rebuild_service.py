@@ -2,7 +2,7 @@ import pytest
 
 from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException
-from app.services import chunk_service as service_module
+from app.services import document_chunk_service as service_module
 
 
 class _FakeMilvusClient:

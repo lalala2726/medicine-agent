@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import hashlib
+import os
 from dataclasses import dataclass
-from time import time
+from pathlib import Path
+from time import sleep, time
 
 from pymilvus import exceptions as milvus_exceptions
 
@@ -9,18 +12,32 @@ from app.core.codes import ResponseCode
 from app.core.database import get_milvus_client
 from app.core.exception.exceptions import ServiceException
 from app.core.llms import create_embedding_model
+from app.core.mq.observability.document.import_logger import ImportStage, import_log
 from app.core.mq.state.document.chunk_rebuild_version_store import (
     get_latest_version as get_chunk_edit_latest_version,
 )
+from app.rag.chunking import ChunkStrategyType, SplitChunk, SplitConfig, split_text
+from app.rag.file_loader import parse_downloaded_file, validate_url_extension
 from app.repositories import vector_repository
+from app.schemas.knowledge_import import (
+    ImportChunk,
+    ImportSingleFileFailedResult,
+    ImportSingleFileResult,
+    ImportSingleFileSuccessResult,
+)
+from app.utils.file_utils import FileUtils
 from app.utils.token_utills import TokenUtils
-
-# ---------------------------------------------------------------------------
-# 常量
-# ---------------------------------------------------------------------------
 
 # 单切片向量化允许的最大 token 数，超限直接拒绝。
 EMBED_MAX_TOKEN_SIZE = 8192
+
+# 文档导入默认切片和入库参数。
+DEFAULT_CHUNK_SIZE = 500
+DEFAULT_TOKEN_SIZE = 100
+DEFAULT_CHUNK_OVERLAP = 50
+DEFAULT_VECTOR_BATCH_SIZE = 20
+DEFAULT_INSERT_VERIFY_MAX_RETRIES = 5
+DEFAULT_INSERT_VERIFY_INTERVAL_SECONDS = 0.2
 
 # 读取 Milvus 原始向量行时所需的字段列表。
 CHUNK_REBUILD_OUTPUT_FIELDS = [
@@ -38,18 +55,10 @@ CHUNK_REBUILD_OUTPUT_FIELDS = [
     "created_at_ts",
 ]
 
-# ---------------------------------------------------------------------------
-# 结果类型 & 异常
-# ---------------------------------------------------------------------------
-
 
 @dataclass(frozen=True)
 class ChunkRebuildSuccessResult:
-    """单切片重建成功结果。
-
-    Attributes:
-        embedding_dim: 本次写入向量的维度。
-    """
+    """单切片重建成功结果。"""
 
     embedding_dim: int
 
@@ -58,13 +67,6 @@ class ChunkRebuildMessageStaleError(Exception):
     """表示切片重建任务已被更新版本替代。"""
 
     def __init__(self, *, vector_id: int, version: int, latest_version: int) -> None:
-        """初始化过期任务异常。
-
-        Args:
-            vector_id: Milvus 向量主键 ID。
-            version: 当前任务版本号。
-            latest_version: Redis 中记录的最新版本号。
-        """
         self.vector_id = vector_id
         self.version = version
         self.latest_version = latest_version
@@ -76,22 +78,11 @@ class ChunkRebuildMessageStaleError(Exception):
 
 @dataclass(frozen=True)
 class ChunkAddSuccessResult:
-    """手工新增切片成功结果。
-
-    Attributes:
-        vector_id: 新插入向量的 Milvus 主键 ID。
-        chunk_index: 最终切片序号。
-        embedding_dim: 本次写入向量的维度。
-    """
+    """手工新增切片成功结果。"""
 
     vector_id: int
     chunk_index: int
     embedding_dim: int
-
-
-# ---------------------------------------------------------------------------
-# 公共 embedding 工具
-# ---------------------------------------------------------------------------
 
 
 def create_embedding_client(*, embedding_model: str, embedding_dim: int):
@@ -158,10 +149,10 @@ def embed_texts(
         embedding_client: 向量模型客户端。
 
     Returns:
-        向量列表，顺序与 `texts` 一致。
+        list[list[float]]: 与 ``texts`` 顺序一致的向量列表。
 
     Raises:
-        ServiceException: 文本超过 token 限制或向量化失败。
+        ServiceException: 文本超过 token 限制或向量化失败时抛出。
     """
     if not texts:
         return []
@@ -182,9 +173,322 @@ def embed_texts(
         raise ServiceException(message=f"嵌入文本失败: {exc}") from exc
 
 
-# ---------------------------------------------------------------------------
-# 私有辅助函数
-# ---------------------------------------------------------------------------
+def _split_batches(items: list, batch_size: int) -> list[list]:
+    """将列表按批次大小切分。
+
+    Args:
+        items: 原始列表。
+        batch_size: 单批最大条数。
+
+    Returns:
+        list[list]: 二维列表，每个子列表为一个批次。
+    """
+    result: list[list] = []
+    for index in range(0, len(items), batch_size):
+        result.append(items[index:index + batch_size])
+    return result
+
+
+def _resolve_vector_batch_size() -> int:
+    """读取向量处理批次配置。
+
+    Returns:
+        int: 向量处理批次大小。
+
+    Raises:
+        ServiceException: 配置值不是正整数时抛出。
+    """
+    raw_value = (os.getenv("KNOWLEDGE_VECTOR_BATCH_SIZE") or "").strip()
+    if not raw_value:
+        return DEFAULT_VECTOR_BATCH_SIZE
+    try:
+        parsed = int(raw_value)
+    except ValueError as exc:
+        raise ServiceException(
+            code=ResponseCode.INTERNAL_ERROR,
+            message="KNOWLEDGE_VECTOR_BATCH_SIZE 必须是正整数",
+        ) from exc
+    if parsed <= 0:
+        raise ServiceException(
+            code=ResponseCode.INTERNAL_ERROR,
+            message="KNOWLEDGE_VECTOR_BATCH_SIZE 必须大于 0",
+        )
+    return parsed
+
+
+def _build_source_hash(text: str) -> str:
+    """计算原始文本的 sha256 哈希。
+
+    Args:
+        text: 原始文本。
+
+    Returns:
+        str: 十六进制哈希字符串。
+    """
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _download_file(url: str) -> tuple[str, Path]:
+    """下载文件并返回文件名与本地路径。
+
+    Args:
+        url: 远程文件 URL。
+
+    Returns:
+        tuple[str, Path]: ``(filename, file_path)``。
+
+    Raises:
+        ServiceException: 下载失败或下载目录配置异常时抛出。
+    """
+    return FileUtils.download_file(url)
+
+
+def _validate_file_not_empty(file_path: Path) -> None:
+    """校验文件非空。
+
+    Args:
+        file_path: 本地文件路径。
+
+    Raises:
+        ServiceException: 文件大小为 0 时抛出。
+    """
+    if file_path.stat().st_size == 0:
+        raise ServiceException(
+            code=ResponseCode.BAD_REQUEST,
+            message="文件为空，无法导入",
+        )
+
+
+def _split_parsed_text(
+        text: str,
+        chunk_strategy: ChunkStrategyType,
+        chunk_size: int,
+) -> list[SplitChunk]:
+    """对解析后的文本执行切片。
+
+    Args:
+        text: 完整文本。
+        chunk_strategy: 切片策略。
+        chunk_size: 生效切片大小。
+
+    Returns:
+        list[SplitChunk]: 切片结果列表；空白文本返回空列表。
+
+    Raises:
+        ServiceException: 切片策略不支持或切片依赖不可用时抛出。
+    """
+    if not text.strip():
+        return []
+    config = SplitConfig(
+        chunk_size=chunk_size,
+        chunk_overlap=DEFAULT_CHUNK_OVERLAP,
+    )
+    return split_text(text, chunk_strategy, config)
+
+
+def _ensure_document_visible_after_insert(
+        *,
+        knowledge_name: str,
+        document_id: int,
+        expected_count: int,
+) -> None:
+    """校验文档切片写入后在向量库中可见。
+
+    Args:
+        knowledge_name: 知识库名称。
+        document_id: 文档 ID。
+        expected_count: 期望最小切片数量。
+
+    Raises:
+        ServiceException: 在重试窗口内仍未查询到期望数量时抛出。
+    """
+    if expected_count <= 0:
+        return
+
+    observed_count = 0
+    for attempt in range(DEFAULT_INSERT_VERIFY_MAX_RETRIES):
+        observed_count = vector_repository.count_document_chunks(
+            knowledge_name=knowledge_name,
+            document_id=document_id,
+        )
+        if observed_count >= expected_count:
+            return
+        if attempt < DEFAULT_INSERT_VERIFY_MAX_RETRIES - 1:
+            sleep(DEFAULT_INSERT_VERIFY_INTERVAL_SECONDS)
+
+    raise ServiceException(
+        code=ResponseCode.OPERATION_FAILED,
+        message=(
+            "切片写入校验失败: "
+            f"document_id={document_id}, expected={expected_count}, observed={observed_count}"
+        ),
+    )
+
+
+def import_single_file(
+        url: str,
+        knowledge_name: str,
+        document_id: int,
+        embedding_model: str,
+        chunk_strategy: ChunkStrategyType = ChunkStrategyType.CHARACTER,
+        chunk_size: int = DEFAULT_CHUNK_SIZE,
+        token_size: int = DEFAULT_TOKEN_SIZE,
+        task_uuid: str = "-",
+) -> ImportSingleFileResult:
+    """执行单个文件的完整导入流程：校验、下载、解析、切片、向量化、入库。
+
+    Args:
+        url: 远程文件 URL。
+        knowledge_name: 知识库名称。
+        document_id: 文档 ID。
+        embedding_model: 向量模型名称。
+        chunk_strategy: 切片策略。
+        chunk_size: 字符切片大小。
+        token_size: token 切片大小。
+        task_uuid: 导入任务唯一标识，用于日志关联。
+
+    Returns:
+        ImportSingleFileResult: 成功时返回 ``ImportSingleFileSuccessResult``，
+        失败时返回 ``ImportSingleFileFailedResult``。
+
+    Raises:
+        ServiceException: 参数校验失败时直接抛出。
+    """
+    vector_batch_size = _resolve_vector_batch_size()
+    filename: str | None = None
+    embedding_dim = 0
+
+    try:
+        source_extension = validate_url_extension(url)
+
+        vector_repository.ensure_collection_exists(knowledge_name=knowledge_name)
+        embedding_dim = vector_repository.get_collection_embedding_dim(
+            knowledge_name=knowledge_name,
+        )
+        embedding_client = create_embedding_client(
+            embedding_model=embedding_model,
+            embedding_dim=embedding_dim,
+        )
+
+        import_log(ImportStage.DOWNLOAD_START, task_uuid, url=url)
+        filename, file_path = _download_file(url)
+        _validate_file_not_empty(file_path)
+        file_size = file_path.stat().st_size
+        import_log(ImportStage.DOWNLOAD_DONE, task_uuid, filename=filename, size=file_size)
+
+        parsed_document = parse_downloaded_file(
+            file_path=file_path,
+            source_url=url,
+        )
+        parsed_text = parsed_document.text or ""
+        import_log(
+            ImportStage.PARSE_DONE,
+            task_uuid,
+            filename=filename,
+            file_kind=parsed_document.file_kind.value,
+            text_length=len(parsed_text),
+        )
+
+        effective_chunk_size = (
+            token_size if chunk_strategy == ChunkStrategyType.TOKEN else chunk_size
+        )
+        chunks = _split_parsed_text(
+            parsed_text,
+            chunk_strategy,
+            effective_chunk_size,
+        )
+        import_log(
+            ImportStage.CHUNK_DONE,
+            task_uuid,
+            chunk_count=len(chunks),
+            strategy=chunk_strategy.value,
+            chunk_size=effective_chunk_size,
+        )
+
+        source_hash = _build_source_hash(parsed_text)
+        vector_count = 0
+        insert_batches = 0
+        batch_chunks_list = _split_batches(chunks, vector_batch_size)
+        total_batches = len(batch_chunks_list)
+
+        for batch_index, batch_chunks in enumerate(batch_chunks_list, start=1):
+            batch_texts = [chunk.text for chunk in batch_chunks]
+            batch_embeddings = embed_texts(
+                batch_texts,
+                embedding_client=embedding_client,
+            )
+            import_log(
+                ImportStage.EMBED_BATCH,
+                task_uuid,
+                batch=f"{batch_index}/{total_batches}",
+                texts=len(batch_texts),
+            )
+
+            vector_repository.insert_embeddings(
+                knowledge_name=knowledge_name,
+                document_id=document_id,
+                embeddings=batch_embeddings,
+                texts=batch_texts,
+                start_chunk_index=vector_count + 1,
+                chunk_strategy=chunk_strategy.name.lower(),
+                chunk_size=chunk_size,
+                token_size=token_size,
+                source_hash=source_hash,
+                char_counts=[chunk.stats.char_count for chunk in batch_chunks],
+                created_at_ts=int(time() * 1000),
+            )
+            vector_count += len(batch_chunks)
+            insert_batches += 1
+
+        _ensure_document_visible_after_insert(
+            knowledge_name=knowledge_name,
+            document_id=document_id,
+            expected_count=vector_count,
+        )
+
+        import_log(
+            ImportStage.INSERT_DONE,
+            task_uuid,
+            vector_count=vector_count,
+            insert_batches=insert_batches,
+        )
+        import_log(
+            ImportStage.COMPLETED,
+            task_uuid,
+            filename=filename,
+            chunk_count=len(chunks),
+            vector_count=vector_count,
+        )
+
+        return ImportSingleFileSuccessResult(
+            file_url=url,
+            filename=filename,
+            source_extension=source_extension,
+            file_kind=parsed_document.file_kind.value,
+            mime_type=parsed_document.mime_type,
+            text_length=len(parsed_text),
+            chunk_count=len(chunks),
+            vector_count=vector_count,
+            insert_batches=insert_batches,
+            embedding_model=embedding_model,
+            embedding_dim=embedding_dim,
+            chunks=[ImportChunk.from_split_chunk(chunk) for chunk in chunks],
+        )
+    except Exception as exc:
+        import_log(
+            ImportStage.FAILED,
+            task_uuid,
+            url=url,
+            filename=filename,
+            error=str(exc),
+        )
+        return ImportSingleFileFailedResult(
+            file_url=url,
+            filename=filename,
+            error=str(exc),
+            embedding_model=embedding_model,
+            embedding_dim=embedding_dim,
+        )
 
 
 def _ensure_latest_chunk_edit_version(*, vector_id: int, version: int) -> None:
@@ -208,9 +512,7 @@ def _ensure_latest_chunk_edit_version(*, vector_id: int, version: int) -> None:
 
 
 def _get_next_chunk_index(client, knowledge_name: str, document_id: int) -> int:
-    """计算该文档下一个可用的 chunk_index。
-
-    通过查询当前文档已有切片的最大 chunk_index + 1 确定。
+    """计算该文档下一个可用的 ``chunk_index``。
 
     Args:
         client: Milvus 客户端实例。
@@ -218,7 +520,10 @@ def _get_next_chunk_index(client, knowledge_name: str, document_id: int) -> int:
         document_id: 文档 ID。
 
     Returns:
-        int: 下一个可用的 chunk_index（从 1 开始）。
+        int: 下一个可用的 ``chunk_index``，从 1 开始。
+
+    Raises:
+        ServiceException: 查询文档切片失败时抛出。
     """
     try:
         rows = client.query(
@@ -252,13 +557,11 @@ def _extract_primary_key(insert_result) -> int:
     Raises:
         ServiceException: 无法提取主键 ID 时抛出。
     """
-    # pymilvus insert 返回 {"insert_count": N, "ids": [id1, ...]}
     if isinstance(insert_result, dict):
         ids = insert_result.get("ids") or insert_result.get("primary_keys") or []
         if ids:
             return int(ids[0])
 
-    # 兼容旧版 pymilvus 返回 MutationResult 对象
     if hasattr(insert_result, "primary_keys"):
         pks = insert_result.primary_keys
         if pks:
@@ -268,11 +571,6 @@ def _extract_primary_key(insert_result) -> int:
         code=ResponseCode.OPERATION_FAILED,
         message="无法从 Milvus 插入结果中提取主键 ID",
     )
-
-
-# ---------------------------------------------------------------------------
-# 公共切片操作
-# ---------------------------------------------------------------------------
 
 
 def rebuild_document_chunk(
@@ -384,7 +682,7 @@ def add_document_chunk(
         embedding_model: 本次任务使用的向量模型名称。
 
     Returns:
-        ChunkAddSuccessResult: 新增成功后的摘要结果，包含 vector_id 和 chunk_index。
+        ChunkAddSuccessResult: 新增成功后的摘要结果，包含向量主键和切片序号。
 
     Raises:
         ServiceException: collection 不存在、embedding 失败或 Milvus 写入失败时抛出。

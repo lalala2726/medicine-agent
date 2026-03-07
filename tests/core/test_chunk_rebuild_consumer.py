@@ -10,7 +10,7 @@ from app.core.mq.contracts.document.chunk_rebuild_models import (
     ChunkRebuildResultStage,
     KnowledgeChunkRebuildCommandMessage,
 )
-from app.services.chunk_service import (
+from app.services.document_chunk_service import (
     ChunkRebuildMessageStaleError,
     ChunkRebuildSuccessResult,
 )
