@@ -100,9 +100,12 @@
   `SYSTEM_AUTH_LOCAL_SECRET` (AI 侧出站系统调用使用的本地签名密钥).
   Header contract: `X-Agent-Key`, `X-Agent-Timestamp`, `X-Agent-Nonce`,
   `X-Agent-Signature`, `X-Agent-Sign-Version`.
-- RabbitMQ configuration (optional): `RABBITMQ_URL`.
-  MQ topology、routing key、prefetch 数量、latest-version key 前缀、应用内 consumer 开关
-  均为代码常量，定义在 `app/core/mq/config/` 下，不再通过环境变量覆盖。
+- RabbitMQ configuration (optional): `RABBITMQ_HOST`, `RABBITMQ_PORT` (default `5672`),
+  `RABBITMQ_USERNAME` (default `guest`), `RABBITMQ_PASSWORD` (default `guest`),
+  `RABBITMQ_VHOST` (default `/`).
+  MQ is enabled when `RABBITMQ_HOST` is set; all topology (exchanges, queues, routing keys)
+  is defined as code constants in `app/core/mq/topology.py`.
+  The MQ layer is implemented with **FastStream[rabbit]**.
 - Knowledge vector batching configuration (optional): `KNOWLEDGE_VECTOR_BATCH_SIZE`.
 - Knowledge import MQ protocol:
   business service publishes command messages (`routing_key=knowledge.import.command`);
@@ -120,9 +123,9 @@
   This protocol only supports single-chunk rebuild. It uses shared Redis latest-version gating by
   `vector_id`, with key format `kb:chunk_edit:latest_version:{vector_id}`; stale
   messages are dropped with reason logging and do not update Milvus.
-- Knowledge import structured logging (`app/core/mq/observability/document/import_logger.py`):
-  `ImportStage` enum identifies each pipeline step. Use `import_log(stage, task_uuid, **metrics)`
-  for one-line structured log output; log level is auto-selected (error / warning / info).
+- MQ structured logging (`app/core/mq/log.py`):
+  `mq_log(pipeline, stage, task_uuid, **metrics)` for one-line structured log output;
+  log level is auto-selected (error / warning / info). Supports import, chunk_rebuild, chunk_add pipelines.
 - HTTP client configuration (optional): `HTTP_BASE_URL` (defaults to `http://localhost:8080`).
 - HTTP client logging (optional): `HTTP_CLIENT_LOG_ENABLED` (default false, set true to log request/response details).
 - Download file storage configuration (required for URL import):

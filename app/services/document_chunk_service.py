@@ -12,9 +12,9 @@ from app.core.codes import ResponseCode
 from app.core.database import get_milvus_client
 from app.core.exception.exceptions import ServiceException
 from app.core.llms import create_embedding_model
-from app.core.mq.observability.document.import_logger import ImportStage, import_log
-from app.core.mq.state.document.chunk_rebuild_version_store import (
-    get_latest_version as get_chunk_edit_latest_version,
+from app.core.mq.log import ImportStage, mq_log
+from app.core.mq.version_store import (
+    get_chunk_rebuild_latest_version as get_chunk_edit_latest_version,
 )
 from app.rag.chunking import ChunkStrategyType, SplitChunk, SplitConfig, split_text
 from app.rag.file_loader import parse_downloaded_file, validate_url_extension
@@ -370,18 +370,19 @@ def import_single_file(
             embedding_dim=embedding_dim,
         )
 
-        import_log(ImportStage.DOWNLOAD_START, task_uuid, url=url)
+        mq_log("import", ImportStage.DOWNLOAD_START, task_uuid, url=url)
         filename, file_path = _download_file(url)
         _validate_file_not_empty(file_path)
         file_size = file_path.stat().st_size
-        import_log(ImportStage.DOWNLOAD_DONE, task_uuid, filename=filename, size=file_size)
+        mq_log("import", ImportStage.DOWNLOAD_DONE, task_uuid, filename=filename, size=file_size)
 
         parsed_document = parse_downloaded_file(
             file_path=file_path,
             source_url=url,
         )
         parsed_text = parsed_document.text or ""
-        import_log(
+        mq_log(
+            "import",
             ImportStage.PARSE_DONE,
             task_uuid,
             filename=filename,
@@ -397,7 +398,8 @@ def import_single_file(
             chunk_strategy,
             effective_chunk_size,
         )
-        import_log(
+        mq_log(
+            "import",
             ImportStage.CHUNK_DONE,
             task_uuid,
             chunk_count=len(chunks),
@@ -417,7 +419,8 @@ def import_single_file(
                 batch_texts,
                 embedding_client=embedding_client,
             )
-            import_log(
+            mq_log(
+                "import",
                 ImportStage.EMBED_BATCH,
                 task_uuid,
                 batch=f"{batch_index}/{total_batches}",
@@ -446,13 +449,15 @@ def import_single_file(
             expected_count=vector_count,
         )
 
-        import_log(
+        mq_log(
+            "import",
             ImportStage.INSERT_DONE,
             task_uuid,
             vector_count=vector_count,
             insert_batches=insert_batches,
         )
-        import_log(
+        mq_log(
+            "import",
             ImportStage.COMPLETED,
             task_uuid,
             filename=filename,
@@ -475,7 +480,8 @@ def import_single_file(
             chunks=[ImportChunk.from_split_chunk(chunk) for chunk in chunks],
         )
     except Exception as exc:
-        import_log(
+        mq_log(
+            "import",
             ImportStage.FAILED,
             task_uuid,
             url=url,

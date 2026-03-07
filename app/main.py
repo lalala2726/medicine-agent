@@ -13,14 +13,7 @@ from starlette.responses import Response
 from app.api.main import api_router
 from app.core.exception.exception_handlers import ExceptionHandlers
 from app.core.exception.exceptions import ServiceException
-from app.core.mq.consumers.lifecycle import (
-    start_chunk_add_consumer_if_enabled,
-    start_chunk_rebuild_consumer_if_enabled,
-    start_import_consumer_if_enabled,
-    stop_chunk_add_consumer,
-    stop_chunk_rebuild_consumer,
-    stop_import_consumer,
-)
+from app.core.mq.broker import get_broker, is_mq_configured
 from app.core.security.anonymous_access import is_anonymous_request
 from app.core.security.system_auth import is_system_request, verify_system_request
 from app.core.security.auth_context import (
@@ -70,19 +63,19 @@ async def lifespan(_app: FastAPI):
             if isinstance(result, Exception):
                 raise result
         _speech_startup_probe_done = True
-    await asyncio.gather(
-        start_import_consumer_if_enabled(),
-        start_chunk_rebuild_consumer_if_enabled(),
-        start_chunk_add_consumer_if_enabled(),
-    )
+
+    # 启动 MQ broker（有配置时才启动）
+    _broker = None
+    if is_mq_configured():
+        import app.core.mq.handlers  # noqa: F401 — 触发 subscriber 注册
+        _broker = get_broker()
+        await _broker.start()
+
     try:
         yield
     finally:
-        await asyncio.gather(
-            stop_import_consumer(),
-            stop_chunk_rebuild_consumer(),
-            stop_chunk_add_consumer(),
-        )
+        if _broker is not None:
+            await _broker.close()
 
 
 app = FastAPI(
