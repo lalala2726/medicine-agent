@@ -7,11 +7,11 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from app.core.mq._aio_pika_loader import load_aio_pika_consumer
 from app.core.mq.config.document.import_settings import (
     ImportRabbitMQSettings,
     get_import_settings,
 )
+from app.core.mq.connection import open_consume_channel
 from app.core.mq.contracts.document.import_models import (
     ImportResultStage,
     KnowledgeImportCommandMessage,
@@ -39,6 +39,7 @@ def parse_import_command(body: bytes) -> KnowledgeImportCommandMessage:
     """
     payload = json.loads(body.decode("utf-8"))
     return KnowledgeImportCommandMessage.model_validate(payload)
+
 
 async def _publish_result_event(event: KnowledgeImportResultMessage) -> None:
     """发布单条结果事件并记录结构化日志。
@@ -307,17 +308,13 @@ async def _consume_once(settings: ImportRabbitMQSettings) -> None:
     Returns:
         None。
     """
-    connect_robust, exchange_type_enum = load_aio_pika_consumer()
-    connection = await connect_robust(settings.url)
-    async with connection:
-        channel = await connection.channel()
-        await channel.set_qos(prefetch_count=settings.prefetch_count)
-        exchange = await channel.declare_exchange(
+    async with open_consume_channel(prefetch_count=settings.prefetch_count) as mq:
+        exchange = await mq.channel.declare_exchange(
             settings.exchange,
-            exchange_type_enum.DIRECT,
+            mq.exchange_type_enum.DIRECT,
             durable=True,
         )
-        queue = await channel.declare_queue(settings.command_queue, durable=True)
+        queue = await mq.channel.declare_queue(settings.command_queue, durable=True)
         await queue.bind(exchange, routing_key=settings.command_routing_key)
         import_log(
             ImportStage.CONSUMER_CONNECTED,

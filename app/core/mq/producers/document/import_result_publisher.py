@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from loguru import logger
 
-from app.core.mq._aio_pika_loader import load_aio_pika_publisher
 from app.core.mq.config.document.import_settings import get_import_settings
+from app.core.mq.connection import open_publish_channel
 from app.core.mq.contracts.document.import_models import KnowledgeImportResultMessage
 
 
@@ -16,22 +16,19 @@ async def publish_import_result(message_payload: KnowledgeImportResultMessage) -
     Returns:
         bool: 发布成功返回 True，失败返回 False。
     """
-    connect_robust, exchange_type_enum, message_cls, delivery_mode_enum = load_aio_pika_publisher()
     settings = get_import_settings()
 
     try:
-        connection = await connect_robust(settings.url)
-        async with connection:
-            channel = await connection.channel(publisher_confirms=True)
-            exchange = await channel.declare_exchange(
+        async with open_publish_channel() as mq:
+            exchange = await mq.channel.declare_exchange(
                 settings.exchange,
-                exchange_type_enum.DIRECT,
+                mq.exchange_type_enum.DIRECT,
                 durable=True,
             )
-            message = message_cls(
+            message = mq.message_cls(
                 body=message_payload.to_json_bytes(),
                 content_type="application/json",
-                delivery_mode=delivery_mode_enum.PERSISTENT,
+                delivery_mode=mq.delivery_mode_enum.PERSISTENT,
             )
             await exchange.publish(message, routing_key=settings.result_routing_key)
         logger.info(

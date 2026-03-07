@@ -6,6 +6,7 @@ MQ 基础模块包。
 2. 调用方请直接按职责子包路径导入：
    - app.core.mq.config.common
    - app.core.mq.config.topology
+   - app.core.mq.connection
    - app.core.mq.config.document.import_settings
    - app.core.mq.config.document.chunk_rebuild_settings
    - app.core.mq.config.document.chunk_add_settings

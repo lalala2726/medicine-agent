@@ -7,11 +7,11 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from app.core.mq._aio_pika_loader import load_aio_pika_consumer
 from app.core.mq.config.document.chunk_rebuild_settings import (
     ChunkRebuildRabbitMQSettings,
     get_chunk_rebuild_settings,
 )
+from app.core.mq.connection import open_consume_channel
 from app.core.mq.contracts.document.chunk_rebuild_models import (
     KnowledgeChunkRebuildCommandMessage,
     KnowledgeChunkRebuildResultMessage,
@@ -376,17 +376,13 @@ async def _consume_once(settings: ChunkRebuildRabbitMQSettings) -> None:
     Returns:
         None: 队列消费循环持续运行，直到连接中断或任务取消。
     """
-    connect_robust, exchange_type_enum = load_aio_pika_consumer()
-    connection = await connect_robust(settings.url)
-    async with connection:
-        channel = await connection.channel()
-        await channel.set_qos(prefetch_count=settings.prefetch_count)
-        exchange = await channel.declare_exchange(
+    async with open_consume_channel(prefetch_count=settings.prefetch_count) as mq:
+        exchange = await mq.channel.declare_exchange(
             settings.exchange,
-            exchange_type_enum.DIRECT,
+            mq.exchange_type_enum.DIRECT,
             durable=True,
         )
-        queue = await channel.declare_queue(settings.command_queue, durable=True)
+        queue = await mq.channel.declare_queue(settings.command_queue, durable=True)
         await queue.bind(exchange, routing_key=settings.command_routing_key)
         chunk_rebuild_log(
             ChunkRebuildStage.CONSUMER_CONNECTED,

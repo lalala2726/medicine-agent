@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from app.core.mq.config.document.chunk_rebuild_settings import (
-    CHUNK_EDIT_LATEST_VERSION_KEY_PREFIX_DEFAULT,
+    CHUNK_EDIT_LATEST_VERSION_KEY_PREFIX,
     ChunkRebuildRabbitMQSettings,
     get_chunk_rebuild_settings,
 )
@@ -14,10 +14,7 @@ def _resolve_prefix(settings: ChunkRebuildRabbitMQSettings | None = None) -> str
     """解析切片编辑 latest-version key 前缀。"""
     if settings is not None:
         return settings.latest_version_key_prefix
-    try:
-        return get_chunk_rebuild_settings().latest_version_key_prefix
-    except Exception:
-        return CHUNK_EDIT_LATEST_VERSION_KEY_PREFIX_DEFAULT
+    return get_chunk_rebuild_settings().latest_version_key_prefix or CHUNK_EDIT_LATEST_VERSION_KEY_PREFIX
 
 
 def build_version_key(

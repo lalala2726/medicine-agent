@@ -100,24 +100,17 @@
   `SYSTEM_AUTH_LOCAL_SECRET` (AI 侧出站系统调用使用的本地签名密钥).
   Header contract: `X-Agent-Key`, `X-Agent-Timestamp`, `X-Agent-Nonce`,
   `X-Agent-Signature`, `X-Agent-Sign-Version`.
-- RabbitMQ configuration (optional): `RABBITMQ_URL`, `RABBITMQ_EXCHANGE`,
-  `RABBITMQ_COMMAND_QUEUE`, `RABBITMQ_COMMAND_ROUTING_KEY`, `RABBITMQ_RESULT_ROUTING_KEY`,
-  `RABBITMQ_PREFETCH_COUNT`, `MQ_CONSUMER_ENABLED`,
-  `KNOWLEDGE_LATEST_VERSION_KEY_PREFIX`, `KNOWLEDGE_VECTOR_BATCH_SIZE`.
-- Chunk rebuild MQ configuration (optional):
-  `RABBITMQ_CHUNK_REBUILD_EXCHANGE` (defaults to `knowledge.chunk_rebuild`),
-  `RABBITMQ_CHUNK_REBUILD_COMMAND_QUEUE` (defaults to `knowledge.chunk_rebuild.command.q`),
-  `RABBITMQ_CHUNK_REBUILD_COMMAND_ROUTING_KEY` (defaults to `knowledge.chunk_rebuild.command`),
-  `RABBITMQ_CHUNK_REBUILD_RESULT_ROUTING_KEY` (defaults to `knowledge.chunk_rebuild.result`),
-  `MQ_CHUNK_REBUILD_CONSUMER_ENABLED` (default true; controls in-process chunk rebuild consumer startup),
-  `KNOWLEDGE_CHUNK_EDIT_LATEST_VERSION_KEY_PREFIX` (defaults to `kb:chunk_edit:latest_version`).
+- RabbitMQ configuration (optional): `RABBITMQ_URL`.
+  MQ topology、routing key、prefetch 数量、latest-version key 前缀、应用内 consumer 开关
+  均为代码常量，定义在 `app/core/mq/config/` 下，不再通过环境变量覆盖。
+- Knowledge vector batching configuration (optional): `KNOWLEDGE_VECTOR_BATCH_SIZE`.
 - Knowledge import MQ protocol:
   business service publishes command messages (`routing_key=knowledge.import.command`);
   AI service publishes result messages (`routing_key=knowledge.import.result`).
   Result stages: `STARTED`, `PROCESSING`, `COMPLETED`, `FAILED`.
   `PROCESSING` is a coarse-grained in-progress stage and no longer carries any detailed sub-stage field.
   AI consumer enforces latest-version semantics by reading Redis key
-  `kb:latest:{biz_key}` (prefix configurable) and dropping stale messages (`version < latest`).
+  `kb:latest:{biz_key}` and dropping stale messages (`version < latest`).
 - Knowledge chunk rebuild MQ protocol:
   business service publishes command messages (`routing_key=knowledge.chunk_rebuild.command`);
   AI service publishes result messages (`routing_key=knowledge.chunk_rebuild.result`).
@@ -125,7 +118,7 @@
   `content`, `embedding_model`, `created_at`.
   Result stages only include `STARTED`, `COMPLETED`, `FAILED`.
   This protocol only supports single-chunk rebuild. It uses shared Redis latest-version gating by
-  `vector_id`, with key format `{KNOWLEDGE_CHUNK_EDIT_LATEST_VERSION_KEY_PREFIX}:{vector_id}`; stale
+  `vector_id`, with key format `kb:chunk_edit:latest_version:{vector_id}`; stale
   messages are dropped with reason logging and do not update Milvus.
 - Knowledge import structured logging (`app/core/mq/observability/document/import_logger.py`):
   `ImportStage` enum identifies each pipeline step. Use `import_log(stage, task_uuid, **metrics)`

@@ -30,7 +30,7 @@ async def start_import_consumer_if_enabled() -> None:
     """
     global _consumer_task
     if not is_import_consumer_enabled():
-        logger.info("MQ_CONSUMER_ENABLED=false，跳过导入消费者启动")
+        logger.info("导入消费者开关已关闭，跳过导入消费者启动")
         return
     if not has_rabbitmq_url_configured():
         logger.warning("未配置 RABBITMQ_URL，跳过导入消费者启动")
@@ -75,7 +75,7 @@ async def start_chunk_rebuild_consumer_if_enabled() -> None:
     """
     global _chunk_rebuild_consumer_task
     if not is_chunk_rebuild_consumer_enabled():
-        logger.info("MQ_CHUNK_REBUILD_CONSUMER_ENABLED=false，跳过切片重建消费者启动")
+        logger.info("切片重建消费者开关已关闭，跳过切片重建消费者启动")
         return
     if not has_rabbitmq_url_configured():
         logger.warning("未配置 RABBITMQ_URL，跳过切片重建消费者启动")
@@ -120,7 +120,7 @@ async def start_chunk_add_consumer_if_enabled() -> None:
     """
     global _chunk_add_consumer_task
     if not is_chunk_add_consumer_enabled():
-        logger.info("MQ_CHUNK_ADD_CONSUMER_ENABLED=false，跳过手工新增切片消费者启动")
+        logger.info("手工新增切片消费者开关已关闭，跳过手工新增切片消费者启动")
         return
     if not has_rabbitmq_url_configured():
         logger.warning("未配置 RABBITMQ_URL，跳过手工新增切片消费者启动")

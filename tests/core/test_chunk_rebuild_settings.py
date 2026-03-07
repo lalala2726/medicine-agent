@@ -1,23 +1,23 @@
 import pytest
 
-from app.core.exception.exceptions import ServiceException
+import app.core.mq.config.common as mq_common
 from app.core.mq.config.document.chunk_rebuild_settings import (
+    CHUNK_EDIT_LATEST_VERSION_KEY_PREFIX,
     get_chunk_rebuild_settings,
 )
-from app.core.mq.config.common import is_chunk_rebuild_consumer_enabled
 
 
 def test_get_chunk_rebuild_settings_loads_defaults(
         monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """验证切片重建 MQ 可选环境变量缺失时会加载默认值。"""
-    monkeypatch.setenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
-    monkeypatch.delenv("RABBITMQ_CHUNK_REBUILD_EXCHANGE", raising=False)
-    monkeypatch.delenv("RABBITMQ_CHUNK_REBUILD_COMMAND_QUEUE", raising=False)
-    monkeypatch.delenv("RABBITMQ_CHUNK_REBUILD_COMMAND_ROUTING_KEY", raising=False)
-    monkeypatch.delenv("RABBITMQ_CHUNK_REBUILD_RESULT_ROUTING_KEY", raising=False)
-    monkeypatch.delenv("KNOWLEDGE_CHUNK_EDIT_LATEST_VERSION_KEY_PREFIX", raising=False)
-    monkeypatch.delenv("RABBITMQ_PREFETCH_COUNT", raising=False)
+    """验证切片重建 MQ 配置固定使用代码常量，不受环境变量影响。"""
+    monkeypatch.delenv("RABBITMQ_URL", raising=False)
+    monkeypatch.setenv("RABBITMQ_CHUNK_REBUILD_EXCHANGE", "unexpected.exchange")
+    monkeypatch.setenv("RABBITMQ_CHUNK_REBUILD_COMMAND_QUEUE", "unexpected.queue")
+    monkeypatch.setenv("RABBITMQ_CHUNK_REBUILD_COMMAND_ROUTING_KEY", "unexpected.command")
+    monkeypatch.setenv("RABBITMQ_CHUNK_REBUILD_RESULT_ROUTING_KEY", "unexpected.result")
+    monkeypatch.setenv("KNOWLEDGE_CHUNK_EDIT_LATEST_VERSION_KEY_PREFIX", "unexpected:prefix")
+    monkeypatch.setenv("RABBITMQ_PREFETCH_COUNT", "99")
 
     get_chunk_rebuild_settings.cache_clear()
     settings = get_chunk_rebuild_settings()
@@ -27,20 +27,7 @@ def test_get_chunk_rebuild_settings_loads_defaults(
     assert settings.command_routing_key == "knowledge.chunk_rebuild.command"
     assert settings.result_routing_key == "knowledge.chunk_rebuild.result"
     assert settings.prefetch_count == 1
-    assert settings.latest_version_key_prefix == "kb:chunk_edit:latest_version"
-
-    get_chunk_rebuild_settings.cache_clear()
-
-
-def test_get_chunk_rebuild_settings_requires_rabbitmq_url(
-        monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """验证缺少 RabbitMQ URL 时会抛出切片重建 MQ 配置异常。"""
-    monkeypatch.delenv("RABBITMQ_URL", raising=False)
-    get_chunk_rebuild_settings.cache_clear()
-
-    with pytest.raises(ServiceException):
-        get_chunk_rebuild_settings()
+    assert settings.latest_version_key_prefix == CHUNK_EDIT_LATEST_VERSION_KEY_PREFIX
 
     get_chunk_rebuild_settings.cache_clear()
 
@@ -49,15 +36,15 @@ def test_is_chunk_rebuild_consumer_enabled_defaults_true(
         monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """验证切片重建消费者开关默认开启。"""
-    monkeypatch.delenv("MQ_CHUNK_REBUILD_CONSUMER_ENABLED", raising=False)
+    monkeypatch.setattr(mq_common, "CHUNK_REBUILD_CONSUMER_ENABLED", True)
 
-    assert is_chunk_rebuild_consumer_enabled() is True
+    assert mq_common.is_chunk_rebuild_consumer_enabled() is True
 
 
 def test_is_chunk_rebuild_consumer_enabled_supports_false(
         monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """验证切片重建消费者开关可显式关闭。"""
-    monkeypatch.setenv("MQ_CHUNK_REBUILD_CONSUMER_ENABLED", "false")
+    """验证切片重建消费者开关可通过代码常量关闭。"""
+    monkeypatch.setattr(mq_common, "CHUNK_REBUILD_CONSUMER_ENABLED", False)
 
-    assert is_chunk_rebuild_consumer_enabled() is False
+    assert mq_common.is_chunk_rebuild_consumer_enabled() is False

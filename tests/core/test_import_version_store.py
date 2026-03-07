@@ -26,7 +26,6 @@ class _ErrorRedis:
 
 def _build_settings() -> ImportRabbitMQSettings:
     return ImportRabbitMQSettings(
-        url="amqp://guest:guest@localhost:5672/",
         exchange="knowledge.import",
         command_queue="knowledge.import.command.q",
         command_routing_key="knowledge.import.command",

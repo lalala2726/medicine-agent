@@ -5,11 +5,12 @@ from app.core.mq.config.document.chunk_add_settings import (
     get_chunk_add_settings,
 )
 from app.core.mq.config.document.chunk_rebuild_settings import (
-    CHUNK_EDIT_LATEST_VERSION_KEY_PREFIX_DEFAULT,
+    CHUNK_EDIT_LATEST_VERSION_KEY_PREFIX,
     ChunkRebuildRabbitMQSettings,
     get_chunk_rebuild_settings,
 )
 from app.core.mq.config.document.import_settings import (
+    IMPORT_LATEST_VERSION_KEY_PREFIX,
     ImportRabbitMQSettings,
     get_import_settings,
 )
@@ -18,8 +19,9 @@ __all__ = [
     "ChunkAddRabbitMQSettings",
     "get_chunk_add_settings",
     "ChunkRebuildRabbitMQSettings",
-    "CHUNK_EDIT_LATEST_VERSION_KEY_PREFIX_DEFAULT",
+    "CHUNK_EDIT_LATEST_VERSION_KEY_PREFIX",
     "get_chunk_rebuild_settings",
     "ImportRabbitMQSettings",
+    "IMPORT_LATEST_VERSION_KEY_PREFIX",
     "get_import_settings",
 ]

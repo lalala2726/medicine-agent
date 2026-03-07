@@ -31,7 +31,6 @@ def _build_command() -> KnowledgeChunkRebuildCommandMessage:
 
 def _build_settings() -> ChunkRebuildRabbitMQSettings:
     return ChunkRebuildRabbitMQSettings(
-        url="amqp://guest:guest@localhost:5672/",
         exchange="knowledge.chunk_rebuild",
         command_queue="knowledge.chunk_rebuild.command.q",
         command_routing_key="knowledge.chunk_rebuild.command",

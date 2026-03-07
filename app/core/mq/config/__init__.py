@@ -8,9 +8,10 @@ from app.core.mq.config.common import (
     is_import_consumer_enabled,
 )
 from app.core.mq.config.document import (
+    CHUNK_EDIT_LATEST_VERSION_KEY_PREFIX,
     ChunkAddRabbitMQSettings,
-    CHUNK_EDIT_LATEST_VERSION_KEY_PREFIX_DEFAULT,
     ChunkRebuildRabbitMQSettings,
+    IMPORT_LATEST_VERSION_KEY_PREFIX,
     ImportRabbitMQSettings,
     get_chunk_add_settings,
     get_chunk_rebuild_settings,
@@ -35,9 +36,10 @@ __all__ = [
     "ChunkAddRabbitMQSettings",
     "get_chunk_add_settings",
     "ChunkRebuildRabbitMQSettings",
-    "CHUNK_EDIT_LATEST_VERSION_KEY_PREFIX_DEFAULT",
+    "CHUNK_EDIT_LATEST_VERSION_KEY_PREFIX",
     "get_chunk_rebuild_settings",
     "ImportRabbitMQSettings",
+    "IMPORT_LATEST_VERSION_KEY_PREFIX",
     "get_import_settings",
     "has_rabbitmq_url_configured",
     "is_aio_pika_installed",

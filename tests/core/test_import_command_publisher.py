@@ -1,4 +1,5 @@
 import asyncio
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 from app.core.mq.config.document.import_settings import ImportRabbitMQSettings
@@ -73,9 +74,7 @@ def test_publish_import_commands_serializes_and_publishes(monkeypatch) -> None:
     exchange = _FakeExchange()
     queue = _FakeQueue()
     channel = _FakeChannel(exchange, queue)
-    connection = _FakeConnection(channel)
     settings = ImportRabbitMQSettings(
-        url="amqp://guest:guest@localhost:5672/",
         exchange="knowledge.import",
         command_queue="knowledge.import.command.q",
         command_routing_key="knowledge.import.command",
@@ -84,16 +83,30 @@ def test_publish_import_commands_serializes_and_publishes(monkeypatch) -> None:
         latest_version_key_prefix="kb:latest",
     )
 
-    async def _fake_connect(_url: str):
-        return connection
+    @asynccontextmanager
+    async def _fake_open_publish_channel():
+        connection = _FakeConnection(channel)
+        resource = type(
+            "_FakePublishResources",
+            (),
+            {
+                "channel": channel,
+                "exchange_type_enum": _FakeExchangeType,
+                "message_cls": _FakeMessage,
+                "delivery_mode_enum": _FakeDeliveryMode,
+                "connection": connection,
+            },
+        )()
+        async with connection:
+            yield resource
 
     monkeypatch.setattr(
         "app.core.mq.producers.document.import_command_publisher.get_import_settings",
         lambda: settings,
     )
     monkeypatch.setattr(
-        "app.core.mq.producers.document.import_command_publisher.load_aio_pika_publisher",
-        lambda: (_fake_connect, _FakeExchangeType, _FakeMessage, _FakeDeliveryMode),
+        "app.core.mq.producers.document.import_command_publisher.open_publish_channel",
+        _fake_open_publish_channel,
     )
 
     message = KnowledgeImportCommandMessage(
@@ -115,26 +128,12 @@ def test_publish_import_commands_serializes_and_publishes(monkeypatch) -> None:
     _, routing_key = exchange.published[0]
     assert routing_key == "knowledge.import.command"
     assert queue.bind_calls[0][1] == "knowledge.import.command"
-    assert connection.publisher_confirms is True
 
 
 def test_publish_import_commands_noop_when_empty(monkeypatch) -> None:
     """验证输入为空时不会触发 MQ 连接。"""
-    called = {"load": False}
-
     monkeypatch.setattr(
-        "app.core.mq.producers.document.import_command_publisher.load_aio_pika_publisher",
-        lambda: (_mark_load_called(called), _FakeExchangeType, _FakeMessage, _FakeDeliveryMode),
+        "app.core.mq.producers.document.import_command_publisher.open_publish_channel",
+        lambda: (_ for _ in ()).throw(AssertionError("should not open channel")),
     )
     asyncio.run(publish_import_commands([]))
-    assert called["load"] is False
-
-
-def _mark_load_called(called: dict[str, bool]):
-    """构造用于空输入断言的假连接函数。"""
-
-    async def _fake_connect(_url: str):
-        called["load"] = True
-        raise RuntimeError("should not connect")
-
-    return _fake_connect
