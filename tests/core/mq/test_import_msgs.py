@@ -157,31 +157,29 @@ class TestImportResultMessage:
         )
         assert msg.duration_ms == 0
 
-    def test_build_preserves_optional_fields(self):
-        """测试目的：build 传入 filename、chunk_count 等可选字段时应保留。
-        预期结果：msg.filename、chunk_count、vector_count 与传入值一致。
+    def test_build_preserves_count_and_embedding_fields(self):
+        """测试目的：build 传入 chunk_count、vector_count、embedding_dim 时应保留。
+        预期结果：对应字段与传入值一致。
         """
         msg = KnowledgeImportResultMessage.build(
             **_VALID_RESULT_KWARGS,
-            filename="test.pdf",
             chunk_count=10,
             vector_count=10,
             embedding_dim=768,
         )
-        assert msg.filename == "test.pdf"
         assert msg.chunk_count == 10
         assert msg.vector_count == 10
         assert msg.embedding_dim == 768
 
     def test_build_defaults_optional_fields(self):
         """测试目的：不传可选字段时应使用默认值。
-        预期结果：filename 为 None，chunk_count/vector_count/embedding_dim 为 0。
+        预期结果：chunk_count/vector_count/embedding_dim 为 0，且不包含 filename。
         """
         msg = KnowledgeImportResultMessage.build(**_VALID_RESULT_KWARGS)
-        assert msg.filename is None
         assert msg.chunk_count == 0
         assert msg.vector_count == 0
         assert msg.embedding_dim == 0
+        assert "filename" not in msg.model_dump()
 
     def test_occurred_at_defaults_to_utc(self):
         """测试目的：未传 occurred_at 时应自动使用当前 UTC 时间。

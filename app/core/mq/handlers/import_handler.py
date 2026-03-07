@@ -9,8 +9,6 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timezone
 
-from loguru import logger
-
 from app.core.mq.broker import get_broker
 from app.core.mq.log import ImportStage, mq_log
 from app.core.mq.models.import_msgs import (
@@ -88,7 +86,6 @@ async def handle_import_command(msg: KnowledgeImportCommandMessage) -> None:
     # 发送 PROCESSING
     await _publish_result(task_uuid, KnowledgeImportResultMessage.build(
         **common, stage=ImportResultStage.PROCESSING, message="处理中",
-        filename=getattr(result, "filename", None),
     ))
 
     # 发送最终结果
@@ -99,7 +96,6 @@ async def handle_import_command(msg: KnowledgeImportCommandMessage) -> None:
             **common,
             stage=ImportResultStage.COMPLETED,
             message="导入完成",
-            filename=result.filename,
             chunk_count=result.chunk_count,
             vector_count=result.vector_count,
             embedding_dim=result.embedding_dim,
@@ -110,7 +106,6 @@ async def handle_import_command(msg: KnowledgeImportCommandMessage) -> None:
             **common,
             stage=ImportResultStage.FAILED,
             message=result.error,
-            filename=result.filename,
             embedding_dim=result.embedding_dim,
         ))
 

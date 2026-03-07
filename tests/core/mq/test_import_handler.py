@@ -31,7 +31,6 @@ _VALID_CMD = KnowledgeImportCommandMessage(
 def _success_result():
     return SimpleNamespace(
         status="success",
-        filename="a.pdf",
         chunk_count=10,
         vector_count=10,
         embedding_dim=1536,
@@ -42,7 +41,6 @@ def _success_result():
 def _failure_result():
     return SimpleNamespace(
         status="failed",
-        filename="a.pdf",
         chunk_count=0,
         vector_count=0,
         embedding_dim=0,
@@ -96,6 +94,7 @@ class TestHandleImportCommand:
             asyncio.run(handle_import_command(_VALID_CMD))
             last_msg = mock_pub.call_args_list[-1][0][0]
             assert last_msg.stage == ImportResultStage.COMPLETED
+            assert "filename" not in last_msg.model_dump()
 
     def test_business_exception_publishes_failed(self):
         """测试目的：业务逻辑抛出异常时应发布 FAILED 结果。
