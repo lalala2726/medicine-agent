@@ -81,6 +81,7 @@ class KnowledgeImportResultMessage(BaseModel):
         file_url: 导入文件地址。
         filename: 下载后文件名。
         file_type: 文件类型枚举值。
+        file_size: 文件大小（Bytes）。
         chunk_count: 切片数量。
         vector_count: 向量数量。
         embedding_model: 实际执行的向量模型。
@@ -100,6 +101,7 @@ class KnowledgeImportResultMessage(BaseModel):
     file_url: str = Field(..., min_length=1)
     filename: str | None = None
     file_type: FileKind | None = Field(default=None)
+    file_size: int | None = Field(default=None, ge=0)
     chunk_count: int = Field(default=0, ge=0)
     vector_count: int = Field(default=0, ge=0)
     embedding_model: str = Field(..., min_length=1)
@@ -122,6 +124,7 @@ class KnowledgeImportResultMessage(BaseModel):
             embedding_model: str,
             filename: str | None = None,
             file_type: FileKind | None = None,
+            file_size: int | None = None,
             chunk_count: int = 0,
             vector_count: int = 0,
             embedding_dim: int = 0,
@@ -142,6 +145,7 @@ class KnowledgeImportResultMessage(BaseModel):
             embedding_model: 向量模型名称。
             filename: 可选下载文件名。
             file_type: 文件类型枚举值。
+            file_size: 文件大小（Bytes）。
             chunk_count: 成功时切片总数。
             vector_count: 成功时向量总数。
             embedding_dim: 实际向量维度。
@@ -167,6 +171,7 @@ class KnowledgeImportResultMessage(BaseModel):
             file_url=file_url,
             filename=filename,
             file_type=file_type,
+            file_size=file_size,
             chunk_count=chunk_count,
             vector_count=vector_count,
             embedding_model=embedding_model,

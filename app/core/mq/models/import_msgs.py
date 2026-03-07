@@ -79,6 +79,7 @@ class KnowledgeImportResultMessage(BaseModel):
         document_id: 文档 ID。
         file_url: 文件 URL。
         file_type: 文件类型枚举值。
+        file_size: 文件大小（Bytes）。
         chunk_count: 分块数。
         vector_count: 入库向量数。
         embedding_model: Embedding 模型名称。
@@ -97,6 +98,7 @@ class KnowledgeImportResultMessage(BaseModel):
     document_id: int = Field(..., gt=0)
     file_url: str = Field(..., min_length=1)
     file_type: FileKind | None = Field(default=None)
+    file_size: int | None = Field(default=None, ge=0)
     chunk_count: int = Field(default=0, ge=0)
     vector_count: int = Field(default=0, ge=0)
     embedding_model: str = Field(..., min_length=1)
@@ -118,6 +120,7 @@ class KnowledgeImportResultMessage(BaseModel):
             file_url: str,
             embedding_model: str,
             file_type: FileKind | None = None,
+            file_size: int | None = None,
             chunk_count: int = 0,
             vector_count: int = 0,
             embedding_dim: int = 0,
@@ -137,6 +140,7 @@ class KnowledgeImportResultMessage(BaseModel):
             file_url: 文件 URL。
             embedding_model: Embedding 模型名称。
             file_type: 文件类型枚举值。
+            file_size: 文件大小（Bytes）。
             chunk_count: 分块数。
             vector_count: 向量数。
             embedding_dim: Embedding 维度。
@@ -159,6 +163,7 @@ class KnowledgeImportResultMessage(BaseModel):
             document_id=document_id,
             file_url=file_url,
             file_type=file_type,
+            file_size=file_size,
             chunk_count=chunk_count,
             vector_count=vector_count,
             embedding_model=embedding_model,

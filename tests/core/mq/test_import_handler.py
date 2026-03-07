@@ -32,6 +32,7 @@ def _success_result():
     return SimpleNamespace(
         status="success",
         file_kind="pdf",
+        file_size=1572864,
         chunk_count=10,
         vector_count=10,
         embedding_dim=1536,
@@ -42,6 +43,7 @@ def _success_result():
 def _failure_result():
     return SimpleNamespace(
         status="failed",
+        file_size=1,
         chunk_count=0,
         vector_count=0,
         embedding_dim=0,
@@ -96,6 +98,7 @@ class TestHandleImportCommand:
             last_msg = mock_pub.call_args_list[-1][0][0]
             assert last_msg.stage == ImportResultStage.COMPLETED
             assert last_msg.file_type == "pdf"
+            assert last_msg.file_size == 1572864
 
     def test_business_exception_publishes_failed(self):
         """测试目的：业务逻辑抛出异常时应发布 FAILED 结果。
@@ -130,3 +133,4 @@ class TestHandleImportCommand:
             asyncio.run(handle_import_command(_VALID_CMD))
             last_msg = mock_pub.call_args_list[-1][0][0]
             assert last_msg.stage == ImportResultStage.FAILED
+            assert last_msg.file_size == 1

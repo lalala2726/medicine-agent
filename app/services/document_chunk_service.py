@@ -349,6 +349,7 @@ def import_single_file(
     """
     vector_batch_size = _resolve_vector_batch_size()
     filename: str | None = None
+    file_size: int | None = None
     embedding_dim = 0
 
     try:
@@ -457,6 +458,7 @@ def import_single_file(
         return ImportSingleFileSuccessResult(
             file_url=url,
             filename=filename,
+            file_size=file_size,
             source_extension=source_extension,
             file_kind=parsed_document.file_kind.value,
             mime_type=parsed_document.mime_type,
@@ -480,6 +482,7 @@ def import_single_file(
         return ImportSingleFileFailedResult(
             file_url=url,
             filename=filename,
+            file_size=file_size,
             error=str(exc),
             embedding_model=embedding_model,
             embedding_dim=embedding_dim,

@@ -34,6 +34,7 @@ class ImportSingleFileSuccessResult(BaseModel):
     status: Literal["success"] = "success"
     file_url: str = Field(..., min_length=1)
     filename: str | None = None
+    file_size: int = Field(..., ge=0)
     source_extension: str = Field(..., min_length=1)
     file_kind: str = Field(..., min_length=1)
     mime_type: str = Field(..., min_length=1)
@@ -52,6 +53,7 @@ class ImportSingleFileFailedResult(BaseModel):
     status: Literal["failed"] = "failed"
     file_url: str = Field(..., min_length=1)
     filename: str | None = None
+    file_size: int | None = Field(default=None, ge=0)
     error: str = Field(..., min_length=1)
     embedding_model: str = Field(..., min_length=1)
     embedding_dim: int = Field(..., ge=0)

@@ -247,6 +247,7 @@ def test_import_single_file_runs_vectorization_and_insert_batches(
     assert result.status == "success"
     first = result
     assert first.filename == "demo.txt"
+    assert first.file_size == 5
     assert first.file_kind == "text"
     assert first.mime_type == "text/plain"
     assert first.source_extension == ".txt"
@@ -307,6 +308,7 @@ def test_import_single_file_keeps_downloaded_file_on_parse_failure(
 
     assert result.status == "failed"
     assert result.file_url == "https://example.com/demo.txt"
+    assert result.file_size == 5
     assert "mock parse error" in result.error
     assert source_path.exists()
 
