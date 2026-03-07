@@ -109,9 +109,8 @@ def test_rebuild_document_chunk_does_not_upsert_when_embedding_fails(
         "content": "old",
         "char_count": 3,
         "embedding": [0.1, 0.2],
-        "chunk_strategy": "character",
         "chunk_size": 500,
-        "token_size": 100,
+        "chunk_overlap": 0,
         "status": 0,
         "source_hash": "hash",
         "created_at_ts": 123,
@@ -151,9 +150,8 @@ def test_rebuild_document_chunk_upserts_once_and_preserves_metadata(
         "content": "old",
         "char_count": 3,
         "embedding": [0.1, 0.2],
-        "chunk_strategy": "character",
         "chunk_size": 500,
-        "token_size": 100,
+        "chunk_overlap": 0,
         "status": 0,
         "source_hash": "hash-1",
         "created_at_ts": 123,
@@ -187,9 +185,8 @@ def test_rebuild_document_chunk_upserts_once_and_preserves_metadata(
     assert row["id"] == 101
     assert row["document_id"] == 7
     assert row["chunk_index"] == 2
-    assert row["chunk_strategy"] == "character"
     assert row["chunk_size"] == 500
-    assert row["token_size"] == 100
+    assert row["chunk_overlap"] == 0
     assert row["status"] == 0
     assert row["content"] == "updated chunk"
     assert row["char_count"] == len("updated chunk")
@@ -211,9 +208,8 @@ def test_rebuild_document_chunk_rejects_stale_version_before_upsert(
         "content": "old",
         "char_count": 3,
         "embedding": [0.1, 0.2],
-        "chunk_strategy": "character",
         "chunk_size": 500,
-        "token_size": 100,
+        "chunk_overlap": 0,
         "status": 0,
         "source_hash": "hash-1",
         "created_at_ts": 123,

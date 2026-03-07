@@ -12,6 +12,7 @@ EXTENSION_TO_FILE_KIND: dict[str, FileKind] = {
     ".doc": FileKind.WORD,
     ".xlsx": FileKind.EXCEL,
     ".xls": FileKind.EXCEL,
+    ".csv": FileKind.EXCEL,
     ".pptx": FileKind.PPT,
     ".ppt": FileKind.PPT,
 }
@@ -26,6 +27,7 @@ MIME_TO_FILE_KIND: dict[str, FileKind] = {
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document": FileKind.WORD,
     "application/vnd.ms-excel": FileKind.EXCEL,
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": FileKind.EXCEL,
+    "text/csv": FileKind.EXCEL,
     "application/vnd.ms-powerpoint": FileKind.PPT,
     "application/vnd.openxmlformats-officedocument.presentationml.presentation": FileKind.PPT,
 }

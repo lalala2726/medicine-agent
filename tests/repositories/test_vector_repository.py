@@ -89,9 +89,9 @@ class _FakeMilvusClient:
         return self.describe_result
 
 
-def test_build_collection_schema_contains_standard_12_fields() -> None:
+def test_build_collection_schema_contains_standard_11_fields() -> None:
     """
-    测试目的：验证 Milvus repository 使用标准版 12 字段 schema。
+    测试目的：验证 Milvus repository 使用标准版 11 字段 schema。
     预期结果：schema 字段顺序、字段类型、向量维度与字符串长度约束均符合约定。
     """
     schema = repository_module._build_collection_schema(
@@ -106,9 +106,8 @@ def test_build_collection_schema_contains_standard_12_fields() -> None:
         "content",
         "char_count",
         "embedding",
-        "chunk_strategy",
         "chunk_size",
-        "token_size",
+        "chunk_overlap",
         "status",
         "source_hash",
         "created_at_ts",
@@ -128,13 +127,8 @@ def test_build_collection_schema_contains_standard_12_fields() -> None:
     assert fields["char_count"].dtype == DataType.INT32
     assert fields["embedding"].dtype == DataType.FLOAT_VECTOR
     assert fields["embedding"].params["dim"] == 1024
-    assert fields["chunk_strategy"].dtype == DataType.VARCHAR
-    assert (
-            fields["chunk_strategy"].params["max_length"]
-            == repository_module.DEFAULT_CHUNK_STRATEGY_MAX_LENGTH
-    )
     assert fields["chunk_size"].dtype == DataType.INT32
-    assert fields["token_size"].dtype == DataType.INT32
+    assert fields["chunk_overlap"].dtype == DataType.INT32
     assert fields["status"].dtype == DataType.INT32
     assert not fields["status"].params.get("default_value")
     assert fields["source_hash"].dtype == DataType.VARCHAR
@@ -338,9 +332,8 @@ def test_list_document_chunks_queries_with_expected_filter_and_fields(
         "chunk_index",
         "content",
         "char_count",
-        "chunk_strategy",
         "chunk_size",
-        "token_size",
+        "chunk_overlap",
         "status",
         "source_hash",
         "created_at_ts",
@@ -411,9 +404,8 @@ def test_update_document_chunk_status_reads_then_upserts(
             "content": "demo",
             "char_count": 4,
             "embedding": [0.1, 0.2],
-            "chunk_strategy": "character",
             "chunk_size": 500,
-            "token_size": 100,
+            "chunk_overlap": 0,
             "status": repository_module.KNOWLEDGE_STATUS_ENABLED,
             "source_hash": "hash-1",
             "created_at_ts": 1234567890,
@@ -530,9 +522,8 @@ def test_insert_embeddings_builds_full_payload_fields(
         embeddings=[[0.1, 0.2], [0.3, 0.4]],
         texts=["A", "BC"],
         start_chunk_index=7,
-        chunk_strategy="character",
         chunk_size=500,
-        token_size=100,
+        chunk_overlap=0,
         source_hash="hash-1",
         char_counts=[1, 2],
         created_at_ts=1234567890,
@@ -547,9 +538,8 @@ def test_insert_embeddings_builds_full_payload_fields(
     assert rows[1]["chunk_index"] == 8
     assert rows[0]["char_count"] == 1
     assert rows[1]["char_count"] == 2
-    assert rows[0]["chunk_strategy"] == "character"
     assert rows[0]["chunk_size"] == 500
-    assert rows[0]["token_size"] == 100
+    assert rows[0]["chunk_overlap"] == 0
     assert rows[0]["status"] == repository_module.DEFAULT_KNOWLEDGE_STATUS
     assert rows[1]["status"] == repository_module.DEFAULT_KNOWLEDGE_STATUS
     assert rows[0]["source_hash"] == "hash-1"

@@ -9,12 +9,11 @@ from pydantic import ValidationError
 
 from app.core.mq.models.import_msgs import (
     DEFAULT_COMMAND_CHUNK_SIZE,
-    DEFAULT_COMMAND_TOKEN_SIZE,
+    DEFAULT_COMMAND_CHUNK_OVERLAP,
     KnowledgeImportCommandMessage,
     KnowledgeImportResultMessage,
 )
 from app.core.mq.models.stages import ImportResultStage
-from app.rag.chunking import ChunkStrategyType
 
 # ---- 公共 fixtures -----------------------------------------------------------
 
@@ -67,13 +66,13 @@ class TestImportCommandMessage:
         msg = KnowledgeImportCommandMessage(**data)
         assert msg.chunk_size == DEFAULT_COMMAND_CHUNK_SIZE
 
-    def test_null_token_size_falls_back_to_default(self):
-        """测试目的：token_size 为 None 时应归一为默认值 100。
-        预期结果：msg.token_size == DEFAULT_COMMAND_TOKEN_SIZE。
+    def test_null_chunk_overlap_falls_back_to_default(self):
+        """测试目的：chunk_overlap 为 None 时应归一为默认值 0。
+        预期结果：msg.chunk_overlap == DEFAULT_COMMAND_CHUNK_OVERLAP。
         """
-        data = {**_VALID_COMMAND_DATA, "token_size": None}
+        data = {**_VALID_COMMAND_DATA, "chunk_overlap": None}
         msg = KnowledgeImportCommandMessage(**data)
-        assert msg.token_size == DEFAULT_COMMAND_TOKEN_SIZE
+        assert msg.chunk_overlap == DEFAULT_COMMAND_CHUNK_OVERLAP
 
     def test_explicit_chunk_size_is_preserved(self):
         """测试目的：显式传入 chunk_size 时不应被默认值覆盖。
@@ -83,12 +82,12 @@ class TestImportCommandMessage:
         msg = KnowledgeImportCommandMessage(**data)
         assert msg.chunk_size == 200
 
-    def test_default_chunk_strategy_is_character(self):
-        """测试目的：未指定 chunk_strategy 时应默认为 CHARACTER。
-        预期结果：msg.chunk_strategy == ChunkStrategyType.CHARACTER。
+    def test_default_chunk_overlap_is_zero(self):
+        """测试目的：未指定 chunk_overlap 时应默认为 0。
+        预期结果：msg.chunk_overlap == 0。
         """
         msg = KnowledgeImportCommandMessage(**_VALID_COMMAND_DATA)
-        assert msg.chunk_strategy == ChunkStrategyType.CHARACTER
+        assert msg.chunk_overlap == 0
 
     def test_empty_task_uuid_raises_validation_error(self):
         """测试目的：task_uuid 为空字符串时应校验失败。

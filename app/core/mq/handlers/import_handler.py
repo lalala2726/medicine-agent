@@ -71,9 +71,8 @@ async def handle_import_command(msg: KnowledgeImportCommandMessage) -> None:
             knowledge_name=msg.knowledge_name,
             document_id=msg.document_id,
             embedding_model=msg.embedding_model,
-            chunk_strategy=msg.chunk_strategy,
             chunk_size=msg.chunk_size,
-            token_size=msg.token_size,
+            chunk_overlap=msg.chunk_overlap,
             task_uuid=task_uuid,
         )
     except Exception as exc:

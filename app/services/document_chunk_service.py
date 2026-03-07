@@ -16,8 +16,10 @@ from app.core.mq.log import ImportStage, mq_log
 from app.core.mq.version_store import (
     get_chunk_rebuild_latest_version as get_chunk_edit_latest_version,
 )
-from app.rag.chunking import ChunkStrategyType, SplitChunk, SplitConfig, split_text
+from app.rag.chunking import SplitChunk, split_excel_text, split_text
 from app.rag.file_loader import parse_downloaded_file, validate_url_extension
+from app.rag.file_loader.parsers.excel_parser import parse_rows as parse_excel_rows
+from app.rag.file_loader.types import FileKind
 from app.repositories import vector_repository
 from app.schemas.knowledge_import import (
     ImportChunk,
@@ -33,8 +35,7 @@ EMBED_MAX_TOKEN_SIZE = 8192
 
 # 文档导入默认切片和入库参数。
 DEFAULT_CHUNK_SIZE = 500
-DEFAULT_TOKEN_SIZE = 100
-DEFAULT_CHUNK_OVERLAP = 50
+DEFAULT_CHUNK_OVERLAP = 0
 DEFAULT_VECTOR_BATCH_SIZE = 20
 DEFAULT_INSERT_VERIFY_MAX_RETRIES = 5
 DEFAULT_INSERT_VERIFY_INTERVAL_SECONDS = 0.2
@@ -47,9 +48,8 @@ CHUNK_REBUILD_OUTPUT_FIELDS = [
     "content",
     "char_count",
     "embedding",
-    "chunk_strategy",
     "chunk_size",
-    "token_size",
+    "chunk_overlap",
     "status",
     "source_hash",
     "created_at_ts",
@@ -261,29 +261,22 @@ def _validate_file_not_empty(file_path: Path) -> None:
 
 def _split_parsed_text(
         text: str,
-        chunk_strategy: ChunkStrategyType,
         chunk_size: int,
+        chunk_overlap: int,
 ) -> list[SplitChunk]:
-    """对解析后的文本执行切片。
+    """对解析后的文本执行字符长度切片。
 
     Args:
         text: 完整文本。
-        chunk_strategy: 切片策略。
-        chunk_size: 生效切片大小。
+        chunk_size: 字符分块大小。
+        chunk_overlap: 分段重叠字符数。
 
     Returns:
         list[SplitChunk]: 切片结果列表；空白文本返回空列表。
-
-    Raises:
-        ServiceException: 切片策略不支持或切片依赖不可用时抛出。
     """
     if not text.strip():
         return []
-    config = SplitConfig(
-        chunk_size=chunk_size,
-        chunk_overlap=DEFAULT_CHUNK_OVERLAP,
-    )
-    return split_text(text, chunk_strategy, config)
+    return split_text(text, chunk_size, chunk_overlap)
 
 
 def _ensure_document_visible_after_insert(
@@ -330,21 +323,21 @@ def import_single_file(
         knowledge_name: str,
         document_id: int,
         embedding_model: str,
-        chunk_strategy: ChunkStrategyType = ChunkStrategyType.CHARACTER,
         chunk_size: int = DEFAULT_CHUNK_SIZE,
-        token_size: int = DEFAULT_TOKEN_SIZE,
+        chunk_overlap: int = DEFAULT_CHUNK_OVERLAP,
         task_uuid: str = "-",
 ) -> ImportSingleFileResult:
     """执行单个文件的完整导入流程：校验、下载、解析、切片、向量化、入库。
+
+    Excel/CSV 文件使用行级合并切片（无重叠），其余文件使用字符长度切片。
 
     Args:
         url: 远程文件 URL。
         knowledge_name: 知识库名称。
         document_id: 文档 ID。
         embedding_model: 向量模型名称。
-        chunk_strategy: 切片策略。
-        chunk_size: 字符切片大小。
-        token_size: token 切片大小。
+        chunk_size: 字符分块大小。
+        chunk_overlap: 分段重叠字符数。
         task_uuid: 导入任务唯一标识，用于日志关联。
 
     Returns:
@@ -390,21 +383,18 @@ def import_single_file(
             text_length=len(parsed_text),
         )
 
-        effective_chunk_size = (
-            token_size if chunk_strategy == ChunkStrategyType.TOKEN else chunk_size
-        )
-        chunks = _split_parsed_text(
-            parsed_text,
-            chunk_strategy,
-            effective_chunk_size,
-        )
+        # Excel/CSV → 行级合并切片；其余 → 字符长度切片
+        if parsed_document.file_kind == FileKind.EXCEL:
+            rows = parse_excel_rows(file_path)
+            chunks = split_excel_text(rows, max_chunk_size=chunk_size)
+        else:
+            chunks = _split_parsed_text(parsed_text, chunk_size, chunk_overlap)
         mq_log(
             "import",
             ImportStage.CHUNK_DONE,
             task_uuid,
             chunk_count=len(chunks),
-            strategy=chunk_strategy.value,
-            chunk_size=effective_chunk_size,
+            chunk_size=chunk_size,
         )
 
         source_hash = _build_source_hash(parsed_text)
@@ -433,9 +423,8 @@ def import_single_file(
                 embeddings=batch_embeddings,
                 texts=batch_texts,
                 start_chunk_index=vector_count + 1,
-                chunk_strategy=chunk_strategy.name.lower(),
                 chunk_size=chunk_size,
-                token_size=token_size,
+                chunk_overlap=chunk_overlap,
                 source_hash=source_hash,
                 char_counts=[chunk.stats.char_count for chunk in batch_chunks],
                 created_at_ts=int(time() * 1000),
@@ -716,9 +705,8 @@ def add_document_chunk(
         "content": content,
         "char_count": len(content),
         "embedding": embedding,
-        "chunk_strategy": None,
         "chunk_size": None,
-        "token_size": None,
+        "chunk_overlap": None,
         "status": 0,
         "source_hash": None,
         "created_at_ts": int(time() * 1000),

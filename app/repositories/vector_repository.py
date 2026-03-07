@@ -13,7 +13,6 @@ from app.core.database import get_milvus_client
 from app.core.exception.exceptions import ServiceException
 
 DEFAULT_CONTENT_MAX_LENGTH = 65535  # 内容字段最大长度
-DEFAULT_CHUNK_STRATEGY_MAX_LENGTH = 32  # 切片策略字段最大长度
 DEFAULT_SOURCE_HASH_MAX_LENGTH = 64  # 源文本哈希字段最大长度（sha256）
 KNOWLEDGE_STATUS_ENABLED = 0  # 知识库启用状态
 KNOWLEDGE_STATUS_DISABLED = 1  # 知识库禁用状态
@@ -32,9 +31,8 @@ DOCUMENT_CHUNK_OUTPUT_FIELDS = [
     "content",
     "char_count",
     "embedding",
-    "chunk_strategy",
     "chunk_size",
-    "token_size",
+    "chunk_overlap",
     "status",
     "source_hash",
     "created_at_ts",
@@ -97,7 +95,7 @@ def _build_index_params(client: MilvusClient):
 def _build_collection_schema(embedding_dim: int, description: str) -> CollectionSchema:
     """
     功能描述:
-        构建知识库向量集合 schema（标准 12 字段版本）。
+        构建知识库向量集合 schema（标准 11 字段版本）。
 
     参数说明:
         embedding_dim (int): 向量维度。
@@ -147,22 +145,15 @@ def _build_collection_schema(embedding_dim: int, description: str) -> Collection
             dim=embedding_dim,
         ),
         FieldSchema(
-            name="chunk_strategy",
-            dtype=DataType.VARCHAR,
-            description="切片策略快照",
-            max_length=DEFAULT_CHUNK_STRATEGY_MAX_LENGTH,
-            nullable=True,
-        ),
-        FieldSchema(
             name="chunk_size",
             dtype=DataType.INT32,
-            description="切片大小参数快照",
+            description="字符分块大小参数快照",
             nullable=True,
         ),
         FieldSchema(
-            name="token_size",
+            name="chunk_overlap",
             dtype=DataType.INT32,
-            description="token 切片大小参数快照",
+            description="分段重叠字符数快照",
             nullable=True,
         ),
         FieldSchema(
@@ -480,9 +471,8 @@ def insert_embeddings(
         texts: list[str],
         *,
         start_chunk_index: int = 1,
-        chunk_strategy: str | None = None,
         chunk_size: int | None = None,
-        token_size: int | None = None,
+        chunk_overlap: int | None = None,
         source_hash: str | None = None,
         char_counts: list[int] | None = None,
         created_at_ts: int | None = None,
@@ -497,9 +487,8 @@ def insert_embeddings(
         embeddings (list[list[float]]): 向量列表。
         texts (list[str]): 文本列表。
         start_chunk_index (int): 本批首个 chunk 序号（从 1 开始）。
-        chunk_strategy (str | None): 切片策略快照，默认值为 None。
-        chunk_size (int | None): 字符切片大小快照，默认值为 None。
-        token_size (int | None): token 切片大小快照，默认值为 None。
+        chunk_size (int | None): 字符分块大小快照，默认值为 None。
+        chunk_overlap (int | None): 重叠字符数快照，默认值为 None。
         source_hash (str | None): 源文本哈希，默认值为 None。
         char_counts (list[int] | None): 每条文本字符数列表，默认值为 None。
         created_at_ts (int | None): 写入时间戳（毫秒），默认值为 None。
@@ -536,9 +525,8 @@ def insert_embeddings(
                 if char_counts is not None
                 else len(text)
             ),
-            "chunk_strategy": chunk_strategy,
             "chunk_size": chunk_size,
-            "token_size": token_size,
+            "chunk_overlap": chunk_overlap,
             "status": DEFAULT_KNOWLEDGE_STATUS,
             "source_hash": source_hash,
             "created_at_ts": created_at_ts,
@@ -662,9 +650,8 @@ def list_document_chunks(
                 "chunk_index",
                 "content",
                 "char_count",
-                "chunk_strategy",
                 "chunk_size",
-                "token_size",
+                "chunk_overlap",
                 "status",
                 "source_hash",
                 "created_at_ts",

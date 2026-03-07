@@ -4,7 +4,7 @@ import pytest
 
 from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException
-from app.rag.chunking import ChunkStats, ChunkStrategyType, SplitChunk
+from app.rag.chunking import ChunkStats, SplitChunk
 from app.rag.file_loader.types import FileKind, ParsedDocument
 from app.services import document_chunk_service as service_module
 
@@ -78,9 +78,8 @@ def test_import_single_file_succeeds_without_processing_stage_callback(
         knowledge_name="demo",
         document_id=2,
         embedding_model="text-embedding-v4",
-        chunk_strategy=ChunkStrategyType.CHARACTER,
         chunk_size=200,
-        token_size=50,
+        chunk_overlap=50,
     )
 
     assert result.status == "success"
@@ -120,9 +119,8 @@ def test_import_single_file_rejects_url_without_supported_suffix(
         knowledge_name="demo",
         document_id=1,
         embedding_model="text-embedding-v4",
-        chunk_strategy=ChunkStrategyType.CHARACTER,
         chunk_size=200,
-        token_size=50,
+        chunk_overlap=50,
     )
 
     assert result.status == "failed"
@@ -200,9 +198,8 @@ def test_import_single_file_runs_vectorization_and_insert_batches(
         knowledge_name="demo",
         document_id=2,
         embedding_model="text-embedding-v4",
-        chunk_strategy=ChunkStrategyType.CHARACTER,
         chunk_size=200,
-        token_size=50,
+        chunk_overlap=50,
     )
 
     assert result.status == "success"
@@ -219,9 +216,8 @@ def test_import_single_file_runs_vectorization_and_insert_batches(
     assert len(insert_calls) == 2
     assert insert_calls[0]["start_chunk_index"] == 1
     assert insert_calls[1]["start_chunk_index"] == 3
-    assert insert_calls[0]["chunk_strategy"] == "character"
     assert insert_calls[0]["chunk_size"] == 200
-    assert insert_calls[0]["token_size"] == 50
+    assert insert_calls[0]["chunk_overlap"] == 50
 
 
 def test_import_single_file_keeps_downloaded_file_on_parse_failure(
@@ -263,9 +259,8 @@ def test_import_single_file_keeps_downloaded_file_on_parse_failure(
         knowledge_name="demo",
         document_id=3,
         embedding_model="text-embedding-v4",
-        chunk_strategy=ChunkStrategyType.CHARACTER,
         chunk_size=10,
-        token_size=20,
+        chunk_overlap=20,
     )
 
     assert result.status == "failed"
@@ -348,9 +343,8 @@ def test_import_single_file_batches_are_strictly_serial(
         knowledge_name="demo",
         document_id=6,
         embedding_model="text-embedding-v4",
-        chunk_strategy=ChunkStrategyType.CHARACTER,
         chunk_size=100,
-        token_size=50,
+        chunk_overlap=50,
     )
 
     assert result.status == "success"
@@ -435,9 +429,8 @@ def test_import_single_file_fails_when_insert_visibility_check_not_passed(
         knowledge_name="demo",
         document_id=9,
         embedding_model="text-embedding-v4",
-        chunk_strategy=ChunkStrategyType.CHARACTER,
         chunk_size=200,
-        token_size=50,
+        chunk_overlap=50,
     )
 
     assert result.status == "failed"
