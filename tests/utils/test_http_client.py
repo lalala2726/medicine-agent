@@ -134,6 +134,34 @@ def test_http_client_keeps_raw_response_as_default(monkeypatch):
     assert result.text == "raw-body"
 
 
+def test_http_client_builds_per_request_timeout_without_passing_kwargs_to_send(monkeypatch):
+    client = HttpClient(base_url="http://example.com")
+    captured_timeout = None
+
+    async def _fake_send(request: httpx.Request):
+        nonlocal captured_timeout
+        captured_timeout = request.extensions.get("timeout")
+        return _build_response(request.method, str(request.url), body="raw-body")
+
+    monkeypatch.setattr(client._client, "send", _fake_send)
+
+    result = asyncio.run(
+        client.get(
+            "/raw",
+            headers={"Authorization": "Bearer test"},
+            timeout=7.5,
+        )
+    )
+    asyncio.run(client.close())
+
+    assert isinstance(result, httpx.Response)
+    assert captured_timeout is not None
+    assert captured_timeout["connect"] == 7.5
+    assert captured_timeout["read"] == 7.5
+    assert captured_timeout["write"] == 7.5
+    assert captured_timeout["pool"] == 7.5
+
+
 def test_http_client_returns_json_data_when_response_format_json(monkeypatch):
     client = HttpClient(base_url="http://example.com")
 

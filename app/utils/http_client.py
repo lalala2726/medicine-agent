@@ -376,23 +376,26 @@ class HttpClient:
                 len(content) if content else 0,
             )
         try:
+            request_kwargs: dict[str, Any] = {
+                "method": method,
+                "url": url,
+                "headers": built_headers,
+                "params": params,
+                "json": json,
+                "data": data,
+                "content": content,
+            }
+            if timeout is not None:
+                request_kwargs["timeout"] = timeout
+
             request_obj = self._client.build_request(
-                method=method,
-                url=url,
-                headers=built_headers,
-                params=params,
-                json=json,
-                data=data,
-                content=content,
+                **request_kwargs,
             )
             self._attach_system_signature(
                 request_obj,
                 use_system_signature=should_use_system_signature,
             )
-            response = await self._client.send(
-                request_obj,
-                timeout=timeout,
-            )
+            response = await self._client.send(request_obj)
         except httpx.HTTPError as exc:
             if log_enabled:
                 logger.error(
