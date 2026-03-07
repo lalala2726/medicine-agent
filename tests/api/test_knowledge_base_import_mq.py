@@ -37,4 +37,4 @@ def test_import_route_is_removed(monkeypatch) -> None:
         },
     )
 
-    assert response.status_code == 405
+    assert response.status_code == 404
