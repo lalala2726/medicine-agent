@@ -47,7 +47,7 @@ def test_import_single_file_emits_processing_stage_callbacks(
     )
     monkeypatch.setattr(
         knowledge_base_service,
-        "_create_embedding_client",
+        "create_embedding_client",
         lambda **_: object(),
     )
     monkeypatch.setattr(
@@ -119,7 +119,7 @@ def test_import_single_file_rejects_url_without_supported_suffix(
     )
     monkeypatch.setattr(
         knowledge_base_service,
-        "_create_embedding_client",
+        "create_embedding_client",
         lambda **_: object(),
     )
 
@@ -175,7 +175,7 @@ def test_import_single_file_runs_vectorization_and_insert_batches(
     )
     monkeypatch.setattr(
         knowledge_base_service,
-        "_create_embedding_client",
+        "create_embedding_client",
         lambda **_: object(),
     )
     monkeypatch.setattr(
@@ -257,7 +257,7 @@ def test_import_single_file_keeps_downloaded_file_on_parse_failure(
     )
     monkeypatch.setattr(
         knowledge_base_service,
-        "_create_embedding_client",
+        "create_embedding_client",
         lambda **_: object(),
     )
     monkeypatch.setattr(
@@ -319,7 +319,7 @@ def test_import_single_file_batches_are_strictly_serial(
     )
     monkeypatch.setattr(
         knowledge_base_service,
-        "_create_embedding_client",
+        "create_embedding_client",
         lambda **_: object(),
     )
 
@@ -411,7 +411,7 @@ def test_import_single_file_fails_when_insert_visibility_check_not_passed(
     )
     monkeypatch.setattr(
         knowledge_base_service,
-        "_create_embedding_client",
+        "create_embedding_client",
         lambda **_: object(),
     )
     monkeypatch.setattr(

@@ -6,7 +6,6 @@ from time import sleep, time
 
 from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException
-from app.core.llms import create_embedding_model
 from app.core.mq.contracts.import_models import ProcessingStageDetail
 from app.core.mq.observability.import_logger import ImportStage, import_log
 from app.rag.chunking import ChunkStrategyType, SplitChunk, SplitConfig, split_text
@@ -18,13 +17,12 @@ from app.schemas.knowledge_import import (
     ImportSingleFileResult,
     ImportSingleFileSuccessResult,
 )
+from app.services.chunk_service import create_embedding_client, embed_texts
 from app.utils.file_utils import FileUtils
-from app.utils.token_utills import TokenUtils
 
 DEFAULT_CHUNK_SIZE = 500  # 默认切片长度（字符）
 DEFAULT_TOKEN_SIZE = 100  # 默认 token 切片长度
 DEFAULT_CHUNK_OVERLAP = 50  # 默认切片重叠长度（字符）
-EMBED_MAX_TOKEN_SIZE = 8192  # 向量化前单文本最大 token 限制
 DEFAULT_VECTOR_BATCH_SIZE = 20  # 向量化与入库默认批次大小
 DEFAULT_INSERT_VERIFY_MAX_RETRIES = 5  # 写入后可见性校验最大重试次数
 DEFAULT_INSERT_VERIFY_INTERVAL_SECONDS = 0.2  # 写入后可见性校验重试间隔（秒）
@@ -96,66 +94,6 @@ def _build_source_hash(text: str) -> str:
         无。
     """
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
-
-
-def _create_embedding_client(*, embedding_model: str, embedding_dim: int):
-    """
-    创建向量模型客户端。
-
-    Args:
-        embedding_model: 向量模型名称。
-        embedding_dim: 向量维度。
-
-    Returns:
-        向量模型客户端实例。
-
-    Raises:
-        ServiceException: 模型初始化失败时抛出。
-    """
-    try:
-        return create_embedding_model(
-            model=embedding_model,
-            dimensions=embedding_dim,
-        )
-    except Exception as exc:  # pragma: no cover - 依赖外部模型 SDK
-        raise ServiceException(message=f"初始化向量模型失败: {exc}") from exc
-
-
-def embed_texts(
-        texts: list[str],
-        *,
-        embedding_client,
-) -> list[list[float]]:
-    """
-    对文本列表执行向量化。
-
-    Args:
-        texts: 待向量化文本列表。
-        embedding_client: 向量模型客户端。
-
-    Returns:
-        向量列表，顺序与 `texts` 一致。
-
-    Raises:
-        ServiceException: 文本超过 token 限制或向量化失败。
-    """
-    if not texts:
-        return []
-
-    token_counts = TokenUtils.count_tokens_list(texts)
-    for token_count in token_counts:
-        if token_count > EMBED_MAX_TOKEN_SIZE:
-            raise ServiceException(
-                message=(
-                    "文本超出最大 token 数限制，"
-                    f"最大 token 数为 {EMBED_MAX_TOKEN_SIZE}, 当前 token 数为 {token_count}"
-                ),
-            )
-
-    try:
-        return embedding_client.embed_documents(texts)
-    except Exception as exc:  # pragma: no cover - 依赖外部模型 SDK
-        raise ServiceException(message=f"嵌入文本失败: {exc}") from exc
 
 
 def _download_file(url: str) -> tuple[str, Path]:
@@ -379,7 +317,7 @@ def import_single_file(
         embedding_dim = vector_repository.get_collection_embedding_dim(
             knowledge_name=knowledge_name
         )
-        embedding_client = _create_embedding_client(
+        embedding_client = create_embedding_client(
             embedding_model=embedding_model,
             embedding_dim=embedding_dim,
         )

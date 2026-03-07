@@ -2,7 +2,7 @@ import pytest
 
 from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException
-from app.services import chunk_rebuild_service as service_module
+from app.services import chunk_service as service_module
 
 
 class _FakeMilvusClient:
@@ -26,8 +26,8 @@ def test_rebuild_document_chunk_raises_when_vector_row_missing(
     client = _FakeMilvusClient()
     monkeypatch.setattr(service_module.vector_repository, "ensure_collection_exists", lambda **_: None)
     monkeypatch.setattr(service_module.vector_repository, "get_collection_embedding_dim", lambda **_: 1024)
-    monkeypatch.setattr(service_module, "_create_embedding_client", lambda **_: object())
-    monkeypatch.setattr(service_module, "_embed_content", lambda **_: [0.1, 0.2])
+    monkeypatch.setattr(service_module, "create_embedding_client", lambda **_: object())
+    monkeypatch.setattr(service_module, "embed_single_text", lambda **_: [0.1, 0.2])
     monkeypatch.setattr(service_module, "get_milvus_client", lambda: client)
 
     with pytest.raises(ServiceException) as exc_info:
@@ -53,8 +53,8 @@ def test_rebuild_document_chunk_raises_when_document_id_mismatches(
     client.get_result = [{"id": 101, "document_id": 9}]
     monkeypatch.setattr(service_module.vector_repository, "ensure_collection_exists", lambda **_: None)
     monkeypatch.setattr(service_module.vector_repository, "get_collection_embedding_dim", lambda **_: 1024)
-    monkeypatch.setattr(service_module, "_create_embedding_client", lambda **_: object())
-    monkeypatch.setattr(service_module, "_embed_content", lambda **_: [0.1, 0.2])
+    monkeypatch.setattr(service_module, "create_embedding_client", lambda **_: object())
+    monkeypatch.setattr(service_module, "embed_single_text", lambda **_: [0.1, 0.2])
     monkeypatch.setattr(service_module, "get_milvus_client", lambda: client)
 
     with pytest.raises(ServiceException, match="向量记录与文档ID不匹配"):
@@ -82,7 +82,7 @@ def test_rebuild_document_chunk_propagates_model_initialization_failure(
     def _raise_create_error(**_kwargs):
         raise ServiceException(message="初始化向量模型失败: mock init error")
 
-    monkeypatch.setattr(service_module, "_create_embedding_client", _raise_create_error)
+    monkeypatch.setattr(service_module, "create_embedding_client", _raise_create_error)
 
     with pytest.raises(ServiceException, match="初始化向量模型失败"):
         service_module.rebuild_document_chunk(
@@ -118,13 +118,13 @@ def test_rebuild_document_chunk_does_not_upsert_when_embedding_fails(
     }]
     monkeypatch.setattr(service_module.vector_repository, "ensure_collection_exists", lambda **_: None)
     monkeypatch.setattr(service_module.vector_repository, "get_collection_embedding_dim", lambda **_: 1024)
-    monkeypatch.setattr(service_module, "_create_embedding_client", lambda **_: object())
+    monkeypatch.setattr(service_module, "create_embedding_client", lambda **_: object())
     monkeypatch.setattr(service_module, "get_milvus_client", lambda: client)
 
     def _raise_embed_error(**_kwargs):
         raise ServiceException(message="嵌入文本失败: mock error")
 
-    monkeypatch.setattr(service_module, "_embed_content", _raise_embed_error)
+    monkeypatch.setattr(service_module, "embed_single_text", _raise_embed_error)
 
     with pytest.raises(ServiceException, match="嵌入文本失败"):
         service_module.rebuild_document_chunk(
@@ -160,8 +160,8 @@ def test_rebuild_document_chunk_upserts_once_and_preserves_metadata(
     }]
     monkeypatch.setattr(service_module.vector_repository, "ensure_collection_exists", lambda **_: None)
     monkeypatch.setattr(service_module.vector_repository, "get_collection_embedding_dim", lambda **_: 1024)
-    monkeypatch.setattr(service_module, "_create_embedding_client", lambda **_: object())
-    monkeypatch.setattr(service_module, "_embed_content", lambda **_: [0.5, 0.6])
+    monkeypatch.setattr(service_module, "create_embedding_client", lambda **_: object())
+    monkeypatch.setattr(service_module, "embed_single_text", lambda **_: [0.5, 0.6])
     monkeypatch.setattr(service_module, "get_chunk_edit_latest_version", lambda **_: 3)
     monkeypatch.setattr(service_module, "get_milvus_client", lambda: client)
 
@@ -220,8 +220,8 @@ def test_rebuild_document_chunk_rejects_stale_version_before_upsert(
     }]
     monkeypatch.setattr(service_module.vector_repository, "ensure_collection_exists", lambda **_: None)
     monkeypatch.setattr(service_module.vector_repository, "get_collection_embedding_dim", lambda **_: 1024)
-    monkeypatch.setattr(service_module, "_create_embedding_client", lambda **_: object())
-    monkeypatch.setattr(service_module, "_embed_content", lambda **_: [0.5, 0.6])
+    monkeypatch.setattr(service_module, "create_embedding_client", lambda **_: object())
+    monkeypatch.setattr(service_module, "embed_single_text", lambda **_: [0.5, 0.6])
     monkeypatch.setattr(service_module, "get_chunk_edit_latest_version", lambda **_: 6)
     monkeypatch.setattr(service_module, "get_milvus_client", lambda: client)
 
