@@ -128,7 +128,7 @@
   This protocol only supports single-chunk rebuild. It uses shared Redis latest-version gating by
   `vector_id`, with key format `{KNOWLEDGE_CHUNK_EDIT_LATEST_VERSION_KEY_PREFIX}:{vector_id}`; stale
   messages are dropped with reason logging and do not update Milvus.
-- Knowledge import structured logging (`app/core/mq/observability/import_logger.py`):
+- Knowledge import structured logging (`app/core/mq/observability/document/import_logger.py`):
   `ImportStage` enum identifies each pipeline step. Use `import_log(stage, task_uuid, **metrics)`
   for one-line structured log output; log level is auto-selected (error / warning / info).
 - HTTP client configuration (optional): `HTTP_BASE_URL` (defaults to `http://localhost:8080`).

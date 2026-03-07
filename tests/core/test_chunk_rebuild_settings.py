@@ -1,7 +1,9 @@
 import pytest
 
 from app.core.exception.exceptions import ServiceException
-from app.core.mq.config.chunk_rebuild_settings import get_chunk_rebuild_settings
+from app.core.mq.config.document.chunk_rebuild_settings import (
+    get_chunk_rebuild_settings,
+)
 from app.core.mq.config.common import is_chunk_rebuild_consumer_enabled
 
 

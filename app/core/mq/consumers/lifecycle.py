@@ -11,9 +11,11 @@ from app.core.mq.config.common import (
     is_chunk_rebuild_consumer_enabled,
     is_import_consumer_enabled,
 )
-from app.core.mq.consumers.chunk_add_consumer import run_chunk_add_consumer
-from app.core.mq.consumers.chunk_rebuild_consumer import run_chunk_rebuild_consumer
-from app.core.mq.consumers.import_consumer import run_import_consumer
+from app.core.mq.consumers.document.chunk_add_consumer import run_chunk_add_consumer
+from app.core.mq.consumers.document.chunk_rebuild_consumer import (
+    run_chunk_rebuild_consumer,
+)
+from app.core.mq.consumers.document.import_consumer import run_import_consumer
 
 _consumer_task: asyncio.Task[None] | None = None
 _chunk_rebuild_consumer_task: asyncio.Task[None] | None = None

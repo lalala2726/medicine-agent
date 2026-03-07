@@ -9,7 +9,9 @@ from app.core.codes import ResponseCode
 from app.core.database import get_milvus_client
 from app.core.exception.exceptions import ServiceException
 from app.core.llms import create_embedding_model
-from app.core.mq.state.chunk_rebuild_version_store import get_latest_version as get_chunk_edit_latest_version
+from app.core.mq.state.document.chunk_rebuild_version_store import (
+    get_latest_version as get_chunk_edit_latest_version,
+)
 from app.repositories import vector_repository
 from app.utils.token_utills import TokenUtils
 

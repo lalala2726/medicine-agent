@@ -1,14 +1,5 @@
 """MQ 配置子包。"""
 
-from app.core.mq.config.chunk_add_settings import (
-    ChunkAddRabbitMQSettings,
-    get_chunk_add_settings,
-)
-from app.core.mq.config.chunk_rebuild_settings import (
-    CHUNK_EDIT_LATEST_VERSION_KEY_PREFIX_DEFAULT,
-    ChunkRebuildRabbitMQSettings,
-    get_chunk_rebuild_settings,
-)
 from app.core.mq.config.common import (
     has_rabbitmq_url_configured,
     is_aio_pika_installed,
@@ -16,8 +7,13 @@ from app.core.mq.config.common import (
     is_chunk_rebuild_consumer_enabled,
     is_import_consumer_enabled,
 )
-from app.core.mq.config.import_settings import (
+from app.core.mq.config.document import (
+    ChunkAddRabbitMQSettings,
+    CHUNK_EDIT_LATEST_VERSION_KEY_PREFIX_DEFAULT,
+    ChunkRebuildRabbitMQSettings,
     ImportRabbitMQSettings,
+    get_chunk_add_settings,
+    get_chunk_rebuild_settings,
     get_import_settings,
 )
 from app.core.mq.config.topology import (

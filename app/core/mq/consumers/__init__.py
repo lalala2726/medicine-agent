@@ -1,14 +1,13 @@
 """MQ 消费者子包。"""
 
-from app.core.mq.consumers.chunk_add_consumer import (
+from app.core.mq.consumers.document import (
     parse_chunk_add_command,
-    run_chunk_add_consumer,
-)
-from app.core.mq.consumers.chunk_rebuild_consumer import (
     parse_chunk_rebuild_command,
+    parse_import_command,
+    run_chunk_add_consumer,
     run_chunk_rebuild_consumer,
+    run_import_consumer,
 )
-from app.core.mq.consumers.import_consumer import parse_import_command, run_import_consumer
 from app.core.mq.consumers.lifecycle import (
     start_chunk_add_consumer_if_enabled,
     start_chunk_rebuild_consumer_if_enabled,

@@ -4,7 +4,7 @@ import pytest
 
 from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException
-from app.core.mq.contracts.import_models import ProcessingStageDetail
+from app.core.mq.contracts.document.import_models import ProcessingStageDetail
 from app.rag.chunking import ChunkStats, ChunkStrategyType, SplitChunk
 from app.rag.file_loader.types import FileKind, ParsedDocument
 from app.services import knowledge_base_service

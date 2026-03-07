@@ -3,14 +3,16 @@ from __future__ import annotations
 from loguru import logger
 
 from app.core.mq._aio_pika_loader import load_aio_pika_publisher
-from app.core.mq.config.chunk_add_settings import get_chunk_add_settings
-from app.core.mq.contracts.chunk_add_models import KnowledgeChunkAddResultMessage
+from app.core.mq.config.document.chunk_rebuild_settings import get_chunk_rebuild_settings
+from app.core.mq.contracts.document.chunk_rebuild_models import (
+    KnowledgeChunkRebuildResultMessage,
+)
 
 
-async def publish_chunk_add_result(
-        message_payload: KnowledgeChunkAddResultMessage,
+async def publish_chunk_rebuild_result(
+        message_payload: KnowledgeChunkRebuildResultMessage,
 ) -> bool:
-    """发布单条手工新增切片结果消息。
+    """发布单条切片重建结果消息。
 
     Args:
         message_payload: 待投递的结果消息对象。
@@ -19,7 +21,7 @@ async def publish_chunk_add_result(
         bool: 消息成功投递到目标 exchange 时返回 ``True``，否则返回 ``False``。
     """
     connect_robust, exchange_type_enum, message_cls, delivery_mode_enum = load_aio_pika_publisher()
-    settings = get_chunk_add_settings()
+    settings = get_chunk_rebuild_settings()
 
     try:
         connection = await connect_robust(settings.url)
@@ -37,7 +39,7 @@ async def publish_chunk_add_result(
             )
             await exchange.publish(message, routing_key=settings.result_routing_key)
         logger.info(
-            "手工新增切片结果消息投递成功: task_uuid={}, stage={}, routing_key={}",
+            "切片重建结果消息投递成功: task_uuid={}, stage={}, routing_key={}",
             message_payload.task_uuid,
             message_payload.stage,
             settings.result_routing_key,
@@ -45,7 +47,7 @@ async def publish_chunk_add_result(
         return True
     except Exception as exc:
         logger.error(
-            "手工新增切片结果消息投递失败: task_uuid={}, stage={}, routing_key={}, error={}",
+            "切片重建结果消息投递失败: task_uuid={}, stage={}, routing_key={}, error={}",
             message_payload.task_uuid,
             message_payload.stage,
             settings.result_routing_key,

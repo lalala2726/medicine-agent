@@ -1,7 +1,9 @@
 import pytest
 
-from app.core.mq.config.chunk_rebuild_settings import ChunkRebuildRabbitMQSettings
-from app.core.mq.state.chunk_rebuild_version_store import (
+from app.core.mq.config.document.chunk_rebuild_settings import (
+    ChunkRebuildRabbitMQSettings,
+)
+from app.core.mq.state.document.chunk_rebuild_version_store import (
     build_version_key,
     get_latest_version,
     is_stale,

@@ -6,8 +6,8 @@ from time import sleep, time
 
 from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException
-from app.core.mq.contracts.import_models import ProcessingStageDetail
-from app.core.mq.observability.import_logger import ImportStage, import_log
+from app.core.mq.contracts.document.import_models import ProcessingStageDetail
+from app.core.mq.observability.document.import_logger import ImportStage, import_log
 from app.rag.chunking import ChunkStrategyType, SplitChunk, SplitConfig, split_text
 from app.rag.file_loader import parse_downloaded_file, validate_url_extension
 from app.repositories import vector_repository

@@ -1,12 +1,12 @@
 import asyncio
 from datetime import datetime, timezone
 
-from app.core.mq.config.chunk_rebuild_settings import ChunkRebuildRabbitMQSettings
-from app.core.mq.consumers.chunk_rebuild_consumer import (
+from app.core.mq.config.document.chunk_rebuild_settings import ChunkRebuildRabbitMQSettings
+from app.core.mq.consumers.document.chunk_rebuild_consumer import (
     _handle_incoming_message,
     parse_chunk_rebuild_command,
 )
-from app.core.mq.contracts.chunk_rebuild_models import (
+from app.core.mq.contracts.document.chunk_rebuild_models import (
     ChunkRebuildResultStage,
     KnowledgeChunkRebuildCommandMessage,
 )
@@ -81,15 +81,15 @@ def test_handle_incoming_message_emits_started_and_completed(monkeypatch) -> Non
         return ChunkRebuildSuccessResult(embedding_dim=1024)
 
     monkeypatch.setattr(
-        "app.core.mq.consumers.chunk_rebuild_consumer.publish_chunk_rebuild_result",
+        "app.core.mq.consumers.document.chunk_rebuild_consumer.publish_chunk_rebuild_result",
         _fake_publish,
     )
     monkeypatch.setattr(
-        "app.core.mq.consumers.chunk_rebuild_consumer.get_latest_version",
+        "app.core.mq.consumers.document.chunk_rebuild_consumer.get_latest_version",
         lambda **_kwargs: 3,
     )
     monkeypatch.setattr(
-        "app.core.mq.consumers.chunk_rebuild_consumer.rebuild_document_chunk",
+        "app.core.mq.consumers.document.chunk_rebuild_consumer.rebuild_document_chunk",
         _fake_rebuild_document_chunk,
     )
 
@@ -118,15 +118,15 @@ def test_handle_incoming_message_emits_started_and_failed(monkeypatch) -> None:
         raise RuntimeError("mock failure")
 
     monkeypatch.setattr(
-        "app.core.mq.consumers.chunk_rebuild_consumer.publish_chunk_rebuild_result",
+        "app.core.mq.consumers.document.chunk_rebuild_consumer.publish_chunk_rebuild_result",
         _fake_publish,
     )
     monkeypatch.setattr(
-        "app.core.mq.consumers.chunk_rebuild_consumer.get_latest_version",
+        "app.core.mq.consumers.document.chunk_rebuild_consumer.get_latest_version",
         lambda **_kwargs: 3,
     )
     monkeypatch.setattr(
-        "app.core.mq.consumers.chunk_rebuild_consumer.rebuild_document_chunk",
+        "app.core.mq.consumers.document.chunk_rebuild_consumer.rebuild_document_chunk",
         _fake_rebuild_document_chunk,
     )
 
@@ -154,15 +154,15 @@ def test_handle_incoming_message_does_not_ack_when_result_publish_fails(monkeypa
         return ChunkRebuildSuccessResult(embedding_dim=1024)
 
     monkeypatch.setattr(
-        "app.core.mq.consumers.chunk_rebuild_consumer.publish_chunk_rebuild_result",
+        "app.core.mq.consumers.document.chunk_rebuild_consumer.publish_chunk_rebuild_result",
         _fake_publish,
     )
     monkeypatch.setattr(
-        "app.core.mq.consumers.chunk_rebuild_consumer.get_latest_version",
+        "app.core.mq.consumers.document.chunk_rebuild_consumer.get_latest_version",
         lambda **_kwargs: 3,
     )
     monkeypatch.setattr(
-        "app.core.mq.consumers.chunk_rebuild_consumer.rebuild_document_chunk",
+        "app.core.mq.consumers.document.chunk_rebuild_consumer.rebuild_document_chunk",
         _fake_rebuild_document_chunk,
     )
 
@@ -192,11 +192,11 @@ def test_handle_incoming_message_drops_stale_command_and_emits_failed(
         return True
 
     monkeypatch.setattr(
-        "app.core.mq.consumers.chunk_rebuild_consumer.publish_chunk_rebuild_result",
+        "app.core.mq.consumers.document.chunk_rebuild_consumer.publish_chunk_rebuild_result",
         _fake_publish,
     )
     monkeypatch.setattr(
-        "app.core.mq.consumers.chunk_rebuild_consumer.get_latest_version",
+        "app.core.mq.consumers.document.chunk_rebuild_consumer.get_latest_version",
         lambda **_kwargs: 5,
     )
 
@@ -220,15 +220,15 @@ def test_handle_incoming_message_emits_failed_when_write_phase_becomes_stale(
         return True
 
     monkeypatch.setattr(
-        "app.core.mq.consumers.chunk_rebuild_consumer.publish_chunk_rebuild_result",
+        "app.core.mq.consumers.document.chunk_rebuild_consumer.publish_chunk_rebuild_result",
         _fake_publish,
     )
     monkeypatch.setattr(
-        "app.core.mq.consumers.chunk_rebuild_consumer.get_latest_version",
+        "app.core.mq.consumers.document.chunk_rebuild_consumer.get_latest_version",
         lambda **_kwargs: 3,
     )
     monkeypatch.setattr(
-        "app.core.mq.consumers.chunk_rebuild_consumer.rebuild_document_chunk",
+        "app.core.mq.consumers.document.chunk_rebuild_consumer.rebuild_document_chunk",
         lambda **_kwargs: (_ for _ in ()).throw(
             ChunkRebuildMessageStaleError(vector_id=101, version=3, latest_version=4)
         ),

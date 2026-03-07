@@ -2,8 +2,8 @@ import pytest
 from redis.exceptions import RedisError
 
 from app.core.exception.exceptions import ServiceException
-from app.core.mq.config.import_settings import ImportRabbitMQSettings
-from app.core.mq.state.import_version_store import (
+from app.core.mq.config.document.import_settings import ImportRabbitMQSettings
+from app.core.mq.state.document.import_version_store import (
     build_version_key,
     get_latest_version,
     is_stale,

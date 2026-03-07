@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 from app.core.mq._aio_pika_loader import load_aio_pika_publisher
-from app.core.mq.config.import_settings import ImportRabbitMQSettings, get_import_settings
-from app.core.mq.contracts.import_models import KnowledgeImportCommandMessage
+from app.core.mq.config.document.import_settings import (
+    ImportRabbitMQSettings,
+    get_import_settings,
+)
+from app.core.mq.contracts.document.import_models import KnowledgeImportCommandMessage
 
 
 async def publish_import_commands(messages: list[KnowledgeImportCommandMessage]) -> None:

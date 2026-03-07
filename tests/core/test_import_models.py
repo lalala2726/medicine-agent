@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 
-from app.core.mq.contracts.import_models import (
+from app.core.mq.contracts.document.import_models import (
     ImportResultStage,
     KnowledgeImportCommandMessage,
     KnowledgeImportResultMessage,

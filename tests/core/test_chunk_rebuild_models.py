@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 import pytest
 from pydantic import ValidationError
 
-from app.core.mq.contracts.chunk_rebuild_models import (
+from app.core.mq.contracts.document.chunk_rebuild_models import (
     ChunkRebuildResultStage,
     KnowledgeChunkRebuildCommandMessage,
     KnowledgeChunkRebuildResultMessage,

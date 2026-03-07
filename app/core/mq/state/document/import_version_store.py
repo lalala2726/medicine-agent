@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from app.core.mq.config.import_settings import ImportRabbitMQSettings, get_import_settings
+from app.core.mq.config.document.import_settings import (
+    ImportRabbitMQSettings,
+    get_import_settings,
+)
 from app.core.mq.state._version_store_support import read_version_from_redis
 
 

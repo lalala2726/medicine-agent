@@ -1,7 +1,7 @@
 import pytest
 
 from app.core.exception.exceptions import ServiceException
-from app.core.mq.config.import_settings import get_import_settings
+from app.core.mq.config.document.import_settings import get_import_settings
 
 
 def test_get_import_settings_loads_defaults(

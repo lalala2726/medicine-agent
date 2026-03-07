@@ -8,20 +8,20 @@ from typing import Any
 from pydantic import ValidationError
 
 from app.core.mq._aio_pika_loader import load_aio_pika_consumer
-from app.core.mq.config.chunk_add_settings import (
+from app.core.mq.config.document.chunk_add_settings import (
     ChunkAddRabbitMQSettings,
     get_chunk_add_settings,
 )
-from app.core.mq.contracts.chunk_add_models import (
+from app.core.mq.contracts.document.chunk_add_models import (
     ChunkAddResultStage,
     KnowledgeChunkAddCommandMessage,
     KnowledgeChunkAddResultMessage,
 )
-from app.core.mq.observability.chunk_add_logger import (
+from app.core.mq.observability.document.chunk_add_logger import (
     ChunkAddStage,
     chunk_add_log,
 )
-from app.core.mq.producers.chunk_add_result_publisher import (
+from app.core.mq.producers.document.chunk_add_result_publisher import (
     publish_chunk_add_result,
 )
 from app.services.chunk_service import (

@@ -1,6 +1,6 @@
 """import_logger 模块单元测试。"""
 
-from app.core.mq.observability.import_logger import ImportStage, import_log
+from app.core.mq.observability.document.import_logger import ImportStage, import_log
 
 
 def test_import_log_info_stage_does_not_raise() -> None:

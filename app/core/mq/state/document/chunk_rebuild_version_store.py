@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from app.core.mq.config.chunk_rebuild_settings import (
+from app.core.mq.config.document.chunk_rebuild_settings import (
     CHUNK_EDIT_LATEST_VERSION_KEY_PREFIX_DEFAULT,
     ChunkRebuildRabbitMQSettings,
     get_chunk_rebuild_settings,

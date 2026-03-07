@@ -8,16 +8,19 @@ from typing import Any
 from pydantic import ValidationError
 
 from app.core.mq._aio_pika_loader import load_aio_pika_consumer
-from app.core.mq.config.import_settings import ImportRabbitMQSettings, get_import_settings
-from app.core.mq.contracts.import_models import (
+from app.core.mq.config.document.import_settings import (
+    ImportRabbitMQSettings,
+    get_import_settings,
+)
+from app.core.mq.contracts.document.import_models import (
     ImportResultStage,
     KnowledgeImportCommandMessage,
     KnowledgeImportResultMessage,
     ProcessingStageDetail,
 )
-from app.core.mq.observability.import_logger import ImportStage, import_log
-from app.core.mq.producers.import_result_publisher import publish_import_result
-from app.core.mq.state.import_version_store import is_stale
+from app.core.mq.observability.document.import_logger import ImportStage, import_log
+from app.core.mq.producers.document.import_result_publisher import publish_import_result
+from app.core.mq.state.document.import_version_store import is_stale
 from app.schemas.knowledge_import import ImportSingleFileSuccessResult
 from app.services.knowledge_base_service import import_single_file
 

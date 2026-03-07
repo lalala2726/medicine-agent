@@ -8,23 +8,23 @@ from typing import Any
 from pydantic import ValidationError
 
 from app.core.mq._aio_pika_loader import load_aio_pika_consumer
-from app.core.mq.config.chunk_rebuild_settings import (
+from app.core.mq.config.document.chunk_rebuild_settings import (
     ChunkRebuildRabbitMQSettings,
     get_chunk_rebuild_settings,
 )
-from app.core.mq.contracts.chunk_rebuild_models import (
+from app.core.mq.contracts.document.chunk_rebuild_models import (
     ChunkRebuildResultStage,
     KnowledgeChunkRebuildCommandMessage,
     KnowledgeChunkRebuildResultMessage,
 )
-from app.core.mq.observability.chunk_rebuild_logger import (
+from app.core.mq.observability.document.chunk_rebuild_logger import (
     ChunkRebuildStage,
     chunk_rebuild_log,
 )
-from app.core.mq.producers.chunk_rebuild_result_publisher import (
+from app.core.mq.producers.document.chunk_rebuild_result_publisher import (
     publish_chunk_rebuild_result,
 )
-from app.core.mq.state.chunk_rebuild_version_store import get_latest_version
+from app.core.mq.state.document.chunk_rebuild_version_store import get_latest_version
 from app.services.chunk_service import (
     ChunkRebuildMessageStaleError,
     ChunkRebuildSuccessResult,
