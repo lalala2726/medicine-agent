@@ -170,15 +170,35 @@ class TestImportResultMessage:
         assert msg.vector_count == 10
         assert msg.embedding_dim == 768
 
+    def test_build_preserves_file_type(self):
+        """测试目的：build 传入 file_type 时应保留。
+        预期结果：msg.file_type == "pdf"。
+        """
+        msg = KnowledgeImportResultMessage.build(
+            **_VALID_RESULT_KWARGS,
+            file_type="pdf",
+        )
+        assert msg.file_type == "pdf"
+
+    def test_build_rejects_unsupported_file_type(self):
+        """测试目的：不在枚举内的 file_type 应校验失败。
+        预期结果：file_type="html" 时抛出 ValidationError。
+        """
+        with pytest.raises(ValidationError):
+            KnowledgeImportResultMessage.build(
+                **_VALID_RESULT_KWARGS,
+                file_type="html",
+            )
+
     def test_build_defaults_optional_fields(self):
         """测试目的：不传可选字段时应使用默认值。
-        预期结果：chunk_count/vector_count/embedding_dim 为 0，且不包含 filename。
+        预期结果：chunk_count/vector_count/embedding_dim 为 0，且 file_type 为 None。
         """
         msg = KnowledgeImportResultMessage.build(**_VALID_RESULT_KWARGS)
         assert msg.chunk_count == 0
         assert msg.vector_count == 0
         assert msg.embedding_dim == 0
-        assert "filename" not in msg.model_dump()
+        assert msg.file_type is None
 
     def test_occurred_at_defaults_to_utc(self):
         """测试目的：未传 occurred_at 时应自动使用当前 UTC 时间。

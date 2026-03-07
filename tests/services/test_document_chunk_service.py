@@ -128,6 +128,48 @@ def test_import_single_file_rejects_url_without_supported_suffix(
     assert called["download"] is False
 
 
+def test_import_single_file_rejects_html_url_suffix(
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """验证 HTML 文件后缀不在导入支持列表内。"""
+    called = {"download": False}
+
+    def _fake_download(_url: str):
+        called["download"] = True
+        return "a.html", Path("/tmp/a.html")
+
+    monkeypatch.setattr(service_module, "_download_file", _fake_download)
+    monkeypatch.setattr(
+        service_module.vector_repository,
+        "ensure_collection_exists",
+        lambda **_: None,
+    )
+    monkeypatch.setattr(
+        service_module.vector_repository,
+        "get_collection_embedding_dim",
+        lambda **_: 1024,
+    )
+    monkeypatch.setattr(
+        service_module,
+        "create_embedding_client",
+        lambda **_: object(),
+    )
+
+    result = service_module.import_single_file(
+        url="https://example.com/file.html",
+        knowledge_name="demo",
+        document_id=1,
+        embedding_model="text-embedding-v4",
+        chunk_size=200,
+        chunk_overlap=50,
+    )
+
+    assert result.status == "failed"
+    assert result.file_url == "https://example.com/file.html"
+    assert "不支持的文件后缀" in result.error
+    assert called["download"] is False
+
+
 def test_import_single_file_runs_vectorization_and_insert_batches(
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,

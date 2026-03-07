@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from app.core.mq.contracts.document.result_stages import ImportResultStage
 from app.rag.chunking.types import MAX_CHUNK_OVERLAP, MAX_CHUNK_SIZE, MIN_CHUNK_SIZE
+from app.rag.file_loader.types import FileKind
 
 # command 默认字符切片大小。
 DEFAULT_COMMAND_CHUNK_SIZE = 500
@@ -79,6 +80,7 @@ class KnowledgeImportResultMessage(BaseModel):
         document_id: 业务文档 ID。
         file_url: 导入文件地址。
         filename: 下载后文件名。
+        file_type: 文件类型枚举值。
         chunk_count: 切片数量。
         vector_count: 向量数量。
         embedding_model: 实际执行的向量模型。
@@ -97,6 +99,7 @@ class KnowledgeImportResultMessage(BaseModel):
     document_id: int = Field(..., gt=0)
     file_url: str = Field(..., min_length=1)
     filename: str | None = None
+    file_type: FileKind | None = Field(default=None)
     chunk_count: int = Field(default=0, ge=0)
     vector_count: int = Field(default=0, ge=0)
     embedding_model: str = Field(..., min_length=1)
@@ -118,6 +121,7 @@ class KnowledgeImportResultMessage(BaseModel):
             file_url: str,
             embedding_model: str,
             filename: str | None = None,
+            file_type: FileKind | None = None,
             chunk_count: int = 0,
             vector_count: int = 0,
             embedding_dim: int = 0,
@@ -137,6 +141,7 @@ class KnowledgeImportResultMessage(BaseModel):
             file_url: 文件 URL。
             embedding_model: 向量模型名称。
             filename: 可选下载文件名。
+            file_type: 文件类型枚举值。
             chunk_count: 成功时切片总数。
             vector_count: 成功时向量总数。
             embedding_dim: 实际向量维度。
@@ -161,6 +166,7 @@ class KnowledgeImportResultMessage(BaseModel):
             document_id=document_id,
             file_url=file_url,
             filename=filename,
+            file_type=file_type,
             chunk_count=chunk_count,
             vector_count=vector_count,
             embedding_model=embedding_model,

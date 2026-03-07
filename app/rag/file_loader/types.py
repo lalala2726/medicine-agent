@@ -7,7 +7,7 @@ from enum import Enum
 class FileKind(str, Enum):
     """
     功能描述:
-        定义文件解析链路中的标准文件类型枚举，统一 URL 预检、魔数识别与解析器分发。
+        定义导入链路支持的标准文件类型枚举，统一 URL 预检、魔数识别与解析器分发。
 
     参数说明:
         无。枚举成员在类中固定定义。
@@ -21,7 +21,6 @@ class FileKind(str, Enum):
 
     TEXT = "text"
     MARKDOWN = "markdown"
-    HTML = "html"
     PDF = "pdf"
     WORD = "word"
     EXCEL = "excel"

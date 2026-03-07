@@ -5,7 +5,6 @@ from app.core.exception.exceptions import ServiceException
 from app.rag.file_loader.parsers import (
     BaseParser,
     ExcelParser,
-    HtmlParser,
     PdfParser,
     PptParser,
     TextParser,
@@ -16,7 +15,6 @@ from app.rag.file_loader.types import FileKind
 _PARSER_REGISTRY: dict[FileKind, BaseParser] = {
     FileKind.TEXT: TextParser(),
     FileKind.MARKDOWN: TextParser(),
-    FileKind.HTML: HtmlParser(),
     FileKind.PDF: PdfParser(),
     FileKind.WORD: WordParser(),
     FileKind.EXCEL: ExcelParser(),

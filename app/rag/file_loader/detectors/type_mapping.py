@@ -5,8 +5,6 @@ from app.rag.file_loader.types import FileKind
 EXTENSION_TO_FILE_KIND: dict[str, FileKind] = {
     ".txt": FileKind.TEXT,
     ".md": FileKind.MARKDOWN,
-    ".html": FileKind.HTML,
-    ".htm": FileKind.HTML,
     ".pdf": FileKind.PDF,
     ".docx": FileKind.WORD,
     ".doc": FileKind.WORD,
@@ -21,7 +19,6 @@ MIME_TO_FILE_KIND: dict[str, FileKind] = {
     "text/plain": FileKind.TEXT,
     "text/markdown": FileKind.MARKDOWN,
     "text/x-markdown": FileKind.MARKDOWN,
-    "text/html": FileKind.HTML,
     "application/pdf": FileKind.PDF,
     "application/msword": FileKind.WORD,
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document": FileKind.WORD,

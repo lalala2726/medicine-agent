@@ -95,6 +95,7 @@ async def handle_import_command(msg: KnowledgeImportCommandMessage) -> None:
             **common,
             stage=ImportResultStage.COMPLETED,
             message="导入完成",
+            file_type=result.file_kind,
             chunk_count=result.chunk_count,
             vector_count=result.vector_count,
             embedding_dim=result.embedding_dim,
