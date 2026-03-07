@@ -1,8 +1,7 @@
 """MQ 消息契约子包。"""
 
 from app.core.mq.contracts.document import (
-    ChunkAddResultStage,
-    ChunkRebuildResultStage,
+    DocumentChunkResultStage,
     ImportResultStage,
     KnowledgeChunkAddCommandMessage,
     KnowledgeChunkAddResultMessage,
@@ -13,8 +12,7 @@ from app.core.mq.contracts.document import (
 )
 
 __all__ = [
-    "ChunkAddResultStage",
-    "ChunkRebuildResultStage",
+    "DocumentChunkResultStage",
     "ImportResultStage",
     "KnowledgeChunkAddCommandMessage",
     "KnowledgeChunkAddResultMessage",

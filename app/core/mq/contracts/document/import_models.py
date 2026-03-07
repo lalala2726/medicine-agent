@@ -1,33 +1,17 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from enum import Enum
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from app.core.mq.contracts.document.result_stages import ImportResultStage
 from app.rag.chunking import ChunkStrategyType
 
 # command 默认字符切片大小。
 DEFAULT_COMMAND_CHUNK_SIZE = 500
 # command 默认 token 切片大小。
 DEFAULT_COMMAND_TOKEN_SIZE = 100
-
-
-class ImportResultStage(str, Enum):
-    """导入结果事件阶段枚举。
-
-    Attributes:
-        STARTED: 任务已接收，准备开始处理。
-        PROCESSING: 任务处理中，表示导入主流程正在执行。
-        COMPLETED: 导入流程已成功完成。
-        FAILED: 导入流程执行失败。
-    """
-
-    STARTED = "STARTED"
-    PROCESSING = "PROCESSING"
-    COMPLETED = "COMPLETED"
-    FAILED = "FAILED"
 
 
 class KnowledgeImportCommandMessage(BaseModel):

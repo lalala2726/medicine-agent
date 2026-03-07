@@ -1,27 +1,14 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from enum import Enum
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.core.mq.contracts.document.result_stages import DocumentChunkResultStage
+
 # 仅允许以字母开头，后续字符可包含字母、数字和下划线。
 KNOWLEDGE_NAME_PATTERN = r"^[A-Za-z][A-Za-z0-9_]*$"
-
-
-class ChunkRebuildResultStage(str, Enum):
-    """切片重建结果事件阶段枚举。
-
-    Attributes:
-        STARTED: 任务已接收，准备开始处理。
-        COMPLETED: 单切片内容和向量均已成功更新。
-        FAILED: 任务处理失败，或因版本过期被丢弃。
-    """
-
-    STARTED = "STARTED"
-    COMPLETED = "COMPLETED"
-    FAILED = "FAILED"
 
 
 class KnowledgeChunkRebuildCommandMessage(BaseModel):
@@ -90,7 +77,7 @@ class KnowledgeChunkRebuildResultMessage(BaseModel):
     message_type: Literal["knowledge_chunk_rebuild_result"] = "knowledge_chunk_rebuild_result"
     task_uuid: str = Field(..., min_length=1)
     version: int = Field(..., gt=0)
-    stage: ChunkRebuildResultStage
+    stage: DocumentChunkResultStage
     message: str = Field(..., min_length=1)
     knowledge_name: str = Field(..., min_length=1)
     document_id: int = Field(..., gt=0)
@@ -106,7 +93,7 @@ class KnowledgeChunkRebuildResultMessage(BaseModel):
             *,
             task_uuid: str,
             version: int,
-            stage: ChunkRebuildResultStage,
+            stage: DocumentChunkResultStage,
             message: str,
             knowledge_name: str,
             document_id: int,

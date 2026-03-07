@@ -13,10 +13,10 @@ from app.core.mq.config.document.chunk_rebuild_settings import (
     get_chunk_rebuild_settings,
 )
 from app.core.mq.contracts.document.chunk_rebuild_models import (
-    ChunkRebuildResultStage,
     KnowledgeChunkRebuildCommandMessage,
     KnowledgeChunkRebuildResultMessage,
 )
+from app.core.mq.contracts.document.result_stages import DocumentChunkResultStage
 from app.core.mq.observability.document.chunk_rebuild_logger import (
     ChunkRebuildStage,
     chunk_rebuild_log,
@@ -83,7 +83,7 @@ async def _emit_started(
     event = KnowledgeChunkRebuildResultMessage.build(
         task_uuid=command.task_uuid,
         version=command.version,
-        stage=ChunkRebuildResultStage.STARTED,
+        stage=DocumentChunkResultStage.STARTED,
         message="任务已接收，即将开始处理",
         knowledge_name=command.knowledge_name,
         document_id=command.document_id,
@@ -113,7 +113,7 @@ async def _emit_completed(
     event = KnowledgeChunkRebuildResultMessage.build(
         task_uuid=command.task_uuid,
         version=command.version,
-        stage=ChunkRebuildResultStage.COMPLETED,
+        stage=DocumentChunkResultStage.COMPLETED,
         message="切片重建成功",
         knowledge_name=command.knowledge_name,
         document_id=command.document_id,
@@ -146,7 +146,7 @@ async def _emit_failed(
     event = KnowledgeChunkRebuildResultMessage.build(
         task_uuid=command.task_uuid,
         version=command.version,
-        stage=ChunkRebuildResultStage.FAILED,
+        stage=DocumentChunkResultStage.FAILED,
         message=error_message,
         knowledge_name=command.knowledge_name,
         document_id=command.document_id,

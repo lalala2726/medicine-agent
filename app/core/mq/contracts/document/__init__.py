@@ -1,12 +1,10 @@
 """文档链路 MQ 消息契约子包。"""
 
 from app.core.mq.contracts.document.chunk_add_models import (
-    ChunkAddResultStage,
     KnowledgeChunkAddCommandMessage,
     KnowledgeChunkAddResultMessage,
 )
 from app.core.mq.contracts.document.chunk_rebuild_models import (
-    ChunkRebuildResultStage,
     KnowledgeChunkRebuildCommandMessage,
     KnowledgeChunkRebuildResultMessage,
 )
@@ -15,10 +13,10 @@ from app.core.mq.contracts.document.import_models import (
     KnowledgeImportCommandMessage,
     KnowledgeImportResultMessage,
 )
+from app.core.mq.contracts.document.result_stages import DocumentChunkResultStage
 
 __all__ = [
-    "ChunkAddResultStage",
-    "ChunkRebuildResultStage",
+    "DocumentChunkResultStage",
     "ImportResultStage",
     "KnowledgeChunkAddCommandMessage",
     "KnowledgeChunkAddResultMessage",

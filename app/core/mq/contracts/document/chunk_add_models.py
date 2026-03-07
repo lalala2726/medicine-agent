@@ -1,27 +1,14 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from enum import Enum
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.core.mq.contracts.document.result_stages import DocumentChunkResultStage
+
 # 仅允许以字母开头，后续字符可包含字母、数字和下划线。
 KNOWLEDGE_NAME_PATTERN = r"^[A-Za-z][A-Za-z0-9_]*$"
-
-
-class ChunkAddResultStage(str, Enum):
-    """手工新增切片结果事件阶段枚举。
-
-    Attributes:
-        STARTED: 任务已接收，准备开始处理。
-        COMPLETED: 切片向量化与入库均已成功完成。
-        FAILED: 任务处理失败。
-    """
-
-    STARTED = "STARTED"
-    COMPLETED = "COMPLETED"
-    FAILED = "FAILED"
 
 
 class KnowledgeChunkAddCommandMessage(BaseModel):
@@ -89,7 +76,7 @@ class KnowledgeChunkAddResultMessage(BaseModel):
     message_type: Literal["knowledge_chunk_add_result"] = "knowledge_chunk_add_result"
     task_uuid: str = Field(..., min_length=1)
     chunk_id: int = Field(..., gt=0)
-    stage: ChunkAddResultStage
+    stage: DocumentChunkResultStage
     message: str = Field(..., min_length=1)
     knowledge_name: str = Field(..., min_length=1)
     document_id: int = Field(..., gt=0)
@@ -106,7 +93,7 @@ class KnowledgeChunkAddResultMessage(BaseModel):
             *,
             task_uuid: str,
             chunk_id: int,
-            stage: ChunkAddResultStage,
+            stage: DocumentChunkResultStage,
             message: str,
             knowledge_name: str,
             document_id: int,

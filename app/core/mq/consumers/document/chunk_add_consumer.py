@@ -13,10 +13,10 @@ from app.core.mq.config.document.chunk_add_settings import (
     get_chunk_add_settings,
 )
 from app.core.mq.contracts.document.chunk_add_models import (
-    ChunkAddResultStage,
     KnowledgeChunkAddCommandMessage,
     KnowledgeChunkAddResultMessage,
 )
+from app.core.mq.contracts.document.result_stages import DocumentChunkResultStage
 from app.core.mq.observability.document.chunk_add_logger import (
     ChunkAddStage,
     chunk_add_log,
@@ -64,7 +64,7 @@ async def _emit_started(
     event = KnowledgeChunkAddResultMessage.build(
         task_uuid=command.task_uuid,
         chunk_id=command.chunk_id,
-        stage=ChunkAddResultStage.STARTED,
+        stage=DocumentChunkResultStage.STARTED,
         message="任务已接收，即将开始处理",
         knowledge_name=command.knowledge_name,
         document_id=command.document_id,
@@ -93,7 +93,7 @@ async def _emit_completed(
     event = KnowledgeChunkAddResultMessage.build(
         task_uuid=command.task_uuid,
         chunk_id=command.chunk_id,
-        stage=ChunkAddResultStage.COMPLETED,
+        stage=DocumentChunkResultStage.COMPLETED,
         message="切片新增成功",
         knowledge_name=command.knowledge_name,
         document_id=command.document_id,
@@ -127,7 +127,7 @@ async def _emit_failed(
     event = KnowledgeChunkAddResultMessage.build(
         task_uuid=command.task_uuid,
         chunk_id=command.chunk_id,
-        stage=ChunkAddResultStage.FAILED,
+        stage=DocumentChunkResultStage.FAILED,
         message=error_message,
         knowledge_name=command.knowledge_name,
         document_id=command.document_id,

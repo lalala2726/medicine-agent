@@ -7,9 +7,9 @@ from app.core.mq.consumers.document.chunk_rebuild_consumer import (
     parse_chunk_rebuild_command,
 )
 from app.core.mq.contracts.document.chunk_rebuild_models import (
-    ChunkRebuildResultStage,
     KnowledgeChunkRebuildCommandMessage,
 )
+from app.core.mq.contracts.document.result_stages import DocumentChunkResultStage
 from app.services.document_chunk_service import (
     ChunkRebuildMessageStaleError,
     ChunkRebuildSuccessResult,
@@ -97,8 +97,8 @@ def test_handle_incoming_message_emits_started_and_completed(monkeypatch) -> Non
 
     assert incoming.ack_called == 1
     assert [event.stage for event in events] == [
-        ChunkRebuildResultStage.STARTED,
-        ChunkRebuildResultStage.COMPLETED,
+        DocumentChunkResultStage.STARTED,
+        DocumentChunkResultStage.COMPLETED,
     ]
     assert all(event.version == 3 for event in events)
     assert events[-1].embedding_dim == 1024
@@ -134,8 +134,8 @@ def test_handle_incoming_message_emits_started_and_failed(monkeypatch) -> None:
 
     assert incoming.ack_called == 1
     assert [event.stage for event in events] == [
-        ChunkRebuildResultStage.STARTED,
-        ChunkRebuildResultStage.FAILED,
+        DocumentChunkResultStage.STARTED,
+        DocumentChunkResultStage.FAILED,
     ]
     assert events[-1].message == "mock failure"
 
@@ -203,7 +203,7 @@ def test_handle_incoming_message_drops_stale_command_and_emits_failed(
     asyncio.run(_handle_incoming_message(incoming, _build_settings()))
 
     assert incoming.ack_called == 1
-    assert [event.stage for event in events] == [ChunkRebuildResultStage.FAILED]
+    assert [event.stage for event in events] == [DocumentChunkResultStage.FAILED]
     assert "latest_version=5" in events[0].message
 
 
@@ -238,7 +238,7 @@ def test_handle_incoming_message_emits_failed_when_write_phase_becomes_stale(
 
     assert incoming.ack_called == 1
     assert [event.stage for event in events] == [
-        ChunkRebuildResultStage.STARTED,
-        ChunkRebuildResultStage.FAILED,
+        DocumentChunkResultStage.STARTED,
+        DocumentChunkResultStage.FAILED,
     ]
     assert "latest_version=4" in events[-1].message
