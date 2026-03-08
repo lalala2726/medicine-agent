@@ -79,7 +79,7 @@ class FileUtils:
     ) -> tuple[str, Path]:
         """
         功能描述:
-            下载远程文件到固定下载目录，并返回解析后的文件名与本地路径。
+            下载远程文件到系统临时目录，并返回解析后的文件名与本地路径。
 
         参数说明:
             file_url (str): 待下载文件 URL。
@@ -94,7 +94,7 @@ class FileUtils:
         异常说明:
             ServiceException:
                 - URL 无效或下载失败时抛出；
-                - 下载目录未配置/不可写时由下游抛出；
+                - 系统临时目录不可写时由下游抛出；
                 - 本地文件写入失败时抛出。
         """
         filename = FileUtils.resolve_filename_from_url(file_url)

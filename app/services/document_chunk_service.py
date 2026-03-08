@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from time import sleep, time
 
+from loguru import logger
 from pymilvus import exceptions as milvus_exceptions
 
 from app.core.codes import ResponseCode
@@ -349,6 +350,7 @@ def import_single_file(
     """
     vector_batch_size = _resolve_vector_batch_size()
     filename: str | None = None
+    file_path: Path | None = None
     file_size: int | None = None
     embedding_dim = 0
 
@@ -487,6 +489,17 @@ def import_single_file(
             embedding_model=embedding_model,
             embedding_dim=embedding_dim,
         )
+    finally:
+        if file_path is not None:
+            try:
+                file_path.unlink(missing_ok=True)
+            except OSError as exc:
+                logger.warning(
+                    "Failed to cleanup downloaded temp file: task_uuid={} path={} error={}",
+                    task_uuid,
+                    file_path,
+                    exc,
+                )
 
 
 def _ensure_latest_chunk_edit_version(*, vector_id: int, version: int) -> None:

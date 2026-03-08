@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import os
 import re
-import uuid
+import tempfile
 from datetime import datetime
 from pathlib import Path
 
 from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException
 
+# Deprecated: URL 下载不再读取该环境变量，统一使用系统临时目录。
 FILE_DOWNLOAD_ROOT_DIR_ENV = "FILE_DOWNLOAD_ROOT_DIR"
 DEFAULT_SAFE_FILENAME = "downloaded_file"
 _INVALID_FILENAME_PATTERN = re.compile(r'[<>:"|?*\x00-\x1f]')
@@ -79,28 +80,19 @@ def _ensure_writable_dir(path: Path) -> None:
 def resolve_download_root_dir() -> Path:
     """
     功能描述:
-        解析下载根目录配置并完成可写性校验。该配置为必填项。
+        返回系统临时目录并完成可写性校验。
 
     参数说明:
         无。
 
     返回值:
-        Path: 生效的下载根目录绝对路径。
+        Path: 生效的系统临时目录绝对路径。
 
     异常说明:
         ServiceException:
-            - 未配置 `FILE_DOWNLOAD_ROOT_DIR` 时抛出；
-            - 目录不可创建或不可写时抛出。
+            - 系统临时目录不可访问或不可写时抛出。
     """
-
-    raw_value = (os.getenv(FILE_DOWNLOAD_ROOT_DIR_ENV) or "").strip()
-    if not raw_value:
-        raise ServiceException(
-            code=ResponseCode.INTERNAL_ERROR,
-            message=f"{FILE_DOWNLOAD_ROOT_DIR_ENV} is not set",
-        )
-
-    root_dir = Path(raw_value).expanduser()
+    root_dir = Path(tempfile.gettempdir()).expanduser()
     _ensure_writable_dir(root_dir)
     return root_dir
 
@@ -111,30 +103,40 @@ def build_download_target_path(
 ) -> Path:
     """
     功能描述:
-        基于固定下载根目录构造文件落盘路径，目录按 `yyyy/mm/dd` 分层，
-        文件名按 `uuid_原文件名` 生成。
+        基于系统临时目录构造唯一下载文件路径，并保留原始文件后缀。
 
     参数说明:
         filename (str): 原始文件名。
-        now (datetime | None): 时间戳注入点，默认值为 None；为空时使用当前本地时间。
+        now (datetime | None): 时间戳注入点，默认值为 None；仅用于生成可读前缀。
 
     返回值:
-        Path: 最终下载落盘路径（文件可能尚未写入）。
+        Path: 最终下载落盘路径（已预留唯一临时文件名）。
 
     异常说明:
         ServiceException:
-            - 下载根目录未配置时抛出；
-            - 日期目录创建失败或不可写时抛出。
+            - 系统临时目录不可访问时抛出；
+            - 创建临时文件失败时抛出。
     """
-
     root_dir = resolve_download_root_dir()
     resolved_now = now or datetime.now()
-    date_dir = root_dir / f"{resolved_now.year:04d}" / f"{resolved_now.month:02d}" / f"{resolved_now.day:02d}"
-    _ensure_writable_dir(date_dir)
-
     resolved_filename = safe_filename(filename)
-    unique_prefix = str(uuid.uuid4())
-    return date_dir / f"{unique_prefix}_{resolved_filename}"
+    suffix = Path(resolved_filename).suffix
+    prefix = f"medicine_ai_agent_{resolved_now:%Y%m%d}_"
+
+    try:
+        fd, raw_path = tempfile.mkstemp(
+            dir=root_dir,
+            prefix=prefix,
+            suffix=suffix,
+        )
+    except OSError as exc:
+        raise ServiceException(
+            code=ResponseCode.INTERNAL_ERROR,
+            message=f"无法创建临时下载文件: {root_dir}",
+        ) from exc
+
+    os.close(fd)
+    return Path(raw_path)
 
 
 __all__ = [

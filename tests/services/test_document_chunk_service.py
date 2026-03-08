@@ -85,6 +85,7 @@ def test_import_single_file_succeeds_without_processing_stage_callback(
     assert result.status == "success"
     assert result.chunk_count == 3
     assert result.vector_count == 3
+    assert not source_path.exists()
 
 
 def test_import_single_file_rejects_url_without_supported_suffix(
@@ -261,6 +262,7 @@ def test_import_single_file_runs_vectorization_and_insert_batches(
     assert insert_calls[1]["start_chunk_index"] == 3
     assert insert_calls[0]["chunk_size"] == 200
     assert insert_calls[0]["chunk_overlap"] == 50
+    assert not source_path.exists()
 
 
 def test_import_single_file_allows_missing_mime_type_for_markdown(
@@ -338,13 +340,14 @@ def test_import_single_file_allows_missing_mime_type_for_markdown(
     assert result.file_kind == "markdown"
     assert result.mime_type is None
     assert result.chunk_count == 1
+    assert not source_path.exists()
 
 
-def test_import_single_file_keeps_downloaded_file_on_parse_failure(
+def test_import_single_file_cleans_downloaded_file_on_parse_failure(
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
 ) -> None:
-    """验证解析失败时保留已下载源文件。"""
+    """验证解析失败时仍会清理已下载临时文件。"""
     source_path = tmp_path / "demo.txt"
     source_path.write_text("dummy", encoding="utf-8")
 
@@ -387,7 +390,7 @@ def test_import_single_file_keeps_downloaded_file_on_parse_failure(
     assert result.file_url == "https://example.com/demo.txt"
     assert result.file_size == 5
     assert "mock parse error" in result.error
-    assert source_path.exists()
+    assert not source_path.exists()
 
 
 def test_import_single_file_batches_are_strictly_serial(
@@ -470,6 +473,7 @@ def test_import_single_file_batches_are_strictly_serial(
 
     assert result.status == "success"
     assert trace == ["embed-2", "insert-2", "embed-1", "insert-1"]
+    assert not source_path.exists()
 
 
 def test_import_single_file_fails_when_insert_visibility_check_not_passed(
@@ -556,6 +560,109 @@ def test_import_single_file_fails_when_insert_visibility_check_not_passed(
 
     assert result.status == "failed"
     assert "切片写入校验失败" in result.error
+    assert not source_path.exists()
+
+
+class _DummyLogger:
+    def __init__(self) -> None:
+        self.warning_logs: list[str] = []
+
+    @staticmethod
+    def _render(message, *args):
+        if not args:
+            return message
+        try:
+            return message.format(*args)
+        except Exception:
+            return f"{message} {args}"
+
+    def warning(self, message, *args):
+        self.warning_logs.append(self._render(message, *args))
+
+
+def test_import_single_file_cleanup_failure_does_not_override_result(
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+) -> None:
+    """验证删除临时文件失败时不覆盖主流程结果，仅记录 warning。"""
+    source_path = tmp_path / "demo.txt"
+    source_path.write_text("dummy", encoding="utf-8")
+    dummy_logger = _DummyLogger()
+    original_unlink = Path.unlink
+
+    def _fake_unlink(self: Path, missing_ok: bool = False) -> None:
+        if self == source_path:
+            raise OSError("cleanup failed")
+        original_unlink(self, missing_ok=missing_ok)
+
+    monkeypatch.setenv("KNOWLEDGE_VECTOR_BATCH_SIZE", "2")
+    monkeypatch.setattr(service_module, "logger", dummy_logger)
+    monkeypatch.setattr(Path, "unlink", _fake_unlink)
+    monkeypatch.setattr(
+        service_module,
+        "_download_file",
+        lambda _url: ("demo.txt", source_path),
+    )
+    monkeypatch.setattr(
+        service_module,
+        "parse_downloaded_file",
+        lambda **_: ParsedDocument(
+            file_kind=FileKind.TEXT,
+            mime_type="text/plain",
+            source_extension=".txt",
+            text="第一段",
+        ),
+    )
+    monkeypatch.setattr(
+        service_module.vector_repository,
+        "ensure_collection_exists",
+        lambda **_: None,
+    )
+    monkeypatch.setattr(
+        service_module.vector_repository,
+        "get_collection_embedding_dim",
+        lambda **_: 1024,
+    )
+    monkeypatch.setattr(
+        service_module,
+        "create_embedding_client",
+        lambda **_: object(),
+    )
+    monkeypatch.setattr(
+        service_module,
+        "embed_texts",
+        lambda texts, **_: [[0.1, 0.2] for _ in texts],
+    )
+    monkeypatch.setattr(
+        service_module.vector_repository,
+        "insert_embeddings",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        service_module.vector_repository,
+        "count_document_chunks",
+        lambda **_kwargs: 1,
+    )
+    monkeypatch.setattr(
+        service_module,
+        "_split_parsed_text",
+        lambda *_args, **_kwargs: [
+            SplitChunk(text="A", stats=ChunkStats(char_count=1)),
+        ],
+    )
+
+    result = service_module.import_single_file(
+        url="https://example.com/demo.txt",
+        knowledge_name="demo",
+        document_id=11,
+        embedding_model="text-embedding-v4",
+        chunk_size=100,
+        chunk_overlap=50,
+    )
+
+    assert result.status == "success"
+    assert source_path.exists()
+    assert any("Failed to cleanup downloaded temp file:" in item for item in dummy_logger.warning_logs)
 
 
 def _raise_parse_error() -> ParsedDocument:

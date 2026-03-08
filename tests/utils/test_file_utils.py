@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import pytest
 
+import app.utils.download_storage as download_storage
 import app.utils.file_utils as file_utils_module
-from app.core.exception.exceptions import ServiceException
-from app.utils.download_storage import FILE_DOWNLOAD_ROOT_DIR_ENV
 from app.utils.file_utils import FileUtils
 
 
@@ -30,19 +29,12 @@ class _FakeResponse:
         return chunk
 
 
-def test_download_file_writes_to_fixed_target_path(monkeypatch, tmp_path):
+def test_download_file_writes_to_system_temp_path(monkeypatch, tmp_path):
     """
-    测试目的：验证 download_file 使用固定目录目标路径写入文件且返回正确文件名。
-    预期结果：文件写入成功，返回路径与目标路径一致，文件内容与响应体一致。
+    测试目的：验证 download_file 使用系统临时目录目标路径写入文件且返回正确文件名。
+    预期结果：文件写入成功，返回路径位于临时目录，文件内容与响应体一致。
     """
-
-    target_path = tmp_path / "2026" / "03" / "03" / "fixed_download.txt"
-    target_path.parent.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setattr(
-        file_utils_module,
-        "build_download_target_path",
-        lambda _filename: target_path,
-    )
+    monkeypatch.setattr(download_storage.tempfile, "gettempdir", lambda: str(tmp_path))
     monkeypatch.setattr(
         file_utils_module,
         "urlopen",
@@ -58,17 +50,19 @@ def test_download_file_writes_to_fixed_target_path(monkeypatch, tmp_path):
     filename, saved_path = FileUtils.download_file("http://example.com/download")
 
     assert filename == "doc.txt"
-    assert saved_path == target_path
+    assert saved_path.parent == tmp_path
+    assert saved_path.suffix == ".txt"
     assert saved_path.read_bytes() == b"hello world"
+    saved_path.unlink(missing_ok=True)
 
 
-def test_download_file_raises_when_download_root_not_configured(monkeypatch):
+def test_download_file_succeeds_without_download_root_config(monkeypatch, tmp_path):
     """
-    测试目的：验证未配置 FILE_DOWNLOAD_ROOT_DIR 时下载流程会直接抛出配置异常。
-    预期结果：download_file 抛出 ServiceException，且错误文案包含 FILE_DOWNLOAD_ROOT_DIR。
+    测试目的：验证未配置 FILE_DOWNLOAD_ROOT_DIR 时下载流程仍可成功使用系统临时目录。
+    预期结果：download_file 成功返回，并将文件写入系统临时目录。
     """
-
-    monkeypatch.delenv(FILE_DOWNLOAD_ROOT_DIR_ENV, raising=False)
+    monkeypatch.delenv(download_storage.FILE_DOWNLOAD_ROOT_DIR_ENV, raising=False)
+    monkeypatch.setattr(download_storage.tempfile, "gettempdir", lambda: str(tmp_path))
     monkeypatch.setattr(
         file_utils_module,
         "urlopen",
@@ -81,7 +75,9 @@ def test_download_file_raises_when_download_root_not_configured(monkeypatch):
         ),
     )
 
-    with pytest.raises(ServiceException) as exc_info:
-        FileUtils.download_file("http://example.com/download")
+    filename, saved_path = FileUtils.download_file("http://example.com/download")
 
-    assert FILE_DOWNLOAD_ROOT_DIR_ENV in exc_info.value.message
+    assert filename == "test.txt"
+    assert saved_path.parent == tmp_path
+    assert saved_path.read_bytes() == b"payload"
+    saved_path.unlink(missing_ok=True)

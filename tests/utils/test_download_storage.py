@@ -1,48 +1,39 @@
 from __future__ import annotations
 
 from datetime import datetime
-from uuid import UUID
 
 import pytest
 
 import app.utils.download_storage as download_storage
-from app.core.exception.exceptions import ServiceException
 
 
-def test_resolve_download_root_dir_raises_when_env_missing(monkeypatch):
+def test_resolve_download_root_dir_uses_system_temp_dir(monkeypatch, tmp_path):
     """
-    测试目的：验证下载根目录未配置时会立即报错，避免回退到临时目录。
-    预期结果：resolve_download_root_dir 抛出 ServiceException，且错误文案包含 FILE_DOWNLOAD_ROOT_DIR。
+    测试目的：验证下载根目录统一解析为系统临时目录，无需环境变量。
+    预期结果：resolve_download_root_dir 返回 monkeypatch 后的临时目录。
     """
-
+    monkeypatch.setattr(download_storage.tempfile, "gettempdir", lambda: str(tmp_path))
     monkeypatch.delenv(download_storage.FILE_DOWNLOAD_ROOT_DIR_ENV, raising=False)
-
-    with pytest.raises(ServiceException) as exc_info:
-        download_storage.resolve_download_root_dir()
-
-    assert download_storage.FILE_DOWNLOAD_ROOT_DIR_ENV in exc_info.value.message
+    assert download_storage.resolve_download_root_dir() == tmp_path
 
 
-def test_build_download_target_path_uses_date_tree_and_uuid_prefix(monkeypatch, tmp_path):
+def test_build_download_target_path_uses_system_temp_dir_and_preserves_suffix(monkeypatch, tmp_path):
     """
-    测试目的：验证目标路径遵循 yyyy/mm/dd 目录规则，并采用 uuid_原文件名 的命名格式。
-    预期结果：返回路径位于指定日期目录下，文件名前缀为固定 UUID，且包含安全化后的原文件名。
+    测试目的：验证目标路径位于系统临时目录下，并保留原始文件后缀。
+    预期结果：返回路径位于临时目录，文件名带固定前缀且后缀正确。
     """
-
-    monkeypatch.setenv(download_storage.FILE_DOWNLOAD_ROOT_DIR_ENV, str(tmp_path))
-    monkeypatch.setattr(
-        download_storage.uuid,
-        "uuid4",
-        lambda: UUID("12345678-1234-5678-1234-567812345678"),
-    )
+    monkeypatch.setattr(download_storage.tempfile, "gettempdir", lambda: str(tmp_path))
 
     target = download_storage.build_download_target_path(
         "../../unsafe?.txt",
         now=datetime(2026, 3, 3, 10, 20, 30),
     )
 
-    assert target.parent == tmp_path / "2026" / "03" / "03"
-    assert target.name == "12345678-1234-5678-1234-567812345678_unsafe_.txt"
+    assert target.parent == tmp_path
+    assert target.suffix == ".txt"
+    assert target.name.startswith("medicine_ai_agent_20260303_")
+    assert target.exists()
+    target.unlink(missing_ok=True)
 
 
 def test_safe_filename_sanitizes_path_and_illegal_chars():

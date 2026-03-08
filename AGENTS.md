@@ -128,8 +128,8 @@
   log level is auto-selected (error / warning / info). Supports import, chunk_rebuild, chunk_add pipelines.
 - HTTP client configuration (optional): `HTTP_BASE_URL` (defaults to `http://localhost:8080`).
 - HTTP client logging (optional): `HTTP_CLIENT_LOG_ENABLED` (default false, set true to log request/response details).
-- Download file storage configuration (required for URL import):
-  `FILE_DOWNLOAD_ROOT_DIR`（固定下载根目录，必填；URL 下载文件会按 `yyyy/mm/dd` 分层落盘并长期保留，当前阶段不启用自动清理）。
+- Download file storage configuration:
+  URL 导入下载文件使用系统临时目录，无需配置目录；处理结束后会以 best-effort 方式删除本地临时文件。
 - File type detection dependency (required for URL import parsing):
   `filetype`（纯 Python 依赖；用于下载后真实类型识别与解析器分发，无需系统 `libmagic`）。
 - Agent tool logging (optional): `AGENT_TOOL_LOG_ENABLED` (default false, set true to log tool invocations and results).
