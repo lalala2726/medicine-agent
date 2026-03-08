@@ -88,7 +88,7 @@ def update_document_status(
         knowledge_name: str,
         primary_id: int,
         status: int,
-) -> None:
+) -> int:
     """按向量主键更新文档切片状态。
 
     Args:
@@ -96,12 +96,39 @@ def update_document_status(
         primary_id: 向量数据库主键 ID。
         status: 状态值，仅允许 0 或 1。
 
+    Returns:
+        int: 更新后的当前有效向量主键 ID。
+
     Raises:
         ServiceException: 知识库不存在、状态非法或更新失败时抛出。
     """
     vector_repository.ensure_collection_exists(knowledge_name=knowledge_name)
-    vector_repository.update_document_chunk_status(
+    return vector_repository.update_document_chunk_status(
         knowledge_name=knowledge_name,
+        primary_id=primary_id,
+        status=status,
+    )
+
+
+def update_document_status_by_vector_id(
+        primary_id: int,
+        status: int,
+) -> tuple[str, int]:
+    """按向量主键更新文档切片状态并返回命中的知识库名称。
+
+    Args:
+        primary_id: 向量数据库主键 ID。
+        status: 状态值，仅允许 0 或 1。
+
+    Returns:
+        tuple[str, int]:
+            - 第 1 项: 命中的知识库名称；
+            - 第 2 项: 更新后的当前有效向量主键 ID。
+
+    Raises:
+        ServiceException: 记录不存在、状态非法、命中多个知识库或更新失败时抛出。
+    """
+    return vector_repository.update_document_chunk_status_by_primary_id(
         primary_id=primary_id,
         status=status,
     )

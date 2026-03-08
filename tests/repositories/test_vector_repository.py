@@ -28,18 +28,29 @@ class _FakeMilvusClient:
         self.delete_calls: list[dict[str, object]] = []
         self.insert_calls: list[dict[str, object]] = []
         self.upsert_calls: list[dict[str, object]] = []
+        self.list_collections_calls: list[dict[str, object]] = []
         self.rows_result: list[dict] = []
         self.get_result: list[dict] = []
+        self.collection_get_results: dict[str, list[dict]] = {}
         self.count_result: list[dict] = [{"count(*)": 0}]
         self.load_state_result: dict = {"state": LoadState.NotLoad}
+        self.list_collections_result: list[str] = []
         self.describe_result: dict = {
             "fields": [
+                {
+                    "name": "id",
+                    "is_primary": True,
+                    "auto_id": False,
+                    "params": {},
+                },
                 {
                     "name": "embedding",
                     "params": {"dim": 1024},
                 }
             ]
         }
+        self.insert_result: object = None
+        self.upsert_result: object = None
 
     def has_collection(self, _name: str) -> bool:
         return self._has_collection_result
@@ -74,16 +85,25 @@ class _FakeMilvusClient:
 
     def get(self, **kwargs):
         self.get_calls.append(kwargs)
+        collection_name = kwargs.get("collection_name")
+        if collection_name in self.collection_get_results:
+            return self.collection_get_results[collection_name]
         return self.get_result
+
+    def list_collections(self, **kwargs):
+        self.list_collections_calls.append(kwargs)
+        return self.list_collections_result
 
     def delete(self, **kwargs) -> None:
         self.delete_calls.append(kwargs)
 
-    def insert(self, **kwargs) -> None:
+    def insert(self, **kwargs):
         self.insert_calls.append(kwargs)
+        return self.insert_result
 
-    def upsert(self, **kwargs) -> None:
+    def upsert(self, **kwargs):
         self.upsert_calls.append(kwargs)
+        return self.upsert_result
 
     def describe_collection(self, _name: str) -> dict:
         return self.describe_result
@@ -116,7 +136,7 @@ def test_build_collection_schema_contains_standard_11_fields() -> None:
     fields = {field.name: field for field in schema.fields}
     assert fields["id"].dtype == DataType.INT64
     assert fields["id"].is_primary is True
-    assert fields["id"].auto_id is True
+    assert fields["id"].auto_id is False
     assert fields["document_id"].dtype == DataType.INT64
     assert fields["chunk_index"].dtype == DataType.INT64
     assert fields["content"].dtype == DataType.VARCHAR
@@ -413,7 +433,7 @@ def test_update_document_chunk_status_reads_then_upserts(
     ]
     monkeypatch.setattr(repository_module, "get_milvus_client", lambda: client)
 
-    repository_module.update_document_chunk_status(
+    current_vector_id = repository_module.update_document_chunk_status(
         knowledge_name="demo_kb",
         primary_id=101,
         status=repository_module.KNOWLEDGE_STATUS_DISABLED,
@@ -430,6 +450,7 @@ def test_update_document_chunk_status_reads_then_upserts(
     payload = client.upsert_calls[0]
     assert payload["collection_name"] == "demo_kb"
     row = payload["data"][0]
+    assert current_vector_id == 101
     assert row["id"] == 101
     assert row["document_id"] == 42
     assert row["status"] == repository_module.KNOWLEDGE_STATUS_DISABLED
@@ -468,6 +489,111 @@ def test_update_document_chunk_status_raises_when_vector_row_missing(
 
     assert exc_info.value.code == ResponseCode.NOT_FOUND.code
     assert exc_info.value.message == "向量记录不存在"
+
+
+def test_update_document_chunk_status_by_primary_id_updates_matched_collection(
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    测试目的：验证 repository 可遍历集合并更新命中的唯一向量记录。
+    预期结果：返回命中的集合名，且 upsert 写回正确状态。
+    """
+    client = _FakeMilvusClient(has_collection_result=True)
+    client.list_collections_result = ["kb_a", "kb_b"]
+    client.collection_get_results = {
+        "kb_a": [],
+        "kb_b": [
+            {
+                "id": 101,
+                "document_id": 42,
+                "chunk_index": 3,
+                "content": "demo",
+                "char_count": 4,
+                "embedding": [0.1, 0.2],
+                "chunk_size": 500,
+                "chunk_overlap": 0,
+                "status": repository_module.KNOWLEDGE_STATUS_ENABLED,
+                "source_hash": "hash-1",
+                "created_at_ts": 1234567890,
+            }
+        ],
+    }
+    monkeypatch.setattr(repository_module, "get_milvus_client", lambda: client)
+
+    knowledge_name, current_vector_id = repository_module.update_document_chunk_status_by_primary_id(
+        primary_id=101,
+        status=repository_module.KNOWLEDGE_STATUS_DISABLED,
+    )
+
+    assert knowledge_name == "kb_b"
+    assert current_vector_id == 101
+    assert client.list_collections_calls == [{}]
+    assert len(client.upsert_calls) == 1
+    payload = client.upsert_calls[0]
+    assert payload["collection_name"] == "kb_b"
+    assert payload["data"][0]["status"] == repository_module.KNOWLEDGE_STATUS_DISABLED
+
+
+def test_update_document_chunk_status_by_primary_id_raises_when_missing(
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    测试目的：验证主键在所有集合中都不存在时返回 404。
+    预期结果：抛出 ServiceException，code=404。
+    """
+    client = _FakeMilvusClient(has_collection_result=True)
+    client.list_collections_result = ["kb_a", "kb_b"]
+    client.collection_get_results = {
+        "kb_a": [],
+        "kb_b": [],
+    }
+    monkeypatch.setattr(repository_module, "get_milvus_client", lambda: client)
+
+    with pytest.raises(ServiceException) as exc_info:
+        repository_module.update_document_chunk_status_by_primary_id(
+            primary_id=101,
+            status=repository_module.KNOWLEDGE_STATUS_ENABLED,
+        )
+
+    assert exc_info.value.code == ResponseCode.NOT_FOUND.code
+    assert exc_info.value.message == "向量记录不存在"
+
+
+def test_update_document_chunk_status_by_primary_id_raises_when_multiple_matches(
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    测试目的：验证同一主键命中多个集合时不会盲目更新第一个集合。
+    预期结果：抛出业务异常，提示命中多个知识库。
+    """
+    client = _FakeMilvusClient(has_collection_result=True)
+    row = {
+        "id": 101,
+        "document_id": 42,
+        "chunk_index": 3,
+        "content": "demo",
+        "char_count": 4,
+        "embedding": [0.1, 0.2],
+        "chunk_size": 500,
+        "chunk_overlap": 0,
+        "status": repository_module.KNOWLEDGE_STATUS_ENABLED,
+        "source_hash": "hash-1",
+        "created_at_ts": 1234567890,
+    }
+    client.list_collections_result = ["kb_a", "kb_b"]
+    client.collection_get_results = {
+        "kb_a": [row],
+        "kb_b": [row],
+    }
+    monkeypatch.setattr(repository_module, "get_milvus_client", lambda: client)
+
+    with pytest.raises(ServiceException, match="向量主键命中多个知识库"):
+        repository_module.update_document_chunk_status_by_primary_id(
+            primary_id=101,
+            status=repository_module.KNOWLEDGE_STATUS_DISABLED,
+        )
+
+    assert client.upsert_calls == []
 
 
 def test_get_collection_embedding_dim_reads_dim_from_schema(
@@ -534,6 +660,9 @@ def test_insert_embeddings_builds_full_payload_fields(
     assert payload["collection_name"] == "demo_kb"
     rows = payload["data"]
     assert len(rows) == 2
+    assert isinstance(rows[0]["id"], int)
+    assert isinstance(rows[1]["id"], int)
+    assert rows[0]["id"] != rows[1]["id"]
     assert rows[0]["chunk_index"] == 7
     assert rows[1]["chunk_index"] == 8
     assert rows[0]["char_count"] == 1
@@ -544,3 +673,107 @@ def test_insert_embeddings_builds_full_payload_fields(
     assert rows[1]["status"] == repository_module.DEFAULT_KNOWLEDGE_STATUS
     assert rows[0]["source_hash"] == "hash-1"
     assert rows[0]["created_at_ts"] == 1234567890
+
+
+def test_collection_uses_auto_id_reads_schema_flag(
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    测试目的：验证 repository 可识别旧 collection 的 auto_id 主键模式。
+    预期结果：schema 主键带 auto_id=true 时返回 True。
+    """
+    client = _FakeMilvusClient(has_collection_result=True)
+    client.describe_result = {
+        "fields": [
+            {
+                "name": "id",
+                "is_primary": True,
+                "auto_id": True,
+                "params": {},
+            }
+        ]
+    }
+    monkeypatch.setattr(repository_module, "get_milvus_client", lambda: client)
+
+    assert repository_module.collection_uses_auto_id("demo_kb") is True
+
+
+def test_insert_embeddings_omits_manual_id_for_auto_id_collection(
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    测试目的：验证旧 auto_id collection 写入时不会携带自定义主键字段。
+    预期结果：insert payload 中不包含 id。
+    """
+    client = _FakeMilvusClient(has_collection_result=True)
+    client.describe_result = {
+        "fields": [
+            {
+                "name": "id",
+                "is_primary": True,
+                "auto_id": True,
+                "params": {},
+            },
+            {
+                "name": "embedding",
+                "params": {"dim": 1024},
+            },
+        ]
+    }
+    monkeypatch.setattr(repository_module, "get_milvus_client", lambda: client)
+
+    repository_module.insert_embeddings(
+        knowledge_name="demo_kb",
+        document_id=99,
+        embeddings=[[0.1, 0.2]],
+        texts=["A"],
+        created_at_ts=1234567890,
+    )
+
+    rows = client.insert_calls[0]["data"]
+    assert "id" not in rows[0]
+
+
+def test_update_document_chunk_status_returns_new_primary_id_for_auto_id_collection(
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    测试目的：验证旧 auto_id collection 更新状态后会返回 Milvus 新主键。
+    预期结果：返回 upsert 结果中的 ids[0]。
+    """
+    client = _FakeMilvusClient(has_collection_result=True)
+    client.describe_result = {
+        "fields": [
+            {
+                "name": "id",
+                "is_primary": True,
+                "auto_id": True,
+                "params": {},
+            }
+        ]
+    }
+    client.get_result = [
+        {
+            "id": 101,
+            "document_id": 42,
+            "chunk_index": 3,
+            "content": "demo",
+            "char_count": 4,
+            "embedding": [0.1, 0.2],
+            "chunk_size": 500,
+            "chunk_overlap": 0,
+            "status": repository_module.KNOWLEDGE_STATUS_ENABLED,
+            "source_hash": "hash-1",
+            "created_at_ts": 1234567890,
+        }
+    ]
+    client.upsert_result = {"ids": [202]}
+    monkeypatch.setattr(repository_module, "get_milvus_client", lambda: client)
+
+    current_vector_id = repository_module.update_document_chunk_status(
+        knowledge_name="demo_kb",
+        primary_id=101,
+        status=repository_module.KNOWLEDGE_STATUS_DISABLED,
+    )
+
+    assert current_vector_id == 202

@@ -226,10 +226,11 @@ def test_update_document_status_route_delegates_to_service(monkeypatch) -> None:
             knowledge_name: str,
             primary_id: int,
             status: int,
-    ) -> None:
+    ) -> int:
         captured["knowledge_name"] = knowledge_name
         captured["primary_id"] = primary_id
         captured["status"] = status
+        return 202
 
     monkeypatch.setattr(
         knowledge_base_route,
@@ -252,7 +253,7 @@ def test_update_document_status_route_delegates_to_service(monkeypatch) -> None:
     assert body["message"] == "更新成功"
     assert body["data"] == {
         "knowledge_name": "demo_kb",
-        "vector_id": 101,
+        "vector_id": 202,
         "status": 1,
     }
     assert captured == {
@@ -292,3 +293,79 @@ def test_update_document_status_route_rejects_invalid_status(monkeypatch) -> Non
     body = response.json()
     assert body["message"] == "Validation Failed"
     assert any(error["field"] == "status" for error in body["errors"])
+
+
+def test_update_chunk_status_by_vector_id_route_delegates_to_service(monkeypatch) -> None:
+    """
+    测试目的：验证新接口只透传 vector_id/status，并返回命中的知识库名称。
+    预期结果：service 被调用一次，响应返回更新成功。
+    """
+    _mock_system_auth(monkeypatch)
+    captured: dict[str, int] = {}
+
+    def _fake_update_document_status_by_vector_id(
+            *,
+            primary_id: int,
+            status: int,
+    ) -> tuple[str, int]:
+        captured["primary_id"] = primary_id
+        captured["status"] = status
+        return "demo_kb", 202
+
+    monkeypatch.setattr(
+        knowledge_base_route,
+        "update_document_status_by_vector_id",
+        _fake_update_document_status_by_vector_id,
+    )
+    client = TestClient(app)
+
+    response = client.put(
+        "/knowledge_base/document/chunk/status",
+        json={
+            "vector_id": 101,
+            "status": 1,
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["message"] == "更新成功"
+    assert body["data"] == {
+        "knowledge_name": "demo_kb",
+        "vector_id": 202,
+        "status": 1,
+    }
+    assert captured == {
+        "primary_id": 101,
+        "status": 1,
+    }
+
+
+def test_update_chunk_status_by_vector_id_route_rejects_missing_vector_id(monkeypatch) -> None:
+    """
+    测试目的：验证新接口仅接受 vector_id/status，缺少 vector_id 时返回参数校验错误。
+    预期结果：返回 400，且不会进入 service。
+    """
+    _mock_system_auth(monkeypatch)
+
+    def _unexpected_update_document_status_by_vector_id(**_kwargs) -> tuple[str, int]:
+        raise AssertionError("缺少 vector_id 不应进入 service")
+
+    monkeypatch.setattr(
+        knowledge_base_route,
+        "update_document_status_by_vector_id",
+        _unexpected_update_document_status_by_vector_id,
+    )
+    client = TestClient(app)
+
+    response = client.put(
+        "/knowledge_base/document/chunk/status",
+        json={
+            "status": 1,
+        },
+    )
+
+    assert response.status_code == 400
+    body = response.json()
+    assert body["message"] == "Validation Failed"
+    assert any(error["field"] == "vector_id" for error in body["errors"])

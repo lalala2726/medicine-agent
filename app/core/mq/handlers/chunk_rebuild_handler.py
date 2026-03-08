@@ -109,7 +109,7 @@ async def handle_chunk_rebuild_command(msg: KnowledgeChunkRebuildCommandMessage)
     # 发送 COMPLETED
     mq_log("chunk_rebuild", ChunkRebuildStage.COMPLETED, task_uuid)
     await _publish_or_raise(task_uuid, KnowledgeChunkRebuildResultMessage.build(
-        **common,
+        **{**common, "vector_id": result.vector_id},
         stage=DocumentChunkResultStage.COMPLETED,
         message="切片重建完成",
         embedding_dim=result.embedding_dim,

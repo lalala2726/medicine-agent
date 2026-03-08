@@ -29,6 +29,7 @@ from app.schemas.knowledge_import import (
     ImportSingleFileSuccessResult,
 )
 from app.utils.file_utils import FileUtils
+from app.utils.snowflake import generate_snowflake_id
 from app.utils.token_utills import TokenUtils
 
 # 单切片向量化允许的最大 token 数，超限直接拒绝。
@@ -61,6 +62,7 @@ CHUNK_REBUILD_OUTPUT_FIELDS = [
 class ChunkRebuildSuccessResult:
     """单切片重建成功结果。"""
 
+    vector_id: int
     embedding_dim: int
 
 
@@ -556,11 +558,16 @@ def _get_next_chunk_index(client, knowledge_name: str, document_id: int) -> int:
     return max_index + 1
 
 
-def _extract_primary_key(insert_result) -> int:
-    """从 Milvus insert 结果中提取主键 ID。
+def _extract_primary_key(
+        insert_result,
+        *,
+        fallback_id: int | None = None,
+) -> int:
+    """从 Milvus insert/upsert 结果中提取主键 ID。
 
     Args:
-        insert_result: Milvus insert 返回的结果对象。
+        insert_result: Milvus insert/upsert 返回的结果对象。
+        fallback_id: 当 SDK 未显式返回主键时的兜底 ID。
 
     Returns:
         int: 新插入记录的主键 ID。
@@ -578,9 +585,12 @@ def _extract_primary_key(insert_result) -> int:
         if pks:
             return int(pks[0])
 
+    if fallback_id is not None:
+        return int(fallback_id)
+
     raise ServiceException(
         code=ResponseCode.OPERATION_FAILED,
-        message="无法从 Milvus 插入结果中提取主键 ID",
+        message="无法从 Milvus 写入结果中提取主键 ID",
     )
 
 
@@ -620,6 +630,9 @@ def rebuild_document_chunk(
         embedding_dim=embedding_dim,
     )
     client = get_milvus_client()
+    use_auto_id = vector_repository.collection_uses_auto_id(
+        knowledge_name=knowledge_name,
+    )
 
     try:
         rows = client.get(
@@ -664,7 +677,7 @@ def rebuild_document_chunk(
     _ensure_latest_chunk_edit_version(vector_id=vector_id, version=version)
 
     try:
-        client.upsert(
+        upsert_result = client.upsert(
             collection_name=knowledge_name,
             data=[updated_row],
         )
@@ -674,7 +687,19 @@ def rebuild_document_chunk(
             message=f"更新文档切片失败: {exc}",
         ) from exc
 
-    return ChunkRebuildSuccessResult(embedding_dim=embedding_dim)
+    current_vector_id = (
+        _extract_primary_key(
+            upsert_result,
+            fallback_id=int(updated_row["id"]),
+        )
+        if use_auto_id
+        else int(updated_row["id"])
+    )
+
+    return ChunkRebuildSuccessResult(
+        vector_id=current_vector_id,
+        embedding_dim=embedding_dim,
+    )
 
 
 def add_document_chunk(
@@ -707,6 +732,9 @@ def add_document_chunk(
         embedding_dim=embedding_dim,
     )
     client = get_milvus_client()
+    use_auto_id = vector_repository.collection_uses_auto_id(
+        knowledge_name=knowledge_name,
+    )
 
     embedding = embed_single_text(
         content=content,
@@ -727,6 +755,10 @@ def add_document_chunk(
         "source_hash": None,
         "created_at_ts": int(time() * 1000),
     }
+    generated_vector_id: int | None = None
+    if not use_auto_id:
+        generated_vector_id = generate_snowflake_id()
+        new_row["id"] = generated_vector_id
 
     try:
         insert_result = client.insert(
@@ -739,7 +771,10 @@ def add_document_chunk(
             message=f"插入文档切片失败: {exc}",
         ) from exc
 
-    vector_id = _extract_primary_key(insert_result)
+    vector_id = _extract_primary_key(
+        insert_result,
+        fallback_id=generated_vector_id,
+    )
 
     return ChunkAddSuccessResult(
         vector_id=vector_id,

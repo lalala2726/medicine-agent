@@ -10,13 +10,15 @@ class _FakeMilvusClient:
         self.get_calls: list[dict[str, object]] = []
         self.upsert_calls: list[dict[str, object]] = []
         self.get_result: list[dict] = []
+        self.upsert_result: object = None
 
     def get(self, **kwargs):
         self.get_calls.append(kwargs)
         return self.get_result
 
-    def upsert(self, **kwargs) -> None:
+    def upsert(self, **kwargs):
         self.upsert_calls.append(kwargs)
+        return self.upsert_result
 
 
 def test_rebuild_document_chunk_raises_when_vector_row_missing(
@@ -26,6 +28,7 @@ def test_rebuild_document_chunk_raises_when_vector_row_missing(
     client = _FakeMilvusClient()
     monkeypatch.setattr(service_module.vector_repository, "ensure_collection_exists", lambda **_: None)
     monkeypatch.setattr(service_module.vector_repository, "get_collection_embedding_dim", lambda **_: 1024)
+    monkeypatch.setattr(service_module.vector_repository, "collection_uses_auto_id", lambda **_: False)
     monkeypatch.setattr(service_module, "create_embedding_client", lambda **_: object())
     monkeypatch.setattr(service_module, "embed_single_text", lambda **_: [0.1, 0.2])
     monkeypatch.setattr(service_module, "get_milvus_client", lambda: client)
@@ -53,6 +56,7 @@ def test_rebuild_document_chunk_raises_when_document_id_mismatches(
     client.get_result = [{"id": 101, "document_id": 9}]
     monkeypatch.setattr(service_module.vector_repository, "ensure_collection_exists", lambda **_: None)
     monkeypatch.setattr(service_module.vector_repository, "get_collection_embedding_dim", lambda **_: 1024)
+    monkeypatch.setattr(service_module.vector_repository, "collection_uses_auto_id", lambda **_: False)
     monkeypatch.setattr(service_module, "create_embedding_client", lambda **_: object())
     monkeypatch.setattr(service_module, "embed_single_text", lambda **_: [0.1, 0.2])
     monkeypatch.setattr(service_module, "get_milvus_client", lambda: client)
@@ -77,6 +81,7 @@ def test_rebuild_document_chunk_propagates_model_initialization_failure(
     client = _FakeMilvusClient()
     monkeypatch.setattr(service_module.vector_repository, "ensure_collection_exists", lambda **_: None)
     monkeypatch.setattr(service_module.vector_repository, "get_collection_embedding_dim", lambda **_: 1024)
+    monkeypatch.setattr(service_module.vector_repository, "collection_uses_auto_id", lambda **_: False)
     monkeypatch.setattr(service_module, "get_milvus_client", lambda: client)
 
     def _raise_create_error(**_kwargs):
@@ -117,6 +122,7 @@ def test_rebuild_document_chunk_does_not_upsert_when_embedding_fails(
     }]
     monkeypatch.setattr(service_module.vector_repository, "ensure_collection_exists", lambda **_: None)
     monkeypatch.setattr(service_module.vector_repository, "get_collection_embedding_dim", lambda **_: 1024)
+    monkeypatch.setattr(service_module.vector_repository, "collection_uses_auto_id", lambda **_: False)
     monkeypatch.setattr(service_module, "create_embedding_client", lambda **_: object())
     monkeypatch.setattr(service_module, "get_milvus_client", lambda: client)
 
@@ -158,6 +164,7 @@ def test_rebuild_document_chunk_upserts_once_and_preserves_metadata(
     }]
     monkeypatch.setattr(service_module.vector_repository, "ensure_collection_exists", lambda **_: None)
     monkeypatch.setattr(service_module.vector_repository, "get_collection_embedding_dim", lambda **_: 1024)
+    monkeypatch.setattr(service_module.vector_repository, "collection_uses_auto_id", lambda **_: False)
     monkeypatch.setattr(service_module, "create_embedding_client", lambda **_: object())
     monkeypatch.setattr(service_module, "embed_single_text", lambda **_: [0.5, 0.6])
     monkeypatch.setattr(service_module, "get_chunk_edit_latest_version", lambda **_: 3)
@@ -172,6 +179,7 @@ def test_rebuild_document_chunk_upserts_once_and_preserves_metadata(
         embedding_model="text-embedding-v4",
     )
 
+    assert result.vector_id == 101
     assert result.embedding_dim == 1024
     assert client.get_calls == [{
         "collection_name": "demo_kb",
@@ -216,6 +224,7 @@ def test_rebuild_document_chunk_rejects_stale_version_before_upsert(
     }]
     monkeypatch.setattr(service_module.vector_repository, "ensure_collection_exists", lambda **_: None)
     monkeypatch.setattr(service_module.vector_repository, "get_collection_embedding_dim", lambda **_: 1024)
+    monkeypatch.setattr(service_module.vector_repository, "collection_uses_auto_id", lambda **_: False)
     monkeypatch.setattr(service_module, "create_embedding_client", lambda **_: object())
     monkeypatch.setattr(service_module, "embed_single_text", lambda **_: [0.5, 0.6])
     monkeypatch.setattr(service_module, "get_chunk_edit_latest_version", lambda **_: 6)
@@ -232,3 +241,43 @@ def test_rebuild_document_chunk_rejects_stale_version_before_upsert(
         )
 
     assert client.upsert_calls == []
+
+
+def test_rebuild_document_chunk_returns_new_primary_id_for_auto_id_collection(
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """验证旧 auto_id collection 重建后会返回 Milvus 新主键。"""
+    client = _FakeMilvusClient()
+    client.get_result = [{
+        "id": 101,
+        "document_id": 7,
+        "chunk_index": 2,
+        "content": "old",
+        "char_count": 3,
+        "embedding": [0.1, 0.2],
+        "chunk_size": 500,
+        "chunk_overlap": 0,
+        "status": 0,
+        "source_hash": "hash-1",
+        "created_at_ts": 123,
+    }]
+    client.upsert_result = {"ids": [303]}
+    monkeypatch.setattr(service_module.vector_repository, "ensure_collection_exists", lambda **_: None)
+    monkeypatch.setattr(service_module.vector_repository, "get_collection_embedding_dim", lambda **_: 1024)
+    monkeypatch.setattr(service_module.vector_repository, "collection_uses_auto_id", lambda **_: True)
+    monkeypatch.setattr(service_module, "create_embedding_client", lambda **_: object())
+    monkeypatch.setattr(service_module, "embed_single_text", lambda **_: [0.5, 0.6])
+    monkeypatch.setattr(service_module, "get_chunk_edit_latest_version", lambda **_: 3)
+    monkeypatch.setattr(service_module, "get_milvus_client", lambda: client)
+
+    result = service_module.rebuild_document_chunk(
+        knowledge_name="demo_kb",
+        document_id=7,
+        vector_id=101,
+        version=3,
+        content="updated chunk",
+        embedding_model="text-embedding-v4",
+    )
+
+    assert result.vector_id == 303
+    assert result.embedding_dim == 1024

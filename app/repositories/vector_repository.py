@@ -11,6 +11,7 @@ from pymilvus import (
 from app.core.codes import ResponseCode
 from app.core.database import get_milvus_client
 from app.core.exception.exceptions import ServiceException
+from app.utils.snowflake import generate_snowflake_id
 
 DEFAULT_CONTENT_MAX_LENGTH = 65535  # 内容字段最大长度
 DEFAULT_SOURCE_HASH_MAX_LENGTH = 64  # 源文本哈希字段最大长度（sha256）
@@ -92,6 +93,126 @@ def _build_index_params(client: MilvusClient):
     return index_params
 
 
+def _field_value(field: dict | object, key: str, default=None):
+    """兼容 dict / 对象两种 schema 字段结构读取属性。"""
+    if isinstance(field, dict):
+        return field.get(key, default)
+    return getattr(field, key, default)
+
+
+def _coerce_bool(value: object) -> bool:
+    """将 schema 中可能出现的布尔表达统一转换为 bool。"""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() == "true"
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return False
+
+
+def _get_primary_field(fields: list[dict] | list[object]) -> dict | object | None:
+    """从 collection fields 中定位主键字段定义。"""
+    for field in fields:
+        if _coerce_bool(_field_value(field, "is_primary")):
+            return field
+        if _coerce_bool(_field_value(field, "primary_key")):
+            return field
+        if _coerce_bool(_field_value(field, "primaryKey")):
+            return field
+    for field in fields:
+        if _field_value(field, "name") == "id":
+            return field
+    return None
+
+
+def _extract_mutation_primary_key(
+        mutation_result,
+        *,
+        fallback_id: int | None = None,
+) -> int:
+    """从 insert/upsert 结果中提取主键，必要时回退到调用方提供的 ID。"""
+    if isinstance(mutation_result, dict):
+        ids = mutation_result.get("ids") or mutation_result.get("primary_keys") or []
+        if ids:
+            return int(ids[0])
+
+    if hasattr(mutation_result, "primary_keys"):
+        primary_keys = mutation_result.primary_keys
+        if primary_keys:
+            return int(primary_keys[0])
+
+    if fallback_id is not None:
+        return int(fallback_id)
+
+    raise ServiceException(
+        code=ResponseCode.OPERATION_FAILED,
+        message="无法从 Milvus 写入结果中提取主键 ID",
+    )
+
+
+def _collection_uses_auto_id(client: MilvusClient, knowledge_name: str) -> bool:
+    """读取 collection schema，判断主键是否仍使用 auto_id。"""
+    try:
+        collection_desc = client.describe_collection(knowledge_name)
+    except milvus_exceptions.MilvusException as exc:
+        raise ServiceException(
+            code=ResponseCode.OPERATION_FAILED,
+            message=f"读取知识库 schema 失败: {exc}",
+        ) from exc
+
+    fields = collection_desc.get("fields") or []
+    primary_field = _get_primary_field(fields)
+    if primary_field is None:
+        raise ServiceException(
+            code=ResponseCode.OPERATION_FAILED,
+            message="知识库 schema 不包含主键字段",
+        )
+
+    auto_id = _field_value(primary_field, "auto_id")
+    if auto_id is None:
+        params = _field_value(primary_field, "params") or {}
+        if isinstance(params, dict):
+            auto_id = params.get("auto_id")
+    return _coerce_bool(auto_id)
+
+
+def collection_uses_auto_id(knowledge_name: str) -> bool:
+    """对外暴露 collection 主键模式，兼容新旧 schema。"""
+    client = get_milvus_client()
+    return _collection_uses_auto_id(client, knowledge_name)
+
+
+def _upsert_document_chunk_row(
+        *,
+        client: MilvusClient,
+        knowledge_name: str,
+        row: dict,
+        error_message: str,
+) -> int:
+    """执行文档切片 upsert，并返回当前有效主键 ID。"""
+    try:
+        result = client.upsert(
+            collection_name=knowledge_name,
+            data=[row],
+        )
+    except milvus_exceptions.MilvusException as exc:
+        raise ServiceException(
+            code=ResponseCode.OPERATION_FAILED,
+            message=f"{error_message}: {exc}",
+        ) from exc
+
+    fallback_id = int(row.get("id") or 0)
+    if fallback_id <= 0:
+        raise ServiceException(
+            code=ResponseCode.OPERATION_FAILED,
+            message="文档切片缺少有效主键 ID",
+        )
+    if _collection_uses_auto_id(client, knowledge_name):
+        return _extract_mutation_primary_key(result, fallback_id=fallback_id)
+    return fallback_id
+
+
 def _build_collection_schema(embedding_dim: int, description: str) -> CollectionSchema:
     """
     功能描述:
@@ -111,9 +232,9 @@ def _build_collection_schema(embedding_dim: int, description: str) -> Collection
         FieldSchema(
             name="id",
             dtype=DataType.INT64,
-            description="主键（自动生成）",
+            description="主键（雪花 ID）",
             is_primary=True,
-            auto_id=True,
+            auto_id=False,
         ),
         FieldSchema(
             name="document_id",
@@ -514,6 +635,8 @@ def insert_embeddings(
     if not embeddings:
         return
 
+    client = get_milvus_client()
+    use_auto_id = _collection_uses_auto_id(client, knowledge_name)
     data = [
         {
             "document_id": document_id,
@@ -535,8 +658,10 @@ def insert_embeddings(
             zip(embeddings, texts, strict=True)
         )
     ]
+    if not use_auto_id:
+        for row in data:
+            row["id"] = generate_snowflake_id()
 
-    client = get_milvus_client()
     try:
         client.insert(collection_name=knowledge_name, data=data)
     except milvus_exceptions.MilvusException as exc:
@@ -733,7 +858,7 @@ def update_document_chunk_status(
         knowledge_name: str,
         primary_id: int,
         status: int,
-) -> None:
+) -> int:
     """
     功能描述:
         按向量主键更新指定切片记录的状态字段。
@@ -744,7 +869,7 @@ def update_document_chunk_status(
         status (int): 状态值，仅允许 0 或 1。
 
     返回值:
-        None: 更新成功无返回值。
+        int: 更新后的当前有效主键 ID。
 
     异常说明:
         ServiceException:
@@ -776,13 +901,86 @@ def update_document_chunk_status(
     persisted_row["id"] = int(persisted_row.get("id") or primary_id)
     persisted_row["status"] = normalized_status
 
+    return _upsert_document_chunk_row(
+        client=client,
+        knowledge_name=knowledge_name,
+        row=persisted_row,
+        error_message="更新文档状态失败",
+    )
+
+
+def update_document_chunk_status_by_primary_id(
+        primary_id: int,
+        status: int,
+) -> tuple[str, int]:
+    """
+    功能描述:
+        遍历知识库集合，按向量主键更新指定切片记录的状态字段。
+
+    参数说明:
+        primary_id (int): Milvus 主键 ID。
+        status (int): 状态值，仅允许 0 或 1。
+
+    返回值:
+        tuple[str, int]:
+            - 第 1 项: 命中并完成更新的集合名称；
+            - 第 2 项: 更新后的当前有效主键 ID。
+
+    异常说明:
+        ServiceException:
+            - 状态值非法时抛出；
+            - 记录不存在时抛出；
+            - 同一主键命中多个集合时抛出；
+            - Milvus 读写失败时抛出。
+    """
+    normalized_status = _validate_knowledge_status(status)
+    client = get_milvus_client()
+
     try:
-        client.upsert(
-            collection_name=knowledge_name,
-            data=[persisted_row],
-        )
+        collection_names = list(client.list_collections())
     except milvus_exceptions.MilvusException as exc:
         raise ServiceException(
             code=ResponseCode.OPERATION_FAILED,
-            message=f"更新文档状态失败: {exc}",
+            message=f"读取知识库列表失败: {exc}",
         ) from exc
+
+    matched_rows: list[tuple[str, dict]] = []
+    for knowledge_name in collection_names:
+        try:
+            rows = client.get(
+                collection_name=knowledge_name,
+                ids=primary_id,
+                output_fields=DOCUMENT_CHUNK_OUTPUT_FIELDS,
+            )
+        except milvus_exceptions.MilvusException as exc:
+            raise ServiceException(
+                code=ResponseCode.OPERATION_FAILED,
+                message=f"读取文档切片失败: {exc}",
+            ) from exc
+        if rows:
+            matched_rows.append((knowledge_name, dict(rows[0])))
+
+    if not matched_rows:
+        raise ServiceException(
+            code=ResponseCode.NOT_FOUND,
+            message="向量记录不存在",
+        )
+    if len(matched_rows) > 1:
+        collection_names = ", ".join(name for name, _ in matched_rows)
+        raise ServiceException(
+            code=ResponseCode.OPERATION_FAILED,
+            message=f"向量主键命中多个知识库: {collection_names}",
+        )
+
+    knowledge_name, persisted_row = matched_rows[0]
+    persisted_row["id"] = int(persisted_row.get("id") or primary_id)
+    persisted_row["status"] = normalized_status
+
+    current_primary_id = _upsert_document_chunk_row(
+        client=client,
+        knowledge_name=knowledge_name,
+        row=persisted_row,
+        error_message="更新文档状态失败",
+    )
+
+    return knowledge_name, current_primary_id

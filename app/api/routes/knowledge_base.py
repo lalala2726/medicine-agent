@@ -14,6 +14,7 @@ from app.services.knowledge_base_service import (
     list_knowledge_chunks,
     release_collection_state,
     update_document_status,
+    update_document_status_by_vector_id,
 )
 
 router = APIRouter(prefix="/knowledge_base", tags=["知识库管理"])
@@ -174,6 +175,13 @@ class UpdateDocumentStatusRequest(BaseModel):
     status: Literal[0, 1] = Field(..., description="状态：0启用，1禁用")
 
 
+class UpdateChunkStatusByVectorIdRequest(BaseModel):
+    """按向量主键修改切片状态请求参数"""
+
+    vector_id: int = Field(..., gt=0, description="向量数据库主键ID")
+    status: Literal[0, 1] = Field(..., description="状态：0启用，1禁用")
+
+
 class DeleteDocumentsRequest(BaseModel):
     """批量删除文档请求参数"""
 
@@ -250,7 +258,7 @@ async def update_document_chunk_status(
     Returns:
         ApiResponse[dict]: 更新成功响应。
     """
-    update_document_status(
+    current_vector_id = update_document_status(
         knowledge_name=request.knowledge_name,
         primary_id=request.vector_id,
         status=request.status,
@@ -258,7 +266,35 @@ async def update_document_chunk_status(
     return ApiResponse.success(
         data={
             "knowledge_name": request.knowledge_name,
-            "vector_id": request.vector_id,
+            "vector_id": current_vector_id,
+            "status": request.status,
+        },
+        message="更新成功",
+    )
+
+
+@router.put("/document/chunk/status", summary="按向量主键修改切片状态")
+@allow_system
+async def update_chunk_status_by_vector_id(
+        request: UpdateChunkStatusByVectorIdRequest,
+) -> ApiResponse[dict]:
+    """
+    按 Milvus 主键修改文档切片状态，自动定位所属知识库。
+
+    Args:
+        request: 修改状态请求参数。
+
+    Returns:
+        ApiResponse[dict]: 更新成功响应。
+    """
+    knowledge_name, current_vector_id = update_document_status_by_vector_id(
+        primary_id=request.vector_id,
+        status=request.status,
+    )
+    return ApiResponse.success(
+        data={
+            "knowledge_name": knowledge_name,
+            "vector_id": current_vector_id,
             "status": request.status,
         },
         message="更新成功",

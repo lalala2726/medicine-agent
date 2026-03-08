@@ -26,7 +26,7 @@ _VALID_CMD = KnowledgeChunkRebuildCommandMessage(
 
 
 def _success_result():
-    return SimpleNamespace(embedding_dim=1536)
+    return SimpleNamespace(vector_id=888, embedding_dim=1536)
 
 
 class TestHandleChunkRebuildCommand:
@@ -65,6 +65,8 @@ class TestHandleChunkRebuildCommand:
             assert mock_pub.await_count == 2
             stages = [call[0][0].stage for call in mock_pub.call_args_list]
             assert stages == [DocumentChunkResultStage.STARTED, DocumentChunkResultStage.COMPLETED]
+            completed_msg = mock_pub.call_args_list[-1][0][0]
+            assert completed_msg.vector_id == 888
 
     def test_business_exception_publishes_failed(self):
         """测试目的：业务抛出普通异常时应发布 FAILED 结果。
