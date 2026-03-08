@@ -7,7 +7,7 @@ from bson.int64 import Int64
 from pydantic import Field
 from pymongo import DESCENDING
 
-from app.core.mongodb import DEFAULT_CONVERSATIONS_COLLECTION, get_mongo_database
+from app.core.database.mongodb import DEFAULT_CONVERSATIONS_COLLECTION, get_mongo_database
 from app.schemas.document.conversation import (
     ConversationCreate,
     ConversationDocument,

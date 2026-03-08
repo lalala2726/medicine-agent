@@ -1,17 +1,20 @@
-from typing import Optional
+from typing import Literal, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Path, Query
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field, field_validator
 
 from app.core.exception.exceptions import ServiceException
-from app.rag.chunking import ChunkStrategyType
-from app.schemas.response import ApiResponse, PageResponse
+from app.core.security import allow_system
+from app.schemas.response import ApiResponse
 from app.services.knowledge_base_service import (
     create_collection,
-    delete_document,
+    delete_documents,
     delete_knowledge,
-    import_knowledge_service,
+    load_collection_state,
     list_knowledge_chunks,
+    release_collection_state,
+    update_document_status,
+    update_document_status_by_vector_id,
 )
 
 router = APIRouter(prefix="/knowledge_base", tags=["知识库管理"])
@@ -38,24 +41,8 @@ class CreateCollectionRequest(BaseModel):
         return value
 
 
-class ImportKnowledgeRequest(BaseModel):
-    """导入知识库请求参数"""
-    knowledge_name: str = Field(
-        ...,
-        pattern=r"^[A-Za-z][A-Za-z0-9_]*$",
-        description="知识库名称"
-    )
-    document_id: int = Field(..., gt=0, description="文档ID")
-    file_urls: list[str] = Field(..., description="导入文件的URL")
-    chunk_strategy: ChunkStrategyType = Field(
-        default=ChunkStrategyType.LENGTH, description="切片策略：LENGTH/TOKEN/RECURSIVE"
-    )
-    chunk_size: int = Field(default=500, ge=1, le=10000, description="切片大小（字符）")
-    token_size: int = Field(default=100, ge=1, le=1000, description="token大小")
-    parse_images: bool = Field(default=False, description="是否解析图片")
-
-
 @router.post(path="", summary="创建知识库")
+@allow_system
 async def create_knowledge_base(request: CreateCollectionRequest) -> ApiResponse[dict]:
     """
     创建知识库
@@ -66,7 +53,11 @@ async def create_knowledge_base(request: CreateCollectionRequest) -> ApiResponse
     Returns:
         ApiResponse[dict]: 创建成功响应
     """
-    create_collection(request.knowledge_name, request.embedding_dim, request.description or "")
+    create_collection(
+        request.knowledge_name,
+        request.embedding_dim,
+        request.description or "",
+    )
     return ApiResponse.success(
         data={"knowledge_name": request.knowledge_name},
         message="创建成功",
@@ -81,6 +72,7 @@ class DeleteKnowledgeRequest(BaseModel):
 
 
 @router.delete("", summary="删除知识库")
+@allow_system
 async def delete_knowledge_base(
         request: DeleteKnowledgeRequest,
 ) -> ApiResponse[dict]:
@@ -100,6 +92,57 @@ async def delete_knowledge_base(
     )
 
 
+class KnowledgeLoadRequest(BaseModel):
+    """启用/关闭集合请求参数"""
+    knowledge_name: str = Field(
+        ...,
+        pattern=r"^[A-Za-z][A-Za-z0-9_]*$",
+        description="知识库名称",
+    )
+
+
+@router.post(path="/load", summary="启用知识库")
+@allow_system
+async def load_knowledge_base(
+        request: KnowledgeLoadRequest,
+) -> ApiResponse[dict]:
+    """
+    启用知识库对应集合（load collection）。
+
+    Args:
+        request: 启用请求参数。
+
+    Returns:
+        ApiResponse[dict]: 启用成功响应。
+    """
+    result = load_collection_state(request.knowledge_name)
+    return ApiResponse.success(
+        data=result,
+        message="启用成功",
+    )
+
+
+@router.post(path="/release", summary="关闭知识库")
+@allow_system
+async def release_knowledge_base(
+        request: KnowledgeLoadRequest,
+) -> ApiResponse[dict]:
+    """
+    关闭知识库对应集合（release collection）。
+
+    Args:
+        request: 关闭请求参数。
+
+    Returns:
+        ApiResponse[dict]: 关闭成功响应。
+    """
+    result = release_collection_state(request.knowledge_name)
+    return ApiResponse.success(
+        data=result,
+        message="关闭成功",
+    )
+
+
 class ListDocumentChunksRequest(BaseModel):
     """分页查询文档切片请求参数"""
     knowledge_name: str = Field(
@@ -107,13 +150,73 @@ class ListDocumentChunksRequest(BaseModel):
     )
     document_id: int = Field(..., gt=0, description="文档ID")
     page: int = Field(default=1, gt=0, description="页码")
-    page_size: int = Field(default=10, ge=1, le=100, description="每页数量")
+    page_size: int = Field(default=50, ge=1, le=100, description="每页数量")
+
+
+class DocumentChunksPageResponse(BaseModel):
+    """文档切片分页响应数据"""
+
+    rows: list[dict] = Field(..., description="当前页数据列表")
+    total: int = Field(..., description="数据总数")
+    page_num: int = Field(..., description="当前页码")
+    page_size: int = Field(..., description="每页数量")
+    has_next: bool = Field(..., description="是否存在下一页")
+
+
+class UpdateDocumentStatusRequest(BaseModel):
+    """修改文档状态请求参数"""
+
+    knowledge_name: str = Field(
+        ...,
+        pattern=r"^[A-Za-z][A-Za-z0-9_]*$",
+        description="知识库名称",
+    )
+    vector_id: int = Field(..., gt=0, description="向量数据库主键ID")
+    status: Literal[0, 1] = Field(..., description="状态：0启用，1禁用")
+
+
+class UpdateChunkStatusByVectorIdRequest(BaseModel):
+    """按向量主键修改切片状态请求参数"""
+
+    vector_id: int = Field(..., gt=0, description="向量数据库主键ID")
+    status: Literal[0, 1] = Field(..., description="状态：0启用，1禁用")
+
+
+class DeleteDocumentsRequest(BaseModel):
+    """批量删除文档请求参数"""
+
+    knowledge_name: str = Field(
+        ...,
+        pattern=r"^[A-Za-z][A-Za-z0-9_]*$",
+        description="知识库名称",
+    )
+    document_ids: list[int] = Field(
+        ...,
+        min_length=1,
+        description="待删除的文档ID列表",
+    )
+
+    @field_validator("document_ids")
+    @classmethod
+    def validate_document_ids(cls, value: list[int]) -> list[int]:
+        """验证文档 ID 列表并去重。"""
+        normalized_ids: list[int] = []
+        seen_ids: set[int] = set()
+        for document_id in value:
+            if document_id <= 0:
+                raise ServiceException("文档ID必须大于 0")
+            if document_id in seen_ids:
+                continue
+            seen_ids.add(document_id)
+            normalized_ids.append(document_id)
+        return normalized_ids
 
 
 @router.get("/document/chunks/list", summary="分页查询文档切片")
+@allow_system
 async def list_document_chunks(
         request: ListDocumentChunksRequest = Depends(),
-) -> ApiResponse[PageResponse[dict]]:
+) -> ApiResponse[DocumentChunksPageResponse]:
     """
     分页查询文档切片
 
@@ -121,7 +224,7 @@ async def list_document_chunks(
         request: 分页查询请求参数
 
     Returns:
-        ApiResponse[PageResponse[dict]]: 分页响应数据
+        ApiResponse[DocumentChunksPageResponse]: 分页响应数据
     """
     rows, total = list_knowledge_chunks(
         knowledge_name=request.knowledge_name,
@@ -129,67 +232,97 @@ async def list_document_chunks(
         page_num=request.page,
         page_size=request.page_size,
     )
-    return ApiResponse.page(
-        rows=rows,
-        total=total,
-        page_num=request.page,
-        page_size=request.page_size,
+    has_next = (request.page * request.page_size) < total
+    return ApiResponse.success(
+        data=DocumentChunksPageResponse(
+            rows=rows,
+            total=total,
+            page_num=request.page,
+            page_size=request.page_size,
+            has_next=has_next,
+        )
     )
 
 
-@router.delete("/document/{id}", summary="删除文档切片")
-async def delete_document_chunk(
-        id: int = Path(..., gt=0, description="文档ID"),
-        knowledge_name: str = Query(
-            ...,
-            min_length=1,
-            pattern=r"^[A-Za-z][A-Za-z0-9_]*$",
-            description="知识库名称",
-        ),
+@router.put("/document/status", summary="修改文档状态")
+@allow_system
+async def update_document_chunk_status(
+        request: UpdateDocumentStatusRequest,
 ) -> ApiResponse[dict]:
     """
-    删除文档，当删除文档之后相关知识库中的文档切片也会被删除
+    按 Milvus 主键修改文档切片状态。
 
     Args:
-        id: 文档ID
-        knowledge_name: 知识库名称
+        request: 修改状态请求参数。
+
+    Returns:
+        ApiResponse[dict]: 更新成功响应。
+    """
+    current_vector_id = update_document_status(
+        knowledge_name=request.knowledge_name,
+        primary_id=request.vector_id,
+        status=request.status,
+    )
+    return ApiResponse.success(
+        data={
+            "knowledge_name": request.knowledge_name,
+            "vector_id": current_vector_id,
+            "status": request.status,
+        },
+        message="更新成功",
+    )
+
+
+@router.put("/document/chunk/status", summary="按向量主键修改切片状态")
+@allow_system
+async def update_chunk_status_by_vector_id(
+        request: UpdateChunkStatusByVectorIdRequest,
+) -> ApiResponse[dict]:
+    """
+    按 Milvus 主键修改文档切片状态，自动定位所属知识库。
+
+    Args:
+        request: 修改状态请求参数。
+
+    Returns:
+        ApiResponse[dict]: 更新成功响应。
+    """
+    knowledge_name, current_vector_id = update_document_status_by_vector_id(
+        primary_id=request.vector_id,
+        status=request.status,
+    )
+    return ApiResponse.success(
+        data={
+            "knowledge_name": knowledge_name,
+            "vector_id": current_vector_id,
+            "status": request.status,
+        },
+        message="更新成功",
+    )
+
+
+@router.delete("/document", summary="批量删除文档")
+@allow_system
+async def delete_document_chunk(
+        request: DeleteDocumentsRequest,
+) -> ApiResponse[dict]:
+    """
+    批量删除文档及其在知识库中的全部切片记录。
+
+    Args:
+        request: 批量删除请求参数
 
     Returns:
         ApiResponse[dict]: 删除成功响应
     """
-    delete_document(
-        knowledge_name=knowledge_name,
-        document_id=id,
+    delete_documents(
+        knowledge_name=request.knowledge_name,
+        document_ids=request.document_ids,
     )
     return ApiResponse.success(
-        data={"id": id},
+        data={
+            "document_ids": request.document_ids,
+            "knowledge_name": request.knowledge_name,
+        },
         message="删除成功",
     )
-
-
-@router.post(path="/document/import", summary="导入知识库")
-async def import_knowledge(
-        request: ImportKnowledgeRequest,
-        background_tasks: BackgroundTasks
-) -> ApiResponse[str]:
-    """
-    导入知识库（后台异步处理）
-
-    Args:
-        request: 导入知识库请求参数
-        background_tasks: 后台任务管理器
-
-    Returns:
-        ApiResponse[str]: 导入请求已接收响应
-    """
-    background_tasks.add_task(
-        import_knowledge_service,
-        request.knowledge_name,
-        request.document_id,
-        request.file_urls,
-        request.chunk_strategy,
-        request.chunk_size,
-        request.token_size,
-        request.parse_images,
-    )
-    return ApiResponse.success("已接收导入请求，正在后台处理中～")

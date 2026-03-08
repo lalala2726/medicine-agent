@@ -77,4 +77,3 @@ def test_parse_drug_images_raises_on_invalid_json(monkeypatch: pytest.MonkeyPatc
 
     assert excinfo.value.code == ResponseCode.INTERNAL_ERROR
     assert excinfo.value.message == "模型返回非 JSON 内容"
-

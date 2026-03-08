@@ -5,7 +5,7 @@ from collections.abc import Awaitable, Callable
 from langchain.agents.middleware import AgentMiddleware, ModelRequest, ModelResponse
 from langchain_core.messages import SystemMessage
 
-from app.core.skill.prompt.templates import SKILLS_SYSTEM_PROMPT
+from app.core.agent.skill.prompt.templates import SKILLS_SYSTEM_PROMPT
 from app.utils.prompt_section_utils import (
     contains_block,
     find_section_span,

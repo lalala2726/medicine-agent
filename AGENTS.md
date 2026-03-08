@@ -40,7 +40,8 @@
   Allowed values: `openai`, `aliyun`, `volcengine` (also accepts `LlmProvider.<NAME>` style strings).
 - LLM config priority: function args > environment values after `python-dotenv` (`load_dotenv`) > defaults.
 - OpenAI chat provider configuration (optional): `OPENAI_API_KEY` (required when provider is `openai`),
-  `OPENAI_BASE_URL` (defaults to `https://api.openai.com/v1`), `OPENAI_CHAT_MODEL` (required when chat model name is not passed explicitly),
+  `OPENAI_BASE_URL` (defaults to `https://api.openai.com/v1`), `OPENAI_CHAT_MODEL` (required when chat model name is not
+  passed explicitly),
   `OPENAI_GATEWAY_ROUTER_MODEL` (optional gateway 路由专用模型，未配置时回退 `OPENAI_CHAT_MODEL`),
   `OPENAI_IMAGE_MODEL` (required when image model name is not passed explicitly),
   `OPENAI_EMBEDDING_MODEL` (required when embedding model name is not passed explicitly).
@@ -84,12 +85,53 @@
   `MONGODB_STARTUP_PING_ENABLED` (default false, set true to fail fast
   on startup when MongoDB is unreachable/unauthorized).
 - Redis configuration (optional): `REDIS_URL`, `REDIS_HOST`, `REDIS_PORT`, `REDIS_DB`, `REDIS_PASSWORD`, `REDIS_SSL`.
+  Redis connection/config entry is `app/core/database/redis/config.py`.
 - Rate limit configuration (optional): `RATE_LIMIT_KEY_PREFIX` (defaults to `rate_limit`),
   `RATE_LIMIT_TRUST_X_FORWARDED_FOR` (default false; when true, fallback to `X-Forwarded-For`
   only if `request.client.host` is unavailable).
-- RQ configuration (optional): `RQ_QUEUE_NAME`, `RQ_DEFAULT_TIMEOUT`.
+- System auth configuration (optional):
+  `SYSTEM_AUTH_ENABLED` (default true),
+  `SYSTEM_AUTH_MAX_SKEW_SECONDS` (default `300`),
+  `SYSTEM_AUTH_NONCE_TTL_SECONDS` (default `600`),
+  `SYSTEM_AUTH_NONCE_KEY_PREFIX` (default `system_auth:nonce`),
+  `SYSTEM_AUTH_CLIENTS_JSON` (JSON array, element keys: `app_id`, `secret`, `enabled`),
+  `SYSTEM_AUTH_DEFAULT_SIGN_VERSION` (default `v1`),
+  `X_AGENT_KEY` (AI 侧出站系统调用使用的 app_id),
+  `SYSTEM_AUTH_LOCAL_SECRET` (AI 侧出站系统调用使用的本地签名密钥).
+  Header contract: `X-Agent-Key`, `X-Agent-Timestamp`, `X-Agent-Nonce`,
+  `X-Agent-Signature`, `X-Agent-Sign-Version`.
+- RabbitMQ configuration (optional): `RABBITMQ_HOST`, `RABBITMQ_PORT` (default `5672`),
+  `RABBITMQ_USERNAME` (default `guest`), `RABBITMQ_PASSWORD` (default `guest`),
+  `RABBITMQ_VHOST` (default `/`).
+  MQ is enabled when `RABBITMQ_HOST` is set; all topology (exchanges, queues, routing keys)
+  is defined as code constants in `app/core/mq/topology.py`.
+  The MQ layer is implemented with **FastStream[rabbit]**.
+- Knowledge vector batching configuration (optional): `KNOWLEDGE_VECTOR_BATCH_SIZE`.
+- Knowledge import MQ protocol:
+  business service publishes command messages (`routing_key=knowledge.import.command`);
+  AI service publishes result messages (`routing_key=knowledge.import.result`).
+  Result stages: `STARTED`, `PROCESSING`, `COMPLETED`, `FAILED`.
+  `PROCESSING` is a coarse-grained in-progress stage and no longer carries any detailed sub-stage field.
+  AI consumer enforces latest-version semantics by reading Redis key
+  `kb:latest:{biz_key}` and dropping stale messages (`version < latest`).
+- Knowledge chunk rebuild MQ protocol:
+  business service publishes command messages (`routing_key=knowledge.chunk_rebuild.command`);
+  AI service publishes result messages (`routing_key=knowledge.chunk_rebuild.result`).
+  Command payload carries `task_uuid`, `knowledge_name`, `document_id`, `vector_id`, `version`,
+  `content`, `embedding_model`, `created_at`.
+  Result stages only include `STARTED`, `COMPLETED`, `FAILED`.
+  This protocol only supports single-chunk rebuild. It uses shared Redis latest-version gating by
+  `vector_id`, with key format `kb:chunk_edit:latest_version:{vector_id}`; stale
+  messages are dropped with reason logging and do not update Milvus.
+- MQ structured logging (`app/core/mq/log.py`):
+  `mq_log(pipeline, stage, task_uuid, **metrics)` for one-line structured log output;
+  log level is auto-selected (error / warning / info). Supports import, chunk_rebuild, chunk_add pipelines.
 - HTTP client configuration (optional): `HTTP_BASE_URL` (defaults to `http://localhost:8080`).
 - HTTP client logging (optional): `HTTP_CLIENT_LOG_ENABLED` (default false, set true to log request/response details).
+- Download file storage configuration:
+  URL 导入下载文件使用系统临时目录，无需配置目录；处理结束后会以 best-effort 方式删除本地临时文件。
+- File type detection dependency (required for URL import parsing):
+  `filetype`（纯 Python 依赖；用于下载后真实类型识别与解析器分发，无需系统 `libmagic`）。
 - Agent tool logging (optional): `AGENT_TOOL_LOG_ENABLED` (default false, set true to log tool invocations and results).
 - CORS configuration (optional): `CORS_ALLOW_ORIGINS` (comma-separated origins, takes precedence over regex when set).
 - CORS configuration (optional): `CORS_ALLOW_ORIGIN_REGEX` (defaults to allowing `localhost`/`127.0.0.1` on any port).

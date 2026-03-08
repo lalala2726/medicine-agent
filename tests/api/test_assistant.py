@@ -1148,7 +1148,11 @@ def test_assistant_rate_limit_test_route_returns_503_when_redis_unavailable(monk
     assert "data" not in body
 
 
-def test_non_anonymous_route_still_requires_authentication():
+def test_non_anonymous_route_still_requires_authentication(monkeypatch):
+    async def _fake_verify_authorization() -> AuthUser:
+        raise ServiceException(code=ResponseCode.UNAUTHORIZED, message="未认证")
+
+    monkeypatch.setattr(main_module, "verify_authorization", _fake_verify_authorization)
     client = TestClient(app)
 
     response = client.post(

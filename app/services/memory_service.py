@@ -11,8 +11,8 @@ from app.core.llms.provider import LlmProvider, resolve_provider
 from app.schemas.document.message import MessageRole
 from app.schemas.memory import Memory
 from app.services.conversation_service import get_conversation
-from app.services.summary_service import get_conversation_summary
 from app.services.message_service import list_messages, list_summarizable_tail_messages
+from app.services.summary_service import get_conversation_summary
 
 _ASSISTANT_MEMORY_MODE_ENV = "ASSISTANT_MEMORY_MODE"
 _ASSISTANT_MEMORY_WINDOW_LIMIT_ENV = "ASSISTANT_MEMORY_WINDOW_LIMIT"

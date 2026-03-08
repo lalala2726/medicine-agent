@@ -1,11 +1,14 @@
-from app.rag.chunking.base import ChunkStrategyType, SplitChunk, SplitConfig
-from app.rag.chunking.factory import ChunkerFactory
-from app.rag.chunking.service import split_file
+from app.rag.chunking.service import split_excel_text, split_text
+from app.rag.chunking.types import (
+    ChunkStats,
+    SplitChunk,
+    SplitConfig,
+)
 
 __all__ = [
-    "ChunkStrategyType",
+    "ChunkStats",
     "SplitChunk",
     "SplitConfig",
-    "ChunkerFactory",
-    "split_file",
+    "split_excel_text",
+    "split_text",
 ]

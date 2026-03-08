@@ -129,3 +129,5 @@ All API responses follow this structure via `ApiResponse[T]`:
 
 The `.model_dump()` method automatically excludes `None` values. Use type generics for type safety:
 `ApiResponse[DrugData]`.
+
+最后！你在回答时可以直接使用中文了！如果你觉得有必要的话！

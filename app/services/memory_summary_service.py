@@ -7,10 +7,6 @@ from loguru import logger
 
 from app.core.llms import create_chat_model
 from app.schemas.document.message import MessageDocument, MessageRole
-from app.services.summary_service import (
-    get_conversation_summary,
-    save_conversation_summary,
-)
 from app.services.memory_service import (
     resolve_assistant_summary_max_tokens,
     resolve_assistant_summary_model,
@@ -19,6 +15,10 @@ from app.services.memory_service import (
 from app.services.message_service import (
     count_summarizable_messages,
     list_latest_summarizable_messages,
+)
+from app.services.summary_service import (
+    get_conversation_summary,
+    save_conversation_summary,
 )
 from app.utils.prompt_utils import load_prompt
 from app.utils.token_utills import TokenUtils

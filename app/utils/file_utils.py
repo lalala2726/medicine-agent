@@ -3,7 +3,6 @@ from __future__ import annotations
 import base64
 import mimetypes
 import os
-import tempfile
 from io import BytesIO
 from pathlib import Path
 from typing import Optional
@@ -13,6 +12,7 @@ from urllib.request import urlopen
 
 from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException
+from app.utils.download_storage import build_download_target_path
 
 
 class FileUtils:
@@ -77,8 +77,28 @@ class FileUtils:
             timeout: int = DEFAULT_TIMEOUT,
             chunk_size: int = DEFAULT_DOWNLOAD_CHUNK_SIZE,
     ) -> tuple[str, Path]:
-        """下载文件到临时目录，返回文件名与路径。"""
+        """
+        功能描述:
+            下载远程文件到系统临时目录，并返回解析后的文件名与本地路径。
+
+        参数说明:
+            file_url (str): 待下载文件 URL。
+            timeout (int): 下载超时时间（秒），默认值为 `DEFAULT_TIMEOUT`。
+            chunk_size (int): 流式读取块大小（字节），默认值为 `DEFAULT_DOWNLOAD_CHUNK_SIZE`。
+
+        返回值:
+            tuple[str, Path]:
+                - 第 1 项: 解析后的文件名（优先响应头，其次 URL 推断）
+                - 第 2 项: 本地落盘路径
+
+        异常说明:
+            ServiceException:
+                - URL 无效或下载失败时抛出；
+                - 系统临时目录不可写时由下游抛出；
+                - 本地文件写入失败时抛出。
+        """
         filename = FileUtils.resolve_filename_from_url(file_url)
+        target_path: Path | None = None
         try:
             with urlopen(file_url, timeout=timeout) as response:
                 content_type = FileUtils._normalize_content_type(
@@ -89,15 +109,26 @@ class FileUtils:
                     filename,
                     content_type,
                 )
-                suffix = Path(filename).suffix
-                with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
+                target_path = build_download_target_path(filename)
+                with target_path.open("wb") as target_file:
                     while True:
                         chunk = response.read(chunk_size)
                         if not chunk:
                             break
-                        tmp_file.write(chunk)
-                return filename, Path(tmp_file.name)
+                        target_file.write(chunk)
+                return filename, target_path
+        except ServiceException:
+            raise
         except (URLError, ValueError) as exc:
+            if target_path and target_path.exists():
+                target_path.unlink(missing_ok=True)
+            raise ServiceException(
+                code=ResponseCode.OPERATION_FAILED,
+                message=f"下载文件失败: {file_url}",
+            ) from exc
+        except OSError as exc:
+            if target_path and target_path.exists():
+                target_path.unlink(missing_ok=True)
             raise ServiceException(
                 code=ResponseCode.OPERATION_FAILED,
                 message=f"下载文件失败: {file_url}",

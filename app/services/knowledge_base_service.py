@@ -1,287 +1,136 @@
-from pathlib import Path
-
-from loguru import logger
-
 from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException
-from app.rag.chunking import ChunkStrategyType, SplitConfig, split_file
-from app.rag.file_loader.base import (
-    cleanup_temp_assets,
-    create_temp_image_dir,
-    register_temp_assets,
-)
-from app.rag.file_loader.factory import FileLoaderFactory
-from app.services import vector_service
-from app.utils.file_utils import FileUtils
-
-DEFAULT_CHUNK_SIZE = 500  # 默认切片长度（字符）
-DEFAULT_TOKEN_SIZE = 100  # 默认 token 切片长度
-DEFAULT_PARSE_IMAGES = False  # 默认不解析图片
-DEFAULT_CHUNK_OVERLAP = 50  # 默认切片重叠长度（字符）
-# 支持导入的文件扩展名集合
-SUPPORTED_IMPORT_EXTENSIONS = {
-    ".txt",
-    ".md",
-    ".pdf",
-    ".docx",
-    ".doc",
-    ".pptx",
-    ".ppt",
-    ".xlsx",
-    ".xls",
-    ".html",
-    ".htm",
-}
-
-
-def _download_file(url: str) -> tuple[str, Path]:
-    """
-    下载文件并返回（文件名，临时文件路径）。
-
-    单独封装该函数是为了测试可替换（monkeypatch），
-    同时避免导入流程与底层下载实现强耦合。
-    """
-
-    return FileUtils.download_file(url)
+from app.repositories import vector_repository
 
 
 def create_collection(
-        knowledge_name: str, embedding_dim: int, description: str
+        knowledge_name: str,
+        embedding_dim: int,
+        description: str,
 ) -> None:
-    """
-    创建 Milvus 知识库并应用业务字段 schema。
+    """创建知识库对应的 Milvus collection。
 
     Args:
-        knowledge_name: knowledge 名称
-        embedding_dim: 向量维度
-        description: knowledge 描述
+        knowledge_name: 知识库名称。
+        embedding_dim: 向量维度。
+        description: 知识库描述。
+
+    Raises:
+        ServiceException: collection 已存在或创建失败时抛出。
     """
-    vector_service.create_collection(knowledge_name, embedding_dim, description)
+    vector_repository.create_collection(
+        knowledge_name=knowledge_name,
+        embedding_dim=embedding_dim,
+        description=description,
+    )
 
 
 def delete_knowledge(knowledge_name: str) -> None:
-    """
-    删除 Milvus 知识库。
+    """删除知识库对应的 Milvus collection。
 
     Args:
-        knowledge_name: knowledge 名称
-    """
-    vector_service.delete_collection(knowledge_name)
-
-
-def _validate_import_extension(filename: str) -> None:
-    """
-    验证文件扩展名是否在支持的导入格式列表中。
-
-    Args:
-        filename: 文件名
+        knowledge_name: 知识库名称。
 
     Raises:
-        ServiceException: 文件格式不支持
+        ServiceException: collection 不存在或删除失败时抛出。
     """
-    suffix = Path(filename).suffix.lower()
-    if not suffix or suffix not in SUPPORTED_IMPORT_EXTENSIONS:
-        allowed = ", ".join(sorted(SUPPORTED_IMPORT_EXTENSIONS))
-        raise ServiceException(
-            code=ResponseCode.BAD_REQUEST,
-            message=f"不支持的文件格式: {suffix or '未知'}，支持: {allowed}",
-        )
+    vector_repository.delete_collection(knowledge_name=knowledge_name)
 
 
-def _validate_file_not_empty(file_path: Path) -> None:
-    """
-    验证文件不为空。
+def load_collection_state(knowledge_name: str) -> dict:
+    """启用知识库对应的 Milvus collection。
 
     Args:
-        file_path: 文件路径
+        knowledge_name: 知识库名称。
+
+    Returns:
+        dict: 包含 ``knowledge_name`` 与 ``load_state`` 的状态结果。
 
     Raises:
-        ServiceException: 文件为空
+        ServiceException: collection 不存在或加载失败时抛出。
     """
-    if file_path.stat().st_size == 0:
-        raise ServiceException(
-            code=ResponseCode.BAD_REQUEST, message="文件为空，无法导入"
-        )
+    return vector_repository.load_collection_state(knowledge_name=knowledge_name)
 
 
-def import_knowledge_service(
-        knowledge_name: str,
-        document_id: int,
-        file_url: list[str],
-        chunk_strategy: ChunkStrategyType = ChunkStrategyType.LENGTH,
-        chunk_size: int = DEFAULT_CHUNK_SIZE,
-        token_size: int = DEFAULT_TOKEN_SIZE,
-        parse_images: bool = DEFAULT_PARSE_IMAGES,
-) -> dict:
-    """
-    知识库导入服务：批量下载、解析文件并返回结果。
+def release_collection_state(knowledge_name: str) -> dict:
+    """关闭知识库对应的 Milvus collection。
 
     Args:
-        knowledge_name: Milvus knowledge 名称
-        file_url: 待导入的文件 URL 列表
+        knowledge_name: 知识库名称。
 
     Returns:
-        包含成功解析结果和失败 URL 列表的字典
-        :param knowledge_name: 知识库名
-        :param document_id: 文档ID
-        :param file_url: 文件URL
-        :param chunk_strategy: 切片策略
-        :param chunk_size: 切片长度
-        :param token_size: token 切片长度
-        :param parse_images: 是否解析图片
+        dict: 包含 ``knowledge_name`` 与 ``load_state`` 的状态结果。
+
+    Raises:
+        ServiceException: collection 不存在或释放失败时抛出。
     """
-    logger.info(
-        "开始导入知识库：knowledge_name={}, document_id={}, file_count={}, chunk_strategy={}, chunk_size={}, token_size={}, parse_images={}",
-        knowledge_name,
-        document_id,
-        len(file_url) if file_url else 0,
-        chunk_strategy.value,
-        chunk_size,
-        token_size,
-        parse_images,
-    )
-    # 验证 knowledge 是否存在
-    vector_service.ensure_collection_exists(knowledge_name)
-
-    if not file_url:
-        raise ServiceException(
-            code=ResponseCode.BAD_REQUEST, message="导入文件不能为空"
-        )
-
-    # 下载失败的文件 URL 列表
-    failed_urls: list[str] = []
-    # 下载结果列表
-    results: list[dict] = []
-    # 向量写入已暂时关闭，后续需要时再恢复维度校验
-
-    for url in file_url:
-        filename: str | None = None
-        file_path: Path | None = None
-        keep_file = False
-        try:
-            logger.info("开始处理文件：file_url={}", url)
-            # 1. 从 URL 下载文件到临时目录
-            filename, file_path = _download_file(url)
-            logger.info(
-                "下载完成：file_url={}, filename={}, temp_path={}",
-                url,
-                filename,
-                file_path,
-            )
-            # 2. 验证文件格式是否支持
-            _validate_import_extension(filename)
-            # 3. 验证文件不为空
-            _validate_file_not_empty(file_path)
-            # 4. 解析文件内容（默认不解析图片，需显式开启）
-            if parse_images:
-                parsed = FileLoaderFactory.parse_file_with_images(
-                    file_path, source_name=filename
-                )
-            else:
-                # 即使不解析图片，也创建并注册临时图片目录，保持导入资产结构一致，
-                # 便于 cleanup_import_assets 统一清理。
-                image_dir = create_temp_image_dir(file_path.stem or "file")
-                register_temp_assets(filename, image_dir, source_path=file_path)
-                pages = FileLoaderFactory.parse_file(file_path)
-                parsed = {
-                    "image_dir": str(image_dir),
-                    "pages": [page.to_dict() for page in pages],
-                }
-            logger.info(
-                "解析完成：filename={}, pages={}, image_dir={}",
-                filename,
-                len(parsed.get("pages") or []),
-                parsed.get("image_dir"),
-            )
-            # 5. 按策略切片
-            effective_chunk_size = (
-                token_size
-                if chunk_strategy == ChunkStrategyType.TOKEN
-                else chunk_size
-            )
-            chunks = split_file(
-                file_path,
-                chunk_strategy,
-                SplitConfig(
-                    chunk_size=effective_chunk_size,
-                    chunk_overlap=DEFAULT_CHUNK_OVERLAP,
-                ),
-            )
-            logger.info(
-                "切片完成：filename={}, chunk_strategy={}, chunk_size={}, chunks={}",
-                filename,
-                chunk_strategy.value,
-                effective_chunk_size,
-                len(chunks),
-            )
-            # 6. 向量化并写入 Milvus
-            texts = [chunk.text for chunk in chunks if chunk.text.strip()]
-            if texts:
-                embeddings = vector_service.embed_texts(texts)
-                vector_service.insert_embeddings(
-                    knowledge_name,
-                    document_id,
-                    embeddings,
-                    texts,
-                )
-                logger.info(
-                    "向量写入完成：filename={}, text_count={}",
-                    filename,
-                    len(texts),
-                )
-            else:
-                logger.warning("未生成有效文本，跳过向量写入：filename={}", filename)
-
-            keep_file = True
-            results.append(
-                {
-                    "file_url": url,
-                    "filename": filename,
-                    "image_dir": parsed["image_dir"],
-                    "pages": parsed["pages"],
-                }
-            )
-        except ServiceException as exc:
-            logger.error(
-                "文件处理失败：file_url={}, filename={}, error={}",
-                url,
-                filename,
-                exc,
-            )
-            failed_urls.append(url)
-            if filename:
-                cleanup_temp_assets(filename)
-            continue
-        finally:
-            # 解析失败时清理下载的临时文件，成功则等待统一清理
-            if not keep_file and file_path and file_path.exists():
-                file_path.unlink(missing_ok=True)
-                logger.info("临时文件已清理：temp_path={}", file_path)
-    summary = {
-        "results": results,
-        "failed_urls": failed_urls,
-    }
-    return summary
+    return vector_repository.release_collection_state(knowledge_name=knowledge_name)
 
 
-def cleanup_import_assets(filename: str) -> dict:
-    """
-    按文件名清理解析产生的临时文件与图片目录。
+def delete_documents(knowledge_name: str, document_ids: list[int]) -> None:
+    """批量删除文档在知识库中的全部切片。
 
     Args:
-        filename: 文件名
+        knowledge_name: 知识库名称。
+        document_ids: 文档 ID 列表。
 
-    Returns:
-        清理结果统计字典
+    Raises:
+        ServiceException: 知识库不存在或删除失败时抛出。
     """
-    return cleanup_temp_assets(filename)
-
-
-def delete_document(knowledge_name: str, document_id: int) -> None:
-    vector_service.ensure_collection_exists(knowledge_name)
-    vector_service.delete_document(
+    vector_repository.ensure_collection_exists(knowledge_name=knowledge_name)
+    vector_repository.delete_document_chunks(
         knowledge_name=knowledge_name,
-        document_id=document_id,
+        document_ids=document_ids,
+    )
+
+
+def update_document_status(
+        knowledge_name: str,
+        primary_id: int,
+        status: int,
+) -> int:
+    """按向量主键更新文档切片状态。
+
+    Args:
+        knowledge_name: 知识库名称。
+        primary_id: 向量数据库主键 ID。
+        status: 状态值，仅允许 0 或 1。
+
+    Returns:
+        int: 更新后的当前有效向量主键 ID。
+
+    Raises:
+        ServiceException: 知识库不存在、状态非法或更新失败时抛出。
+    """
+    vector_repository.ensure_collection_exists(knowledge_name=knowledge_name)
+    return vector_repository.update_document_chunk_status(
+        knowledge_name=knowledge_name,
+        primary_id=primary_id,
+        status=status,
+    )
+
+
+def update_document_status_by_vector_id(
+        primary_id: int,
+        status: int,
+) -> tuple[str, int]:
+    """按向量主键更新文档切片状态并返回命中的知识库名称。
+
+    Args:
+        primary_id: 向量数据库主键 ID。
+        status: 状态值，仅允许 0 或 1。
+
+    Returns:
+        tuple[str, int]:
+            - 第 1 项: 命中的知识库名称；
+            - 第 2 项: 更新后的当前有效向量主键 ID。
+
+    Raises:
+        ServiceException: 记录不存在、状态非法、命中多个知识库或更新失败时抛出。
+    """
+    return vector_repository.update_document_chunk_status_by_primary_id(
+        primary_id=primary_id,
+        status=status,
     )
 
 
@@ -291,25 +140,27 @@ def list_knowledge_chunks(
         page_num: int,
         page_size: int,
 ) -> tuple[list[dict], int]:
-    """
-    分页查询知识库中的文档切片数据。
+    """分页查询文档切片。
 
     Args:
-        knowledge_name: 知识库名
-        document_id: 文档ID
-        page_num: 页码（从 1 开始）
-        page_size: 每页数量
+        knowledge_name: 知识库名称。
+        document_id: 文档 ID。
+        page_num: 页码，从 1 开始。
+        page_size: 每页条数。
 
     Returns:
-        (rows, total) 元组
+        tuple[list[dict], int]: 当前页数据与总数。
+
+    Raises:
+        ServiceException: 分页参数非法、知识库不存在或查询失败时抛出。
     """
     if page_num <= 0 or page_size <= 0:
         raise ServiceException(
             code=ResponseCode.BAD_REQUEST,
             message="page_num 和 page_size 必须大于 0",
         )
-    vector_service.ensure_collection_exists(knowledge_name)
-    return vector_service.list_document_chunks(
+    vector_repository.ensure_collection_exists(knowledge_name=knowledge_name)
+    return vector_repository.list_document_chunks(
         knowledge_name=knowledge_name,
         document_id=document_id,
         page_num=page_num,

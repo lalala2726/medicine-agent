@@ -26,12 +26,22 @@ from app.core.security.rate_limit import (
     rate_limit,
 )
 from app.core.security.role_codes import RoleCode
+from app.core.security.system_auth import (
+    allow_system,
+    is_system_endpoint,
+    is_system_request,
+    verify_system_request,
+)
 
 __all__ = [
     "RoleCode",
     "allow_anonymous",
+    "allow_system",
     "is_anonymous_endpoint",
     "is_anonymous_request",
+    "is_system_endpoint",
+    "is_system_request",
+    "verify_system_request",
     "pre_authorize",
     "has_role",
     "has_permission",

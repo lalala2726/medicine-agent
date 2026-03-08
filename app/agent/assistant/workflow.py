@@ -5,7 +5,7 @@ from typing import Any
 from langgraph.constants import END, START
 from langgraph.graph import StateGraph
 
-from app.agent.assistant.node import (
+from app.agent.assistant.domain import (
     adaptive_agent,
     after_sale_agent,
     analytics_agent,
