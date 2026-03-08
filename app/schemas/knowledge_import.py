@@ -37,7 +37,7 @@ class ImportSingleFileSuccessResult(BaseModel):
     file_size: int = Field(..., ge=0)
     source_extension: str = Field(..., min_length=1)
     file_kind: str = Field(..., min_length=1)
-    mime_type: str = Field(..., min_length=1)
+    mime_type: str | None = Field(default=None, min_length=1)
     text_length: int = Field(..., ge=0)
     chunk_count: int = Field(..., ge=0)
     vector_count: int = Field(..., ge=0)

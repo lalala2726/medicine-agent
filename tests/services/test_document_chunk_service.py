@@ -263,6 +263,83 @@ def test_import_single_file_runs_vectorization_and_insert_batches(
     assert insert_calls[0]["chunk_overlap"] == 50
 
 
+def test_import_single_file_allows_missing_mime_type_for_markdown(
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+) -> None:
+    """验证 markdown 文件在 MIME 未识别时仍可成功导入。"""
+    source_path = tmp_path / "demo.md"
+    source_path.write_text("# 标题\n\n内容", encoding="utf-8")
+
+    monkeypatch.setenv("KNOWLEDGE_VECTOR_BATCH_SIZE", "2")
+    monkeypatch.setattr(
+        service_module,
+        "_download_file",
+        lambda _url: ("demo.md", source_path),
+    )
+    monkeypatch.setattr(
+        service_module,
+        "parse_downloaded_file",
+        lambda **_: ParsedDocument(
+            file_kind=FileKind.MARKDOWN,
+            mime_type=None,
+            source_extension=".md",
+            text="# 标题\n\n内容",
+        ),
+    )
+    monkeypatch.setattr(
+        service_module.vector_repository,
+        "ensure_collection_exists",
+        lambda **_: None,
+    )
+    monkeypatch.setattr(
+        service_module.vector_repository,
+        "get_collection_embedding_dim",
+        lambda **_: 1024,
+    )
+    monkeypatch.setattr(
+        service_module,
+        "create_embedding_client",
+        lambda **_: object(),
+    )
+    monkeypatch.setattr(
+        service_module,
+        "embed_texts",
+        lambda texts, **_: [[0.1, 0.2] for _ in texts],
+    )
+    monkeypatch.setattr(
+        service_module.vector_repository,
+        "insert_embeddings",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        service_module.vector_repository,
+        "count_document_chunks",
+        lambda **_kwargs: 1,
+    )
+    monkeypatch.setattr(
+        service_module,
+        "_split_parsed_text",
+        lambda *_args, **_kwargs: [
+            SplitChunk(text="markdown", stats=ChunkStats(char_count=8)),
+        ],
+    )
+
+    result = service_module.import_single_file(
+        url="https://example.com/demo.md",
+        knowledge_name="demo",
+        document_id=10,
+        embedding_model="text-embedding-v4",
+        chunk_size=200,
+        chunk_overlap=50,
+    )
+
+    assert result.status == "success"
+    assert result.file_kind == "markdown"
+    assert result.mime_type is None
+    assert result.chunk_count == 1
+
+
 def test_import_single_file_keeps_downloaded_file_on_parse_failure(
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
