@@ -12,8 +12,8 @@ information.
 
 ## Build, Test, and Development Commands
 
-- This project uses conda; run commands in env `medicine-ai-agent`.
-- Prefer `conda run -n medicine-ai-agent <command>` for reproducible execution.
+- This project uses conda; run commands in env `medicine-agent`.
+- Prefer `conda run -n medicine-agent <command>` for reproducible execution.
 - `uvicorn app.main:app --reload` runs the API locally with hot reload.
 - `python -m pytest` runs the test suite (currently minimal; add tests as you implement features).
 - No build step is required; this is a pure Python service.
