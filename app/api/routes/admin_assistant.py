@@ -1,10 +1,9 @@
-from typing import Any, Literal
+from typing import Any
 
-from fastapi import APIRouter, Depends, Path, Request, Response
+from fastapi import APIRouter, Depends, Path, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.core.security.anonymous_access import allow_anonymous
 from app.core.security.pre_authorize import RoleCode, has_permission, has_role, pre_authorize
 from app.core.security.rate_limit import RateLimitPreset, RateLimitRule, rate_limit
 from app.schemas.admin_assistant_history import (
@@ -39,13 +38,6 @@ TTS_RATE_LIMIT_RULES = (
     RateLimitRule.preset(RateLimitPreset.HOUR_5, limit=100),
     RateLimitRule.preset(RateLimitPreset.HOUR_24, limit=200),
 )
-
-# 按照用户 ID 进行限流的主体
-USER_ID_RATE_LIMIT_SUBJECTS: tuple[Literal["user_id"], ...] = ("user_id",)
-
-# 按照 IP 进行限流的主体
-IP_RATE_LIMIT_SUBJECTS: tuple[Literal["ip"], ...] = ("ip",)
-
 
 class AssistantRequest(BaseModel):
     """AI助手请求参数。"""
@@ -124,39 +116,10 @@ class UpdateConversationTitleRequest(BaseModel):
     title: str = Field(..., min_length=1, max_length=100, description="会话标题")
 
 
-def _build_update_conversation_title_response(
-        *,
-        conversation_uuid: str,
-        request: UpdateConversationTitleRequest,
-) -> ApiResponse[dict[str, str]]:
-    """
-    统一构造会话标题修改响应，供新旧路由复用。
-
-    Args:
-        conversation_uuid: 会话 UUID。
-        request: 标题更新请求对象，读取 `title` 字段。
-
-    Returns:
-        ApiResponse[dict[str, str]]: 修改结果，包含会话 UUID 与标准化标题。
-    """
-
-    normalized_title = update_conversation_title_service(
-        conversation_uuid=conversation_uuid,
-        title=request.title,
-    )
-    return ApiResponse.success(
-        data={
-            "conversation_uuid": conversation_uuid,
-            "title": normalized_title,
-        },
-        message="修改成功",
-    )
-
-
 @router.post("/chat", summary="管理助手对话（Gateway + Supervisor）")
 @rate_limit(
     rules=CHAT_RATE_LIMIT_RULES,
-    subjects=USER_ID_RATE_LIMIT_SUBJECTS,
+    subjects=("user_id",),
     scope="admin_assistant_chat",
     fail_open=False,
 )
@@ -184,7 +147,7 @@ async def assistant(_request: Request, request: AssistantRequest) -> StreamingRe
 @router.post("/message/tts/stream", summary="管理助手消息转语音（流式）")
 @rate_limit(
     rules=TTS_RATE_LIMIT_RULES,
-    subjects=USER_ID_RATE_LIMIT_SUBJECTS,
+    subjects=("user_id",),
     scope="admin_assistant_tts",
     fail_open=False,
 )
@@ -200,7 +163,6 @@ async def assistant_message_tts_stream(
     return assistant_message_tts_stream_service(
         message_uuid=request.message_uuid,
     )
-
 
 
 @router.get("/conversation/list", summary="管理助手会话列表")
@@ -255,9 +217,16 @@ async def update_conversation_title(
     修改管理助手会话标题。
     """
 
-    return _build_update_conversation_title_response(
+    normalized_title = update_conversation_title_service(
         conversation_uuid=conversation_uuid,
-        request=request,
+        title=request.title,
+    )
+    return ApiResponse.success(
+        data={
+            "conversation_uuid": conversation_uuid,
+            "title": normalized_title,
+        },
+        message="修改成功",
     )
 
 
@@ -290,4 +259,3 @@ async def conversation_messages(
         page_num=request.page_num,
         page_size=request.page_size,
     )
-
