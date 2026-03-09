@@ -243,6 +243,29 @@ def list_messages(
     return [_to_message_document(item) for item in cursor]
 
 
+def count_messages(
+        *,
+        conversation_id: Annotated[str, Field(min_length=1)],
+) -> int:
+    """
+    统计某个会话下的消息总数。
+
+    Args:
+        conversation_id: 所属会话 Mongo ObjectId（字符串形式）。
+
+    Returns:
+        int: 当前会话命中的消息总数。
+
+    Note:
+        仅按 `conversation_id` 统计，不附加其他角色、状态或摘要过滤条件。
+    """
+
+    query = {"conversation_id": _to_object_id(conversation_id)}
+    db = get_mongo_database()
+    collection = db[_resolve_collection_name()]
+    return int(collection.count_documents(query))
+
+
 def _build_summarizable_messages_query(
         *,
         conversation_id: Annotated[str, Field(min_length=1)],

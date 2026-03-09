@@ -60,8 +60,6 @@
 - LLM thinking switch semantics: `think=true` enables provider-specific deep thinking payload;
   default is `false`. For `volcengine`, framework explicitly sends `thinking.type=disabled`
   when `think=false` to avoid provider default reasoning output.
-- 管理助手对话接口（`POST /admin/assistant/chat`）支持请求参数 `enable_thinking`（默认 `false`），
-  仅在显式传 `true` 时透传深度思考流式事件（`type=thinking`）。
 - 管理助手记忆配置（optional）：
   `ASSISTANT_MEMORY_MODE`（`window|summary`，默认 `window`），
   `ASSISTANT_MEMORY_WINDOW_LIMIT`（默认 `50`，仅 `window` 模式生效），

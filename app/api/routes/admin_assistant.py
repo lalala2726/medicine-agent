@@ -24,6 +24,7 @@ from app.services.admin_assistant_service import (
 
 router = APIRouter(prefix="/admin/assistant", tags=["智能助手"])
 
+# 聊天率限制规则
 CHAT_RATE_LIMIT_RULES = (
     RateLimitRule.preset(RateLimitPreset.MINUTE_1, limit=10),
     RateLimitRule.preset(RateLimitPreset.MINUTE_5, limit=30),
@@ -31,6 +32,7 @@ CHAT_RATE_LIMIT_RULES = (
     RateLimitRule.preset(RateLimitPreset.HOUR_24, limit=600),
 )
 
+# 语音合成率限制规则
 TTS_RATE_LIMIT_RULES = (
     RateLimitRule.preset(RateLimitPreset.MINUTE_1, limit=5),
     RateLimitRule.preset(RateLimitPreset.HOUR_1, limit=60),
@@ -38,11 +40,15 @@ TTS_RATE_LIMIT_RULES = (
     RateLimitRule.preset(RateLimitPreset.HOUR_24, limit=200),
 )
 
+# 测试率限制规则
 TEST_RATE_LIMIT_RULES = (
     RateLimitRule.preset(RateLimitPreset.MINUTE_1, limit=10),
 )
 
+# 按照用户 ID 进行限流的主体
 USER_ID_RATE_LIMIT_SUBJECTS: tuple[Literal["user_id"], ...] = ("user_id",)
+
+# 按照 IP 进行限流的主体
 IP_RATE_LIMIT_SUBJECTS: tuple[Literal["ip"], ...] = ("ip",)
 
 
@@ -56,10 +62,6 @@ class AssistantRequest(BaseModel):
         default=None,
         min_length=1,
         description="会话UUID",
-    )
-    enable_thinking: bool = Field(
-        default=False,
-        description="是否开启深度思考流式透传",
     )
 
     @field_validator("question")
@@ -127,36 +129,6 @@ class UpdateConversationTitleRequest(BaseModel):
     title: str = Field(..., min_length=1, max_length=100, description="会话标题")
 
 
-def _build_conversation_messages_response(
-        *,
-        conversation_uuid: str,
-        request: ConversationMessagesRequest,
-) -> ApiResponse[list[dict[str, Any]]]:
-    """
-    统一构造会话消息分页响应，供新旧路由复用。
-
-    Args:
-        conversation_uuid: 会话 UUID。
-        request: 分页请求参数（`page_num/page_size`）。
-
-    Returns:
-        ApiResponse[list[dict[str, Any]]]: 序列化后的历史消息数组响应。
-    """
-
-    messages = conversation_messages_service(
-        conversation_uuid=conversation_uuid,
-        page_request=PageRequest(
-            page_num=request.page_num,
-            page_size=request.page_size,
-        ),
-    )
-    serialized_messages = [
-        message.model_dump(by_alias=True, exclude_none=True)
-        for message in messages
-    ]
-    return ApiResponse.success(data=serialized_messages)
-
-
 def _build_update_conversation_title_response(
         *,
         conversation_uuid: str,
@@ -202,18 +174,12 @@ async def assistant(_request: Request, request: AssistantRequest) -> StreamingRe
 
     Args:
         _request: FastAPI 原始请求对象（当前实现仅用于依赖注入与中间件链路）。
-        request: 聊天请求体，包含问题、会话 UUID 与可选 `enable_thinking` 开关。
+        request: 聊天请求体，包含问题与可选会话 UUID。
 
     Returns:
         StreamingResponse: SSE 流式响应对象。
     """
 
-    if request.enable_thinking:
-        return assistant_chat(
-            question=request.question,
-            conversation_uuid=request.conversation_uuid,
-            enable_thinking=True,
-        )
     return assistant_chat(
         question=request.question,
         conversation_uuid=request.conversation_uuid,
@@ -326,17 +292,27 @@ async def update_conversation_title(
 async def conversation_messages(
         conversation_uuid: str = Path(..., min_length=1, description="会话UUID"),
         request: ConversationMessagesRequest = Depends(),
-) -> ApiResponse[list[dict[str, Any]]]:
+) -> ApiResponse[PageResponse[dict[str, Any]]]:
     """
-    分页查询管理助手历史消息（新路径）。
-
-    说明：保留该路径以兼容当前实现，同时在 `/conversation/{conversation_uuid}/messages`
-    提供等价旧路径，避免历史客户端与测试用例出现 404。
+    分页查询管理助手历史消息。
     """
 
-    return _build_conversation_messages_response(
+    messages, total = conversation_messages_service(
         conversation_uuid=conversation_uuid,
-        request=request,
+        page_request=PageRequest(
+            page_num=request.page_num,
+            page_size=request.page_size,
+        ),
+    )
+    serialized_messages = [
+        message.model_dump(by_alias=True, exclude_none=True)
+        for message in messages
+    ]
+    return ApiResponse.page(
+        rows=serialized_messages,
+        total=total,
+        page_num=request.page_num,
+        page_size=request.page_size,
     )
 
 
@@ -360,31 +336,6 @@ async def update_conversation_title_legacy(
     """
 
     return _build_update_conversation_title_response(
-        conversation_uuid=conversation_uuid,
-        request=request,
-    )
-
-
-@router.get("/conversation/{conversation_uuid}/messages", summary="管理助手历史消息（兼容路径）")
-@pre_authorize(
-    lambda: has_role(RoleCode.SUPER_ADMIN) or has_permission("admin:assistant:access")
-)
-async def conversation_messages_legacy(
-        conversation_uuid: str = Path(..., min_length=1, description="会话UUID"),
-        request: ConversationMessagesRequest = Depends(),
-) -> ApiResponse[list[dict[str, Any]]]:
-    """
-    查询会话历史消息（旧路径兼容）。
-
-    Args:
-        conversation_uuid: 会话 UUID。
-        request: 分页请求参数。
-
-    Returns:
-        ApiResponse[list[dict[str, Any]]]: 会话历史消息列表响应。
-    """
-
-    return _build_conversation_messages_response(
         conversation_uuid=conversation_uuid,
         request=request,
     )

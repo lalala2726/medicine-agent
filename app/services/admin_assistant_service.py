@@ -37,7 +37,7 @@ from app.services.conversation_service import (
 )
 from app.services.memory_service import load_memory, resolve_assistant_memory_mode
 from app.services.memory_summary_service import refresh_conversation_summary_if_needed
-from app.services.message_service import add_message, list_messages
+from app.services.message_service import add_message, count_messages, list_messages
 from app.services.message_trace_service import add_message_trace
 from app.services.token_usage_service import (
     resolve_persistable_token_usage,
@@ -115,7 +115,6 @@ def _build_initial_state(
         question: str,
         *,
         history_messages: list[ChatHistoryMessage] | None = None,
-        enable_thinking: bool = False,
 ) -> dict[str, Any]:
     """
     构造管理助手的初始状态。
@@ -125,10 +124,8 @@ def _build_initial_state(
     Args:
         question: 当前用户问题文本；当前实现仅用于接口语义占位，不参与状态构造。
         history_messages: 会话历史消息列表；为空时默认空列表。
-        enable_thinking: 是否开启深度思考透传；默认 `False`。
-
     Returns:
-        dict[str, Any]: LangGraph 初始状态字典，包含路由、历史、消息与透传开关等字段。
+        dict[str, Any]: LangGraph 初始状态字典，包含路由、历史与消息等字段。
     """
 
     _ = question
@@ -141,7 +138,6 @@ def _build_initial_state(
         },
         "context": "",
         "history_messages": base_history,
-        "enable_thinking": bool(enable_thinking),
         "execution_traces": [],
         "token_usage": None,
         "result": "",
@@ -592,7 +588,6 @@ def assistant_chat(
         *,
         question: str,
         conversation_uuid: str | None = None,
-        enable_thinking: bool = False,
 ) -> StreamingResponse:
     """
     管理助手聊天入口（SSE 流式返回）。
@@ -609,8 +604,6 @@ def assistant_chat(
     Args:
         question: 用户输入问题文本。
         conversation_uuid: 可选会话 UUID；为空时创建新会话。
-        enable_thinking: 是否开启深度思考流式透传；默认 `False`。
-
     Returns:
         StreamingResponse: 标准 SSE 流式响应对象。
     """
@@ -638,7 +631,6 @@ def assistant_chat(
         build_initial_state=lambda q: _build_initial_state(
             q,
             history_messages=context.history_messages,
-            enable_thinking=enable_thinking,
         ),
         extract_final_content=lambda state: str(state.get("result") or ""),
         should_stream_token=_should_stream_token,
@@ -739,9 +731,9 @@ def conversation_messages(
         *,
         conversation_uuid: str,
         page_request: PageRequest,
-) -> list[ConversationMessageResponse]:
+) -> tuple[list[ConversationMessageResponse], int]:
     """
-    分页查询当前用户某个管理助手会话的历史消息。
+    分页查询当前用户某个管理助手会话的历史消息与总数。
 
     分页规则：
     1. page_num=1 返回最近一页（最新 50 条）；
@@ -759,6 +751,7 @@ def conversation_messages(
     )
 
     skip = (page_request.page_num - 1) * page_request.page_size
+    total = count_messages(conversation_id=conversation_id)
     message_documents = list_messages(
         conversation_id=conversation_id,
         limit=page_request.page_size,
@@ -780,7 +773,7 @@ def conversation_messages(
             if isinstance(raw_thinking, str) and raw_thinking.strip():
                 payload["thinking"] = raw_thinking
         result.append(ConversationMessageResponse.model_validate(payload))
-    return result
+    return result, total
 
 
 def delete_conversation(
