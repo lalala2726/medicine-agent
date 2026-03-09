@@ -40,11 +40,6 @@ TTS_RATE_LIMIT_RULES = (
     RateLimitRule.preset(RateLimitPreset.HOUR_24, limit=200),
 )
 
-# 测试率限制规则
-TEST_RATE_LIMIT_RULES = (
-    RateLimitRule.preset(RateLimitPreset.MINUTE_1, limit=10),
-)
-
 # 按照用户 ID 进行限流的主体
 USER_ID_RATE_LIMIT_SUBJECTS: tuple[Literal["user_id"], ...] = ("user_id",)
 
@@ -206,22 +201,6 @@ async def assistant_message_tts_stream(
         message_uuid=request.message_uuid,
     )
 
-
-@router.get("/rate-limit/test", summary="管理助手限流测试接口")
-@allow_anonymous
-@rate_limit(
-    rules=TEST_RATE_LIMIT_RULES,
-    subjects=IP_RATE_LIMIT_SUBJECTS,
-    scope="admin_assistant_rate_limit_test",
-    fail_open=False,
-)
-async def assistant_rate_limit_test(request: Request, response: Response) -> ApiResponse[dict[str, str]]:
-    """限流测试接口：用于验证每分钟 10 次限流配置。"""
-
-    return ApiResponse.success(
-        data={"status": "ok"},
-        message="限流测试通过",
-    )
 
 
 @router.get("/conversation/list", summary="管理助手会话列表")
