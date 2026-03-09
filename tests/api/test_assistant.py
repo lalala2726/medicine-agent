@@ -802,7 +802,7 @@ def test_update_conversation_title_route_delegates_to_service(monkeypatch):
     client = TestClient(app)
 
     response = client.put(
-        "/admin/assistant/conversation/conv-1/title",
+        "/admin/assistant/conversation/conv-1",
         headers=_auth_headers(),
         json={"title": "  新标题  "},
     )
@@ -857,7 +857,7 @@ def test_update_conversation_title_forbidden_without_role_or_permission(monkeypa
     client = TestClient(app)
 
     response = client.put(
-        "/admin/assistant/conversation/conv-1/title",
+        "/admin/assistant/conversation/conv-1",
         headers=_auth_headers(),
         json={"title": "新标题"},
     )

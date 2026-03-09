@@ -273,10 +273,7 @@ async def update_conversation_title(
         conversation_uuid: str = Path(..., min_length=1, description="会话UUID"),
 ) -> ApiResponse[dict[str, str]]:
     """
-    修改管理助手会话标题（新路径）。
-
-    说明：保留该路径以兼容当前实现，同时在 `/conversation/{conversation_uuid}/title`
-    提供等价旧路径，避免历史客户端与测试用例出现 404。
+    修改管理助手会话标题。
     """
 
     return _build_update_conversation_title_response(
@@ -315,27 +312,3 @@ async def conversation_messages(
         page_size=request.page_size,
     )
 
-
-@router.put("/conversation/{conversation_uuid}/title", summary="修改管理助手会话标题（兼容路径）")
-@pre_authorize(
-    lambda: has_role(RoleCode.SUPER_ADMIN) or has_permission("admin:assistant:update")
-)
-async def update_conversation_title_legacy(
-        request: UpdateConversationTitleRequest,
-        conversation_uuid: str = Path(..., min_length=1, description="会话UUID"),
-) -> ApiResponse[dict[str, str]]:
-    """
-    修改会话标题（旧路径兼容）。
-
-    Args:
-        request: 标题更新请求对象。
-        conversation_uuid: 会话 UUID。
-
-    Returns:
-        ApiResponse[dict[str, str]]: 修改结果，结构与新路径一致。
-    """
-
-    return _build_update_conversation_title_response(
-        conversation_uuid=conversation_uuid,
-        request=request,
-    )
