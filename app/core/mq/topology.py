@@ -52,3 +52,19 @@ chunk_add_command_queue = RabbitQueue(
 )
 # 手工新增切片结果路由键（AI → 业务）
 CHUNK_ADD_RESULT_ROUTING_KEY = "knowledge.chunk_add.result"
+
+# ---- Agent 配置刷新 -------------------------------------------------------------
+
+# Agent 配置刷新交换机（业务服务 -> AI 服务）。
+agent_config_refresh_exchange = RabbitExchange(
+    "agent.config.refresh", type=ExchangeType.DIRECT, durable=True,
+)
+# Agent 配置刷新命令队列，消息保留 5 分钟后自动过期。
+agent_config_refresh_queue = RabbitQueue(
+    "agent.config.refresh.q",
+    routing_key="agent.config.refresh",
+    durable=True,
+    arguments={"x-message-ttl": 300000},
+)
+# Agent 配置刷新路由键。
+AGENT_CONFIG_REFRESH_ROUTING_KEY = "agent.config.refresh"

@@ -5,10 +5,10 @@ from langchain.agents.structured_output import ToolStrategy
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field, ValidationError
 
+from app.core.agent.config_sync import create_agent_image_llm
 from app.core.agent.agent_runtime import agent_invoke
 from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException
-from app.core.llms import create_image_model
 from app.utils.file_utils import FileUtils
 from app.utils.prompt_utils import load_prompt
 
@@ -114,7 +114,7 @@ def parse_drug_images(images: List[str]) -> dict:
         for img in images
     ]
 
-    llm = create_image_model(model="qwen3-vl-plus")
+    llm = create_agent_image_llm()
     agent = create_agent(
         model=llm,
         system_prompt=SystemMessage(content=_DRUG_PARSER_PROMPT),

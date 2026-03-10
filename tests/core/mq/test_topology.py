@@ -5,9 +5,12 @@ from __future__ import annotations
 from faststream.rabbit import ExchangeType, RabbitExchange, RabbitQueue
 
 from app.core.mq.topology import (
+    AGENT_CONFIG_REFRESH_ROUTING_KEY,
     CHUNK_ADD_RESULT_ROUTING_KEY,
     CHUNK_REBUILD_RESULT_ROUTING_KEY,
     IMPORT_RESULT_ROUTING_KEY,
+    agent_config_refresh_exchange,
+    agent_config_refresh_queue,
     chunk_add_command_queue,
     chunk_add_exchange,
     chunk_rebuild_command_queue,
@@ -102,12 +105,54 @@ class TestTopologyTypes:
         """测试目的：所有 exchange 变量应为 RabbitExchange 实例。
         预期结果：三个 exchange 均为 RabbitExchange 类型。
         """
-        for ex in (import_exchange, chunk_rebuild_exchange, chunk_add_exchange):
+        for ex in (
+                import_exchange,
+                chunk_rebuild_exchange,
+                chunk_add_exchange,
+                agent_config_refresh_exchange,
+        ):
             assert isinstance(ex, RabbitExchange)
 
     def test_all_queues_are_rabbit_queue(self):
         """测试目的：所有 queue 变量应为 RabbitQueue 实例。
         预期结果：三个 queue 均为 RabbitQueue 类型。
         """
-        for q in (import_command_queue, chunk_rebuild_command_queue, chunk_add_command_queue):
+        for q in (
+                import_command_queue,
+                chunk_rebuild_command_queue,
+                chunk_add_command_queue,
+                agent_config_refresh_queue,
+        ):
             assert isinstance(q, RabbitQueue)
+
+
+class TestAgentConfigRefreshTopology:
+    """Agent 配置刷新链路拓扑测试。"""
+
+    def test_exchange_name_and_type(self):
+        """测试目的：配置刷新交换机名称和类型应与约定一致。
+        预期结果：exchange 为 agent.config.refresh、DIRECT、durable。
+        """
+        assert agent_config_refresh_exchange.name == "agent.config.refresh"
+        assert agent_config_refresh_exchange.type == ExchangeType.DIRECT
+        assert agent_config_refresh_exchange.durable is True
+
+    def test_queue_name_routing_key_and_ttl(self):
+        """测试目的：配置刷新队列名称、路由键和 TTL 应正确。
+        预期结果：队列名为 agent.config.refresh.q，routing_key 正确，TTL 为 300000。
+        """
+        assert agent_config_refresh_queue.name == "agent.config.refresh.q"
+        assert agent_config_refresh_queue.routing_key == "agent.config.refresh"
+        assert agent_config_refresh_queue.durable is True
+        ttl_arguments = (
+                getattr(agent_config_refresh_queue, "arguments", None)
+                or getattr(agent_config_refresh_queue, "queue_arguments", None)
+        )
+        assert ttl_arguments is not None
+        assert ttl_arguments["x-message-ttl"] == 300000
+
+    def test_result_routing_key(self):
+        """测试目的：配置刷新 routing key 常量值应正确。
+        预期结果：值为 agent.config.refresh。
+        """
+        assert AGENT_CONFIG_REFRESH_ROUTING_KEY == "agent.config.refresh"

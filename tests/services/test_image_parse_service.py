@@ -13,15 +13,15 @@ from app.services import image_parse_service
 def test_parse_drug_images_normalizes_and_parses(monkeypatch: pytest.MonkeyPatch) -> None:
     """测试目的：验证图片解析走 create_agent + ToolStrategy 链路；预期结果：结构化结果成功返回且图片输入被规范化。"""
 
-    create_image_model_kwargs: dict = {}
+    create_agent_image_llm_kwargs: dict = {}
     create_agent_kwargs: dict = {}
     captured_messages: dict = {}
 
     fake_llm = object()
     fake_agent = object()
 
-    def fake_create_image_model(**kwargs):
-        create_image_model_kwargs.update(kwargs)
+    def fake_create_agent_image_llm(**kwargs):
+        create_agent_image_llm_kwargs.update(kwargs)
         return fake_llm
 
     def fake_create_agent(**kwargs):
@@ -36,7 +36,7 @@ def test_parse_drug_images_normalizes_and_parses(monkeypatch: pytest.MonkeyPatch
             content="",
         )
 
-    monkeypatch.setattr(image_parse_service, "create_image_model", fake_create_image_model)
+    monkeypatch.setattr(image_parse_service, "create_agent_image_llm", fake_create_agent_image_llm)
     monkeypatch.setattr(image_parse_service, "create_agent", fake_create_agent)
     monkeypatch.setattr(image_parse_service, "agent_invoke", fake_agent_invoke)
 
@@ -46,7 +46,7 @@ def test_parse_drug_images_normalizes_and_parses(monkeypatch: pytest.MonkeyPatch
 
     assert result["commonName"] == "阿司匹林"
     assert "warmTips" in result
-    assert create_image_model_kwargs["model"] == "qwen3-vl-plus"
+    assert create_agent_image_llm_kwargs == {}
     assert create_agent_kwargs["model"] is fake_llm
     assert create_agent_kwargs["system_prompt"].content == image_parse_service._DRUG_PARSER_PROMPT
     response_format = create_agent_kwargs["response_format"]
@@ -64,7 +64,7 @@ def test_parse_drug_images_normalizes_and_parses(monkeypatch: pytest.MonkeyPatch
 def test_parse_drug_images_raises_on_invalid_json(monkeypatch: pytest.MonkeyPatch) -> None:
     """测试目的：验证结构化结果缺失时抛出业务异常；预期结果：抛出 INTERNAL_ERROR 且提示模型返回非 JSON。"""
 
-    monkeypatch.setattr(image_parse_service, "create_image_model", lambda **_kwargs: object())
+    monkeypatch.setattr(image_parse_service, "create_agent_image_llm", lambda **_kwargs: object())
     monkeypatch.setattr(image_parse_service, "create_agent", lambda **_kwargs: object())
     monkeypatch.setattr(
         image_parse_service,

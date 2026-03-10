@@ -1,43 +1,28 @@
 from __future__ import annotations
 
+from app.core.agent.config_sync import AgentChatModelSlot
 from app.agent.assistant.state import AgentState
 
-DEFAULT_MODEL = "qwen-max"
-DEFAULT_THINK = False
+# 默认业务模型槽位：未识别任务难度时一律使用 simple。
+DEFAULT_MODEL_SLOT = AgentChatModelSlot.BUSINESS_SIMPLE
 
-# 按任务难度选择模型：普通(normal) -> max，高(high) -> qwen3-plus。
-_DIFFICULTY_MODEL_MAP: dict[str, str] = {
-    "normal": "qwen-max",
-    "high": "qwen3.5-plus",
-}
-
-# 按任务难度决定是否开启深度思考：仅 high 开启。
-_DIFFICULTY_THINK_MAP: dict[str, bool] = {
-    "normal": False,
-    "high": True,
+# 按任务难度选择模型槽位：普通(normal) -> simple，高(high) -> complex。
+_DIFFICULTY_MODEL_SLOT_MAP: dict[str, AgentChatModelSlot] = {
+    "normal": AgentChatModelSlot.BUSINESS_SIMPLE,
+    "high": AgentChatModelSlot.BUSINESS_COMPLEX,
 }
 
 
-def model_switch(state: AgentState) -> tuple[str, bool]:
-    """
-    功能描述：
-        根据 gateway 产出的任务难度，返回应使用的模型名称与 think 开关。
+def model_switch(state: AgentState) -> AgentChatModelSlot:
+    """根据 Gateway 输出的任务难度选择业务模型槽位。
 
-    参数说明：
-        state (AgentState): LangGraph 节点状态，期望包含 `routing.task_difficulty`。
+    Args:
+        state: LangGraph 节点状态，期望包含 ``routing.task_difficulty``。
 
-    返回值：
-        tuple[str, bool]:
-            - 第一个值为模型名称：
-              - normal  -> qwen-max
-              - high    -> qwen3-plus
-              - 缺省/未知 -> qwen-max
-            - 第二个值为 think 开关：
-              - high -> True
-              - 其他    -> False
-
-    异常说明：
-        无显式异常；当输入缺失或异常时回退到默认模型与默认 think。
+    Returns:
+        ``normal`` 时返回 ``businessNodeSimpleModel``；
+        ``high`` 时返回 ``businessNodeComplexModel``；
+        缺失或未知值时回退到 ``businessNodeSimpleModel``。
     """
 
     routing = state.get("routing")
@@ -46,6 +31,4 @@ def model_switch(state: AgentState) -> tuple[str, bool]:
         if isinstance(routing, dict)
         else ""
     )
-    model_name = _DIFFICULTY_MODEL_MAP.get(task_difficulty, DEFAULT_MODEL)
-    enable_think = _DIFFICULTY_THINK_MAP.get(task_difficulty, DEFAULT_THINK)
-    return model_name, enable_think
+    return _DIFFICULTY_MODEL_SLOT_MAP.get(task_difficulty, DEFAULT_MODEL_SLOT)

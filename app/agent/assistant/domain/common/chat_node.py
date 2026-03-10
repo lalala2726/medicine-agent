@@ -8,12 +8,13 @@ from langchain_core.messages import AIMessage, SystemMessage
 from app.agent.assistant.state import AgentState, ExecutionTraceState
 from app.agent.assistant.domain.common.tools import get_current_time
 from app.agent.assistant.domain.common.tools import get_safe_user_info
+from app.core.agent.config_sync import AgentChatModelSlot
 from app.core.agent.agent_event_bus import emit_answer_delta
+from app.core.agent.config_sync import create_agent_chat_llm
 from app.core.agent.agent_runtime import agent_stream
 from app.core.agent.agent_tool_trace import record_agent_trace
 from app.core.agent.base_prompt_middleware import BasePromptMiddleware
 from app.core.langsmith import traceable
-from app.core.llms import create_chat_model
 from app.core.agent.skill import SkillMiddleware
 from app.services.token_usage_service import append_trace_and_refresh_token_usage
 from app.utils.prompt_utils import load_prompt
@@ -38,7 +39,8 @@ def chat_agent(state: AgentState) -> dict[str, Any]:
         get_current_time,
         get_safe_user_info
     ]
-    llm = create_chat_model(
+    llm = create_agent_chat_llm(
+        slot=AgentChatModelSlot.CHAT,
         temperature=1.3,
     )
     llm_model_name = str(getattr(llm, "model_name", "") or "").strip()
