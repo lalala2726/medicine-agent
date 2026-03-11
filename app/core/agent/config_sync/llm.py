@@ -1,0 +1,425 @@
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+from typing import Any
+
+from langchain_openai import OpenAIEmbeddings
+
+from app.core.agent.config_sync.snapshot import (
+    AgentChatModelSlot,
+    AgentModelRuntimeConfig,
+    AgentModelSlotConfig,
+    get_current_agent_config_snapshot,
+)
+from app.core.llms import ChatModel, create_chat_model, create_embedding_model, create_image_model
+from app.core.llms.common import resolve_llm_value
+from app.core.llms.provider import LlmProvider, resolve_provider
+
+
+@dataclass(frozen=True)
+class _ResolvedSlotOverrides:
+    """槽位解析后的运行时覆盖项。"""
+
+    runtime_config: AgentModelRuntimeConfig | None
+    think: bool
+    model_kwargs: dict[str, Any]
+
+
+def _normalize_max_tokens_limit(value: int | None) -> int | None:
+    """归一化最大输出 token 限制。
+
+    Args:
+        value: 原始最大 token 值。
+
+    Returns:
+        大于 ``0`` 的 token 上限；当值为 ``None``、``0`` 或负数时返回 ``None``，
+        表示不限制。
+    """
+
+    if value is None or value <= 0:
+        return None
+    return value
+
+
+def _resolve_gateway_router_fallback_model_name() -> str | None:
+    """解析 Gateway 路由节点的本地环境兜底模型名。
+
+    Returns:
+        先尝试读取 provider 专属的 gateway 路由模型配置；未命中时回退到对应
+        provider 的通用 chat 模型配置；两者都没有时返回 ``None``。
+    """
+
+    resolved_provider = resolve_provider(None)
+    if resolved_provider is LlmProvider.ALIYUN:
+        dedicated_key = "DASHSCOPE_GATEWAY_ROUTER_MODEL"
+        fallback_key = "DASHSCOPE_CHAT_MODEL"
+    elif resolved_provider is LlmProvider.VOLCENGINE:
+        dedicated_key = "VOLCENGINE_LLM_GATEWAY_ROUTER_MODEL"
+        fallback_key = "VOLCENGINE_LLM_CHAT_MODEL"
+    else:
+        dedicated_key = "OPENAI_GATEWAY_ROUTER_MODEL"
+        fallback_key = "OPENAI_CHAT_MODEL"
+    return resolve_llm_value(name=dedicated_key) or resolve_llm_value(name=fallback_key)
+
+
+def _resolve_summary_fallback_model_name() -> str | None:
+    """解析聊天历史总结任务的本地环境兜底模型名。
+
+    Returns:
+        先尝试读取 provider 专属的 summary 模型配置；未命中时回退到全局
+        `ASSISTANT_SUMMARY_MODEL`；两者都没有时返回 ``None``。
+    """
+
+    resolved_provider = resolve_provider(None)
+    if resolved_provider is LlmProvider.ALIYUN:
+        provider_key = "DASHSCOPE_SUMMARY_MODEL"
+    elif resolved_provider is LlmProvider.VOLCENGINE:
+        provider_key = "VOLCENGINE_LLM_SUMMARY_MODEL"
+    else:
+        provider_key = "OPENAI_SUMMARY_MODEL"
+    return resolve_llm_value(name=provider_key) or resolve_llm_value(name="ASSISTANT_SUMMARY_MODEL")
+
+
+def _resolve_summary_fallback_max_tokens() -> int | None:
+    """解析聊天历史总结摘要文本预算的本地环境兜底值。
+
+    Returns:
+        `ASSISTANT_SUMMARY_MAX_TOKENS` 的正整数值；未配置或非法时返回 ``None``。
+    """
+
+    raw_value = (os.getenv("ASSISTANT_SUMMARY_MAX_TOKENS") or "").strip()
+    if not raw_value:
+        return None
+    try:
+        resolved = int(raw_value)
+    except ValueError:
+        return None
+    return _normalize_max_tokens_limit(resolved)
+
+
+def _normalize_chat_slot(slot: AgentChatModelSlot | str) -> AgentChatModelSlot:
+    """归一化聊天槽位输入。
+
+    Args:
+        slot: 槽位枚举或字符串形式的槽位名。
+
+    Returns:
+        归一化后的聊天槽位枚举。
+    """
+
+    if isinstance(slot, AgentChatModelSlot):
+        return slot
+    return AgentChatModelSlot(str(slot).strip())
+
+
+def _resolve_slot_overrides(
+        slot_config: AgentModelSlotConfig | None,
+        *,
+        temperature: float | None,
+        think: bool,
+        max_tokens: int | None,
+        kwargs: dict[str, Any],
+) -> _ResolvedSlotOverrides:
+    """统一解析槽位里的温度、思考开关和 ``max_tokens`` 覆盖项。
+
+    Args:
+        slot_config: 当前命中的 Redis 槽位配置。
+        temperature: 本地默认温度。
+        think: 本地默认思考开关。
+        max_tokens: 本地默认最大输出 token。
+        kwargs: 调用方传入的其余模型构造参数。
+
+    Returns:
+        一个包含运行时模型配置、最终思考开关和透传模型参数的解析结果。
+    """
+
+    runtime_config = slot_config.model if slot_config is not None else None
+    resolved_temperature = (
+        slot_config.temperature
+        if slot_config is not None and slot_config.temperature is not None
+        else temperature
+    )
+    resolved_think = (
+        slot_config.reasoning_enabled
+        if slot_config is not None and slot_config.reasoning_enabled is not None
+        else think
+    )
+    if slot_config is not None:
+        resolved_max_tokens = _normalize_max_tokens_limit(slot_config.max_tokens)
+    else:
+        resolved_max_tokens = _normalize_max_tokens_limit(max_tokens)
+
+    model_kwargs = dict(kwargs)
+    if resolved_temperature is not None:
+        model_kwargs["temperature"] = resolved_temperature
+    if resolved_max_tokens is not None:
+        model_kwargs["max_tokens"] = resolved_max_tokens
+
+    return _ResolvedSlotOverrides(
+        runtime_config=runtime_config,
+        think=bool(resolved_think),
+        model_kwargs=model_kwargs,
+    )
+
+
+def _resolve_slot_runtime_model_name(
+        slot_config: AgentModelSlotConfig | None,
+        *,
+        fallback_model: str | None = None,
+) -> str | None:
+    """解析槽位当前生效的模型名。
+
+    Args:
+        slot_config: 当前命中的 Redis 槽位配置。
+        fallback_model: Redis 未配置时的本地兜底模型名。
+
+    Returns:
+        当前生效模型名；若 Redis 与本地兜底都不存在则返回 ``None``。
+    """
+
+    runtime_config = slot_config.model if slot_config is not None else None
+    return runtime_config.model if runtime_config is not None else fallback_model
+
+
+def create_agent_chat_llm(
+        *,
+        slot: AgentChatModelSlot | str,
+        temperature: float | None = None,
+        think: bool = False,
+        max_tokens: int | None = None,
+        extra_body: dict[str, Any] | None = None,
+        **kwargs: Any,
+) -> ChatModel:
+    """按 Agent 槽位创建聊天模型。
+
+    Args:
+        slot: 目标聊天槽位。
+        temperature: 本地默认温度；Redis 槽位有值时会被覆盖。
+        think: 本地默认思考开关；Redis 槽位有值时会被覆盖。
+        max_tokens: 本地默认最大输出 token；Redis 槽位有值时会被覆盖。
+        extra_body: 透传到底层模型 SDK 的额外请求体。
+        **kwargs: 其余透传到底层 ``create_chat_model`` 的构造参数。
+
+    Returns:
+        与底层 ``create_chat_model`` 一致的聊天模型客户端实例。
+    """
+
+    normalized_slot = _normalize_chat_slot(slot)
+    snapshot = get_current_agent_config_snapshot()
+    slot_config = snapshot.get_chat_slot(normalized_slot)
+    resolved_overrides = _resolve_slot_overrides(
+        slot_config,
+        temperature=temperature,
+        think=think,
+        max_tokens=max_tokens,
+        kwargs=kwargs,
+    )
+    runtime_config = resolved_overrides.runtime_config
+
+    resolved_model = runtime_config.model if runtime_config is not None else None
+    if resolved_model is None and normalized_slot is AgentChatModelSlot.ROUTE:
+        resolved_model = _resolve_gateway_router_fallback_model_name()
+
+    return create_chat_model(
+        model=resolved_model,
+        provider=runtime_config.provider if runtime_config is not None else None,
+        api_key=runtime_config.api_key if runtime_config is not None else None,
+        base_url=runtime_config.base_url if runtime_config is not None else None,
+        extra_body=extra_body,
+        think=resolved_overrides.think,
+        **resolved_overrides.model_kwargs,
+    )
+
+
+def create_agent_image_llm(
+        *,
+        temperature: float | None = None,
+        think: bool = False,
+        max_tokens: int | None = None,
+        extra_body: dict[str, Any] | None = None,
+        **kwargs: Any,
+) -> ChatModel:
+    """按图片识别槽位创建图像理解模型。
+
+    Args:
+        temperature: 本地默认温度；Redis 槽位有值时会被覆盖。
+        think: 本地默认思考开关；Redis 槽位有值时会被覆盖。
+        max_tokens: 本地默认最大输出 token；Redis 槽位有值时会被覆盖。
+        extra_body: 透传到底层模型 SDK 的额外请求体。
+        **kwargs: 其余透传到底层 ``create_image_model`` 的构造参数。
+
+    Returns:
+        与底层 ``create_image_model`` 一致的图像理解模型客户端实例。
+    """
+
+    snapshot = get_current_agent_config_snapshot()
+    slot_config = snapshot.get_image_slot()
+    resolved_overrides = _resolve_slot_overrides(
+        slot_config,
+        temperature=temperature,
+        think=think,
+        max_tokens=max_tokens,
+        kwargs=kwargs,
+    )
+    runtime_config = resolved_overrides.runtime_config
+
+    return create_image_model(
+        model=runtime_config.model if runtime_config is not None else None,
+        provider=runtime_config.provider if runtime_config is not None else None,
+        api_key=runtime_config.api_key if runtime_config is not None else None,
+        base_url=runtime_config.base_url if runtime_config is not None else None,
+        extra_body=extra_body,
+        think=resolved_overrides.think,
+        **resolved_overrides.model_kwargs,
+    )
+
+
+def create_agent_summary_llm(
+        *,
+        temperature: float | None = None,
+        think: bool = False,
+        max_tokens: int | None = None,
+        extra_body: dict[str, Any] | None = None,
+        **kwargs: Any,
+) -> ChatModel:
+    """按聊天历史总结槽位创建聊天模型。
+
+    Args:
+        temperature: 本地默认温度；Redis 槽位有值时会被覆盖。
+        think: 本地默认思考开关；Redis 槽位有值时会被覆盖。
+        max_tokens: 本地默认最大输出 token；Redis 槽位有值时会被覆盖。
+        extra_body: 透传到底层模型 SDK 的额外请求体。
+        **kwargs: 其余透传到底层 ``create_chat_model`` 的构造参数。
+
+    Returns:
+        与底层 ``create_chat_model`` 一致的聊天模型客户端实例。
+    """
+
+    snapshot = get_current_agent_config_snapshot()
+    slot_config = snapshot.get_summary_slot()
+    resolved_overrides = _resolve_slot_overrides(
+        slot_config,
+        temperature=temperature,
+        think=think,
+        max_tokens=max_tokens,
+        kwargs=kwargs,
+    )
+    runtime_config = resolved_overrides.runtime_config
+
+    return create_chat_model(
+        model=_resolve_slot_runtime_model_name(
+            slot_config,
+            fallback_model=_resolve_summary_fallback_model_name(),
+        ),
+        provider=runtime_config.provider if runtime_config is not None else None,
+        api_key=runtime_config.api_key if runtime_config is not None else None,
+        base_url=runtime_config.base_url if runtime_config is not None else None,
+        extra_body=extra_body,
+        think=resolved_overrides.think,
+        **resolved_overrides.model_kwargs,
+    )
+
+
+def create_agent_title_llm(
+        *,
+        temperature: float | None = None,
+        think: bool = False,
+        max_tokens: int | None = None,
+        extra_body: dict[str, Any] | None = None,
+        **kwargs: Any,
+) -> ChatModel:
+    """按聊天标题生成槽位创建聊天模型。
+
+    Args:
+        temperature: 本地默认温度；Redis 槽位有值时会被覆盖。
+        think: 本地默认思考开关；Redis 槽位有值时会被覆盖。
+        max_tokens: 本地默认最大输出 token；Redis 槽位有值时会被覆盖。
+        extra_body: 透传到底层模型 SDK 的额外请求体。
+        **kwargs: 其余透传到底层 ``create_chat_model`` 的构造参数。
+
+    Returns:
+        与底层 ``create_chat_model`` 一致的聊天模型客户端实例。
+    """
+
+    snapshot = get_current_agent_config_snapshot()
+    slot_config = snapshot.get_title_slot()
+    resolved_overrides = _resolve_slot_overrides(
+        slot_config,
+        temperature=temperature,
+        think=think,
+        max_tokens=max_tokens,
+        kwargs=kwargs,
+    )
+    runtime_config = resolved_overrides.runtime_config
+
+    return create_chat_model(
+        model=_resolve_slot_runtime_model_name(slot_config),
+        provider=runtime_config.provider if runtime_config is not None else None,
+        api_key=runtime_config.api_key if runtime_config is not None else None,
+        base_url=runtime_config.base_url if runtime_config is not None else None,
+        extra_body=extra_body,
+        think=resolved_overrides.think,
+        **resolved_overrides.model_kwargs,
+    )
+
+
+def resolve_agent_summary_model_name() -> str | None:
+    """解析聊天历史总结当前生效的模型名。
+
+    Returns:
+        优先返回 Redis 中总结槽位绑定的模型名；未命中时回退本地 summary 环境配置。
+    """
+
+    snapshot = get_current_agent_config_snapshot()
+    return _resolve_slot_runtime_model_name(
+        snapshot.get_summary_slot(),
+        fallback_model=_resolve_summary_fallback_model_name(),
+    )
+
+
+def resolve_agent_summary_max_tokens() -> int | None:
+    """解析聊天历史总结当前生效的摘要文本预算上限。
+
+    Returns:
+        优先返回 Redis 总结槽位中的 `maxTokens`；未命中时回退本地
+        `ASSISTANT_SUMMARY_MAX_TOKENS`；两者都没有时返回 ``None``。
+    """
+
+    snapshot = get_current_agent_config_snapshot()
+    slot_config = snapshot.get_summary_slot()
+    if slot_config is not None:
+        return _normalize_max_tokens_limit(slot_config.max_tokens)
+    return _resolve_summary_fallback_max_tokens()
+
+
+def create_agent_embedding_client(
+        *,
+        model: str | None = None,
+        dimensions: int | None = 1024,
+        **kwargs: Any,
+) -> OpenAIEmbeddings:
+    """按 Agent 配置创建向量模型客户端。
+
+    Args:
+        model: 显式传入的 embedding 模型名，优先级高于 Redis 槽位。
+        dimensions: 向量维度。
+        **kwargs: 其余透传到底层 ``create_embedding_model`` 的构造参数。
+
+    Returns:
+        与底层 ``create_embedding_model`` 一致的 embedding 客户端实例。
+    """
+
+    snapshot = get_current_agent_config_snapshot()
+    slot_config = snapshot.get_embedding_slot()
+    runtime_config = slot_config.model if slot_config is not None else None
+
+    resolved_model = model or (runtime_config.model if runtime_config is not None else None)
+    return create_embedding_model(
+        model=resolved_model,
+        provider=runtime_config.provider if runtime_config is not None else None,
+        api_key=runtime_config.api_key if runtime_config is not None else None,
+        base_url=runtime_config.base_url if runtime_config is not None else None,
+        dimensions=dimensions,
+        **kwargs,
+    )

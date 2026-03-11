@@ -6,17 +6,17 @@ from app.services.admin_assistant_service import generate_title
 
 
 def test_generate_title_with_valid_input(monkeypatch):
-    """测试目的：验证标题生成主流程模型参数透传正确；预期结果：返回模型标题且 create_chat_model 收到默认温度配置。"""
+    """测试目的：验证标题生成主流程模型参数透传正确；预期结果：返回模型标题且 create_agent_title_llm 收到默认温度配置。"""
     mock_llm = MagicMock()
     mock_llm.invoke.return_value = AIMessage(content="感冒灵销量查询")
 
     captured_kwargs = {}
 
-    def _fake_create_chat_model(**kwargs):
+    def _fake_create_title_llm(**kwargs):
         captured_kwargs.update(kwargs)
         return mock_llm
 
-    monkeypatch.setattr("app.services.admin_assistant_service.create_chat_model", _fake_create_chat_model)
+    monkeypatch.setattr("app.services.admin_assistant_service.create_agent_title_llm", _fake_create_title_llm)
     monkeypatch.setattr("app.services.admin_assistant_service.load_prompt", lambda path: "# 模拟提示词")
 
     title = generate_title("帮我查查感冒灵卖了多少")
@@ -42,7 +42,7 @@ def test_generate_title_llm_returns_empty(monkeypatch):
     mock_llm = MagicMock()
     mock_llm.invoke.return_value = AIMessage(content="")
 
-    monkeypatch.setattr("app.services.admin_assistant_service.create_chat_model", lambda **kwargs: mock_llm)
+    monkeypatch.setattr("app.services.admin_assistant_service.create_agent_title_llm", lambda **kwargs: mock_llm)
     monkeypatch.setattr("app.services.admin_assistant_service.load_prompt", lambda path: "# 模拟提示词")
 
     title = generate_title("测试输入")
@@ -54,7 +54,7 @@ def test_generate_title_strips_whitespace(monkeypatch):
     mock_llm = MagicMock()
     mock_llm.invoke.return_value = AIMessage(content="  有空格的标题  ")
 
-    monkeypatch.setattr("app.services.admin_assistant_service.create_chat_model", lambda **kwargs: mock_llm)
+    monkeypatch.setattr("app.services.admin_assistant_service.create_agent_title_llm", lambda **kwargs: mock_llm)
     monkeypatch.setattr("app.services.admin_assistant_service.load_prompt", lambda path: "# 模拟提示词")
 
     title = generate_title("测试输入")

@@ -12,6 +12,7 @@ from loguru import logger
 
 from app.agent.assistant.state import ChatHistoryMessage, ExecutionTraceState, TokenUsageState
 from app.agent.assistant.workflow import build_graph
+from app.core.agent import create_agent_title_llm
 from app.core.agent.agent_orchestrator import (
     AssistantStreamConfig,
     create_streaming_response,
@@ -19,7 +20,6 @@ from app.core.agent.agent_orchestrator import (
 from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException
 from app.core.langsmith import build_langsmith_runnable_config
-from app.core.llms import create_chat_model
 from app.core.security.auth_context import get_user_id
 from app.core.speech import build_message_tts_stream
 from app.schemas.admin_assistant_history import ConversationMessageResponse
@@ -855,7 +855,7 @@ def generate_title(question: str) -> str:
     if not question:
         return "未知标题"
 
-    llm_model = create_chat_model(
+    llm_model = create_agent_title_llm(
         temperature=1.0
     )
     messages = [

@@ -1,31 +1,41 @@
-"""Agent 基础能力包。"""
+"""Agent 配置同步包。"""
 
-from app.core.agent.base_prompt_middleware import BasePromptMiddleware
-from app.core.agent.config_sync import (
-    AgentChatModelSlot,
-    AgentEmbeddingModelSlot,
-    AgentImageModelSlot,
-    AgentModelRuntimeConfig,
-    AgentModelSlotConfig,
+from app.core.agent.config_sync import llm as llm
+from app.core.agent.config_sync import snapshot as snapshot
+from app.core.agent.config_sync.llm import (
     create_agent_chat_llm,
     create_agent_embedding_client,
     create_agent_image_llm,
     create_agent_summary_llm,
     create_agent_title_llm,
-    get_current_agent_config_snapshot,
-    initialize_agent_config_snapshot,
-    refresh_agent_config_snapshot,
     resolve_agent_summary_max_tokens,
     resolve_agent_summary_model_name,
 )
+from app.core.agent.config_sync.snapshot import (
+    AGENT_CONFIG_REDIS_KEY,
+    AgentChatModelSlot,
+    AgentConfigLoadError,
+    AgentConfigSnapshot,
+    AgentEmbeddingModelSlot,
+    AgentImageModelSlot,
+    AgentModelRuntimeConfig,
+    AgentModelSlotConfig,
+    clear_agent_config_snapshot_state,
+    get_current_agent_config_snapshot,
+    initialize_agent_config_snapshot,
+    refresh_agent_config_snapshot,
+)
 
 __all__ = [
+    "AGENT_CONFIG_REDIS_KEY",
     "AgentChatModelSlot",
+    "AgentConfigLoadError",
+    "AgentConfigSnapshot",
     "AgentEmbeddingModelSlot",
     "AgentImageModelSlot",
     "AgentModelRuntimeConfig",
     "AgentModelSlotConfig",
-    "BasePromptMiddleware",
+    "clear_agent_config_snapshot_state",
     "create_agent_chat_llm",
     "create_agent_embedding_client",
     "create_agent_image_llm",
@@ -33,7 +43,9 @@ __all__ = [
     "create_agent_title_llm",
     "get_current_agent_config_snapshot",
     "initialize_agent_config_snapshot",
+    "llm",
     "refresh_agent_config_snapshot",
     "resolve_agent_summary_max_tokens",
     "resolve_agent_summary_model_name",
+    "snapshot",
 ]
