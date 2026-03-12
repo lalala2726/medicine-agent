@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from app.core.agent.config_sync import snapshot as agent_config_module
+from app.core.config_sync import snapshot as agent_config_module
 from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException
 from app.core.speech import env_utils as speech_env_utils

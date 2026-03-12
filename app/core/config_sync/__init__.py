@@ -1,8 +1,8 @@
 """Agent 配置同步包。"""
 
-from app.core.agent.config_sync import llm as llm
-from app.core.agent.config_sync import snapshot as snapshot
-from app.core.agent.config_sync.llm import (
+from app.core.config_sync import llm as llm
+from app.core.config_sync import snapshot as snapshot
+from app.core.config_sync.llm import (
     create_agent_chat_llm,
     create_agent_embedding_client,
     create_agent_image_llm,
@@ -11,7 +11,7 @@ from app.core.agent.config_sync.llm import (
     resolve_agent_summary_max_tokens,
     resolve_agent_summary_model_name,
 )
-from app.core.agent.config_sync.snapshot import (
+from app.core.config_sync.snapshot import (
     AGENT_CONFIG_REDIS_KEY,
     AgentChatModelSlot,
     AgentConfigLoadError,

@@ -5,8 +5,8 @@ from typing import Any
 import pytest
 
 from app.agent.assistant.model_switch import model_switch
-from app.core.agent.config_sync import AgentChatModelSlot, AgentConfigSnapshot
-from app.core.agent.config_sync import llm as llm_factory
+from app.core.config_sync import AgentChatModelSlot, AgentConfigSnapshot
+from app.core.config_sync import llm as llm_factory
 
 
 def _build_snapshot() -> AgentConfigSnapshot:

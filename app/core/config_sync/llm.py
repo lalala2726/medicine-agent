@@ -6,7 +6,7 @@ from typing import Any
 
 from langchain_openai import OpenAIEmbeddings
 
-from app.core.agent.config_sync.snapshot import (
+from app.core.config_sync.snapshot import (
     AgentChatModelSlot,
     AgentModelRuntimeConfig,
     AgentModelSlotConfig,

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.core.agent.config_sync import AgentChatModelSlot
+from app.core.config_sync import AgentChatModelSlot
 from app.agent.assistant.state import AgentState
 
 # 默认业务模型槽位：未识别任务难度时一律使用 simple。

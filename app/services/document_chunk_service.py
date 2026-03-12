@@ -10,7 +10,7 @@ from loguru import logger
 from pymilvus import exceptions as milvus_exceptions
 
 from app.core.codes import ResponseCode
-from app.core.agent.config_sync import create_agent_embedding_client
+from app.core.config_sync import create_agent_embedding_client
 from app.core.database import get_milvus_client
 from app.core.exception.exceptions import ServiceException
 from app.core.mq.log import ImportStage, mq_log

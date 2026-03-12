@@ -5,7 +5,7 @@ from typing import Any, Sequence
 from langchain_core.messages import HumanMessage, SystemMessage
 from loguru import logger
 
-from app.core.agent import (
+from app.core.config_sync import (
     create_agent_summary_llm,
     resolve_agent_summary_max_tokens,
     resolve_agent_summary_model_name,

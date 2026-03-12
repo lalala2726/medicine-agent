@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException
-from app.core.agent.config_sync.snapshot import get_current_agent_config_snapshot
+from app.core.config_sync.snapshot import get_current_agent_config_snapshot
 from app.core.speech.env_utils import (
     parse_positive_int,
     resolve_required_env,

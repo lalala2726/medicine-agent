@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from app.core.agent.config_sync import snapshot as agent_config_module
+from app.core.config_sync import snapshot as agent_config_module
 
 
 class _FakeRedis:

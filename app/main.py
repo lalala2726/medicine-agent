@@ -11,7 +11,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import Response
 
 from app.api.main import api_router
-from app.core.agent.config_sync import initialize_agent_config_snapshot
+from app.core.config_sync import initialize_agent_config_snapshot
 from app.core.exception.exception_handlers import ExceptionHandlers
 from app.core.exception.exceptions import ServiceException
 from app.core.mq.broker import get_broker, is_mq_configured

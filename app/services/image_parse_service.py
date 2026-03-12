@@ -5,7 +5,7 @@ from langchain.agents.structured_output import ToolStrategy
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field, ValidationError
 
-from app.core.agent.config_sync import create_agent_image_llm
+from app.core.config_sync import create_agent_image_llm
 from app.core.agent.agent_runtime import agent_invoke
 from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException

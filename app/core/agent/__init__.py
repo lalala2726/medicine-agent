@@ -1,39 +1,7 @@
 """Agent 基础能力包。"""
 
 from app.core.agent.base_prompt_middleware import BasePromptMiddleware
-from app.core.agent.config_sync import (
-    AgentChatModelSlot,
-    AgentEmbeddingModelSlot,
-    AgentImageModelSlot,
-    AgentModelRuntimeConfig,
-    AgentModelSlotConfig,
-    create_agent_chat_llm,
-    create_agent_embedding_client,
-    create_agent_image_llm,
-    create_agent_summary_llm,
-    create_agent_title_llm,
-    get_current_agent_config_snapshot,
-    initialize_agent_config_snapshot,
-    refresh_agent_config_snapshot,
-    resolve_agent_summary_max_tokens,
-    resolve_agent_summary_model_name,
-)
 
 __all__ = [
-    "AgentChatModelSlot",
-    "AgentEmbeddingModelSlot",
-    "AgentImageModelSlot",
-    "AgentModelRuntimeConfig",
-    "AgentModelSlotConfig",
     "BasePromptMiddleware",
-    "create_agent_chat_llm",
-    "create_agent_embedding_client",
-    "create_agent_image_llm",
-    "create_agent_summary_llm",
-    "create_agent_title_llm",
-    "get_current_agent_config_snapshot",
-    "initialize_agent_config_snapshot",
-    "refresh_agent_config_snapshot",
-    "resolve_agent_summary_max_tokens",
-    "resolve_agent_summary_model_name",
 ]

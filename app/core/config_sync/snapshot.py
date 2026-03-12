@@ -67,8 +67,14 @@ _LOAD_REASON_LABELS: dict[AgentConfigLoadReason, str] = {
 #: 管理端 provider 名称到内部 provider 标识的归一化映射。
 _PROVIDER_ALIAS_MAP: dict[str, str] = {
     "openai": "openai",
+    "open ai": "openai",
     "aliyun": "aliyun",
+    "qwen": "aliyun",
+    "dashscope": "aliyun",
+    "阿里云百联": "aliyun",
     "volcengine": "volcengine",
+    "ark": "volcengine",
+    "火山引擎": "volcengine",
 }
 
 

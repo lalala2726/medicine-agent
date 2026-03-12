@@ -11,7 +11,7 @@ from langchain_core.messages import SystemMessage
 from pydantic import BaseModel, Field, ValidationError
 
 from app.agent.assistant.state import AgentState, ExecutionTraceState
-from app.core.agent.config_sync import AgentChatModelSlot, create_agent_chat_llm
+from app.core.config_sync import AgentChatModelSlot, create_agent_chat_llm
 from app.core.agent.agent_runtime import agent_invoke
 from app.core.agent.agent_tool_trace import record_agent_trace
 from app.core.agent.base_prompt_middleware import BasePromptMiddleware

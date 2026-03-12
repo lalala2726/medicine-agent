@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from loguru import logger
 
-from app.core.agent.config_sync import refresh_agent_config_snapshot
+from app.core.config_sync import refresh_agent_config_snapshot
 from app.core.mq.broker import get_broker
 from app.core.mq.models.agent_config_refresh import AgentConfigRefreshMessage
 from app.core.mq.topology import agent_config_refresh_exchange, agent_config_refresh_queue

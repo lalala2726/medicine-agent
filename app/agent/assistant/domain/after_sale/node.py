@@ -13,7 +13,7 @@ from app.agent.assistant.domain.after_sale.tools import (
     get_admin_after_sale_list,
 )
 from app.core.agent.agent_event_bus import emit_answer_delta, emit_thinking_delta
-from app.core.agent.config_sync import create_agent_chat_llm
+from app.core.config_sync import create_agent_chat_llm
 from app.core.agent.agent_runtime import agent_stream
 from app.core.agent.agent_tool_events import build_tool_status_middleware
 from app.core.agent.agent_tool_trace import record_agent_trace
