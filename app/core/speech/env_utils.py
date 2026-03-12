@@ -5,6 +5,7 @@ from pathlib import Path
 
 from dotenv import dotenv_values
 
+from app.core.agent.config_sync.snapshot import AgentConfigSnapshot, get_current_agent_config_snapshot
 from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException
 
@@ -67,9 +68,42 @@ def resolve_required_env(name: str) -> str:
     )
 
 
-def resolve_volcengine_shared_auth() -> tuple[str, str]:
+def resolve_optional_env(name: str) -> str | None:
     """
-    解析 STT/TTS 共用的火山鉴权配置。
+    读取可选配置，优先 `.env`，其次系统环境变量。
+
+    Args:
+        name: 配置键名。
+
+    Returns:
+        str | None: 解析后的非空配置值；未配置时返回 ``None``。
+    """
+
+    dotenv_value = _read_dotenv_value(name)
+    if dotenv_value:
+        return dotenv_value
+    env_value = (os.getenv(name) or "").strip()
+    return env_value or None
+
+
+def _resolve_current_agent_snapshot(snapshot: AgentConfigSnapshot | None) -> AgentConfigSnapshot:
+    """解析当前调用应使用的 Agent 快照。
+
+    Args:
+        snapshot: 调用方已持有的快照；为空时自动读取当前生效快照。
+
+    Returns:
+        AgentConfigSnapshot: 当前应使用的 Agent 配置快照。
+    """
+
+    if snapshot is not None:
+        return snapshot
+    return get_current_agent_config_snapshot()
+
+
+def resolve_volcengine_shared_auth_from_env() -> tuple[str, str]:
+    """
+    仅从环境变量解析 STT/TTS 共用的火山鉴权配置。
 
     Returns:
         tuple[str, str]:
@@ -80,6 +114,33 @@ def resolve_volcengine_shared_auth() -> tuple[str, str]:
     app_id = resolve_required_env(VOLCENGINE_APP_ID_ENV)
     access_token = resolve_required_env(VOLCENGINE_ACCESS_TOKEN_ENV)
     return app_id, access_token
+
+
+def resolve_volcengine_shared_auth(
+        *,
+        snapshot: AgentConfigSnapshot | None = None,
+) -> tuple[str, str]:
+    """
+    解析 STT/TTS 共用的火山鉴权配置。
+
+    规则：
+    - Redis 中 `appId/accessToken` 同时存在时优先使用 Redis；
+    - Redis 仅存在半套鉴权时不与环境变量混用，直接回退环境变量。
+
+    Args:
+        snapshot: 当前生效的 Agent 配置快照；为空时自动读取。
+
+    Returns:
+        tuple[str, str]:
+            - 第 1 项: `VOLCENGINE_APP_ID`
+            - 第 2 项: `VOLCENGINE_ACCESS_TOKEN`
+    """
+
+    current_snapshot = _resolve_current_agent_snapshot(snapshot)
+    shared_auth = current_snapshot.get_speech_shared_auth()
+    if shared_auth is not None:
+        return shared_auth
+    return resolve_volcengine_shared_auth_from_env()
 
 
 def parse_positive_int(*, value: str | None, name: str, default: int) -> int:
@@ -121,6 +182,8 @@ __all__ = [
     "VOLCENGINE_ACCESS_TOKEN_ENV",
     "VOLCENGINE_APP_ID_ENV",
     "parse_positive_int",
+    "resolve_optional_env",
     "resolve_required_env",
     "resolve_volcengine_shared_auth",
+    "resolve_volcengine_shared_auth_from_env",
 ]

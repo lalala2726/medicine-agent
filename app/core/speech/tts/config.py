@@ -6,8 +6,10 @@ from dataclasses import dataclass
 
 from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException
+from app.core.agent.config_sync.snapshot import get_current_agent_config_snapshot
 from app.core.speech.env_utils import (
     parse_positive_int,
+    resolve_required_env,
     resolve_volcengine_shared_auth,
 )
 
@@ -50,21 +52,6 @@ class VolcengineTtsConfig:
     sample_rate: int
     max_text_chars: int
 
-
-def infer_resource_id(voice_type: str) -> str:
-    """
-    按官方示例规则推导 `resource_id`。
-
-    规则：
-    - `voice_type` 以 `S_` 开头时：`volc.megatts.default`
-    - 其他情况：`volc.service_type.10029`
-    """
-
-    if voice_type.startswith("S_"):
-        return "volc.megatts.default"
-    return "volc.service_type.10029"
-
-
 def _parse_bool(*, value: str | None, default: bool) -> bool:
     """
     解析布尔环境变量。
@@ -87,12 +74,12 @@ def _parse_bool(*, value: str | None, default: bool) -> bool:
 
 def resolve_volcengine_tts_config() -> VolcengineTtsConfig:
     """
-    从环境变量解析火山双向 TTS 配置。
+    从 Redis/环境变量解析火山双向 TTS 配置。
 
     说明：
     - 前端仅传 `message_uuid`，音色/编码/采样率全部由服务端配置控制；
-    - `VOLCENGINE_TTS_RESOURCE_ID` 为空时，根据音色自动推导；
-    - 文本最大字符数由 `VOLCENGINE_TTS_MAX_TEXT_CHARS` 控制。
+    - 文本转语音 `resourceId` 为必填项，优先读取 Redis，缺失时回退 `VOLCENGINE_TTS_RESOURCE_ID`；
+    - 文本最大字符数由 `speech.textToSpeech.maxTextChars` 或 `VOLCENGINE_TTS_MAX_TEXT_CHARS` 控制。
 
     Returns:
         VolcengineTtsConfig: 可直接用于 TTS 建连与请求发送的配置对象。
@@ -101,12 +88,39 @@ def resolve_volcengine_tts_config() -> VolcengineTtsConfig:
         ServiceException: 必填项缺失或配置值非法时抛出。
     """
 
-    app_id, access_token = resolve_volcengine_shared_auth()
+    snapshot = get_current_agent_config_snapshot()
+    app_id, access_token = resolve_volcengine_shared_auth(snapshot=snapshot)
     endpoint = (os.getenv("VOLCENGINE_TTS_ENDPOINT") or DEFAULT_VOLCENGINE_TTS_ENDPOINT).strip()
     if not endpoint:
         endpoint = DEFAULT_VOLCENGINE_TTS_ENDPOINT
 
-    resolved_voice_type = (os.getenv("VOLCENGINE_TTS_VOICE_TYPE") or "").strip()
+    redis_resource_id = snapshot.get_speech_tts_resource_id()
+    redis_voice_type = snapshot.get_speech_tts_voice_type()
+    redis_max_text_chars = snapshot.get_speech_tts_max_text_chars()
+    if redis_resource_id is not None:
+        resolved_resource_id = redis_resource_id
+        resolved_voice_type = (redis_voice_type or "").strip()
+        if not resolved_voice_type:
+            raise ServiceException(
+                code=ResponseCode.BAD_REQUEST,
+                message="speech.textToSpeech.voiceType 不能为空",
+            )
+        if redis_max_text_chars is None:
+            raise ServiceException(
+                code=ResponseCode.BAD_REQUEST,
+                message="speech.textToSpeech.maxTextChars 不能为空",
+            )
+        resolved_max_text_chars = redis_max_text_chars
+    else:
+        resolved_resource_id = resolve_required_env("VOLCENGINE_TTS_RESOURCE_ID")
+        resolved_voice_type = resolve_required_env("VOLCENGINE_TTS_VOICE_TYPE")
+        resolved_max_text_chars = parse_positive_int(
+            value=os.getenv("VOLCENGINE_TTS_MAX_TEXT_CHARS"),
+            name="VOLCENGINE_TTS_MAX_TEXT_CHARS",
+            default=DEFAULT_VOLCENGINE_TTS_MAX_TEXT_CHARS,
+        )
+
+    resolved_voice_type = resolved_voice_type.strip()
     if not resolved_voice_type:
         raise ServiceException(
             code=ResponseCode.BAD_REQUEST,
@@ -125,20 +139,12 @@ def resolve_volcengine_tts_config() -> VolcengineTtsConfig:
         name="VOLCENGINE_TTS_SAMPLE_RATE",
         default=DEFAULT_VOLCENGINE_TTS_SAMPLE_RATE,
     )
-    resolved_max_text_chars = parse_positive_int(
-        value=os.getenv("VOLCENGINE_TTS_MAX_TEXT_CHARS"),
-        name="VOLCENGINE_TTS_MAX_TEXT_CHARS",
-        default=DEFAULT_VOLCENGINE_TTS_MAX_TEXT_CHARS,
-    )
-
-    configured_resource_id = (os.getenv("VOLCENGINE_TTS_RESOURCE_ID") or "").strip()
-    resource_id = configured_resource_id or infer_resource_id(resolved_voice_type)
 
     return VolcengineTtsConfig(
         endpoint=endpoint,
         app_id=app_id,
         access_token=access_token,
-        resource_id=resource_id,
+        resource_id=resolved_resource_id,
         voice_type=resolved_voice_type,
         encoding=resolved_encoding,
         sample_rate=resolved_sample_rate,

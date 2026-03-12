@@ -143,8 +143,8 @@
 - Volcengine shared speech auth configuration: `VOLCENGINE_APP_ID` (required),
   `VOLCENGINE_ACCESS_TOKEN` (required) for both STT and TTS.
 - Volcengine bidirectional TTS configuration: `VOLCENGINE_TTS_ENDPOINT` (defaults to
-  `wss://openspeech.bytedance.com/api/v3/tts/bidirection`), `VOLCENGINE_TTS_RESOURCE_ID` (optional override),
-  `VOLCENGINE_TTS_VOICE_TYPE` (optional default voice), `VOLCENGINE_TTS_ENCODING` (defaults to `mp3`),
+  `wss://openspeech.bytedance.com/api/v3/tts/bidirection`), `VOLCENGINE_TTS_RESOURCE_ID` (required),
+  `VOLCENGINE_TTS_VOICE_TYPE` (required), `VOLCENGINE_TTS_ENCODING` (defaults to `mp3`),
   `VOLCENGINE_TTS_SAMPLE_RATE` (defaults to `24000`), `VOLCENGINE_TTS_MAX_TEXT_CHARS` (defaults to `300`,
   max chars after sanitizer), `VOLCENGINE_TTS_STARTUP_CONNECT_ENABLED`
   (default true, run startup pre-connect check), `VOLCENGINE_TTS_STARTUP_FAIL_FAST` (default false,

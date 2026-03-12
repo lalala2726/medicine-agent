@@ -4,6 +4,7 @@ import os
 import uuid
 from dataclasses import dataclass
 
+from app.core.agent.config_sync.snapshot import get_current_agent_config_snapshot
 from app.core.speech.env_utils import (
     parse_positive_int,
     resolve_required_env,
@@ -49,8 +50,9 @@ def resolve_volcengine_stt_config() -> VolcengineSttConfig:
         ServiceException: 必填配置缺失或数值配置非法时抛出。
     """
 
-    app_id, access_token = resolve_volcengine_shared_auth()
-    resource_id = resolve_required_env("VOLCENGINE_STT_RESOURCE_ID")
+    snapshot = get_current_agent_config_snapshot()
+    app_id, access_token = resolve_volcengine_shared_auth(snapshot=snapshot)
+    resource_id = snapshot.get_speech_stt_resource_id() or resolve_required_env("VOLCENGINE_STT_RESOURCE_ID")
     endpoint = (os.getenv("VOLCENGINE_STT_ENDPOINT") or DEFAULT_VOLCENGINE_STT_ENDPOINT).strip()
     if not endpoint:
         endpoint = DEFAULT_VOLCENGINE_STT_ENDPOINT

@@ -14,7 +14,7 @@ from app.agent.assistant.domain.order.tools import (
     get_order_timeline,
     get_orders_detail,
 )
-from app.core.agent.agent_event_bus import emit_answer_delta
+from app.core.agent.agent_event_bus import emit_answer_delta, emit_thinking_delta
 from app.core.agent.config_sync import create_agent_chat_llm
 from app.core.agent.agent_runtime import agent_stream
 from app.core.agent.agent_tool_events import build_tool_status_middleware
@@ -74,6 +74,7 @@ def order_agent(state: AgentState) -> dict[str, Any]:
         agent,
         history_messages,
         on_model_delta=emit_answer_delta,
+        on_thinking_delta=emit_thinking_delta,
     )
     trace = record_agent_trace(
         payload=stream_result,

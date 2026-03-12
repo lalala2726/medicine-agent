@@ -68,10 +68,7 @@ _LOAD_REASON_LABELS: dict[AgentConfigLoadReason, str] = {
 _PROVIDER_ALIAS_MAP: dict[str, str] = {
     "openai": "openai",
     "aliyun": "aliyun",
-    "qwen": "aliyun",
-    "dashscope": "aliyun",
     "volcengine": "volcengine",
-    "ark": "volcengine",
 }
 
 
@@ -89,6 +86,32 @@ def _strip_optional_str(value: Any) -> str | None:
         return None
     normalized = str(value).strip()
     return normalized or None
+
+
+def _normalize_optional_positive_int(value: Any) -> int | None:
+    """将可选正整数值规整为 ``int``。
+
+    Args:
+        value: 原始输入值，允许为 ``None``、数字或可转数字字符串。
+
+    Returns:
+        大于 ``0`` 的整数；输入为空、无法解析或小于等于 ``0`` 时返回 ``None``。
+    """
+
+    if value is None:
+        return None
+    if isinstance(value, str):
+        normalized = value.strip()
+        if not normalized:
+            return None
+        value = normalized
+    try:
+        resolved = int(value)
+    except (TypeError, ValueError):
+        return None
+    if resolved <= 0:
+        return None
+    return resolved
 
 
 class AgentModelRuntimeConfig(BaseModel):
@@ -208,6 +231,70 @@ class ChatTitleAgentConfig(BaseModel):
     )
 
 
+class SpeechRecognitionAgentConfig(BaseModel):
+    """语音识别配置。"""
+
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    resource_id: str | None = Field(default=None, alias="resourceId")
+
+    @field_validator("resource_id", mode="before")
+    @classmethod
+    def _normalize_resource_id(cls, value: Any) -> str | None:
+        """归一化语音识别资源 ID。"""
+
+        return _strip_optional_str(value)
+
+
+class TextToSpeechAgentConfig(BaseModel):
+    """文本转语音配置。"""
+
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    resource_id: str | None = Field(default=None, alias="resourceId")
+    voice_type: str | None = Field(default=None, alias="voiceType")
+    max_text_chars: int | None = Field(default=None, alias="maxTextChars")
+
+    @field_validator("resource_id", "voice_type", mode="before")
+    @classmethod
+    def _normalize_optional_str(cls, value: Any) -> str | None:
+        """归一化文本转语音可选字符串字段。"""
+
+        return _strip_optional_str(value)
+
+    @field_validator("max_text_chars", mode="before")
+    @classmethod
+    def _normalize_max_text_chars(cls, value: Any) -> int | None:
+        """归一化文本转语音最大字符数。"""
+
+        return _normalize_optional_positive_int(value)
+
+
+class SpeechAgentConfig(BaseModel):
+    """语音配置。"""
+
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    provider: str | None = None
+    app_id: str | None = Field(default=None, alias="appId")
+    access_token: str | None = Field(default=None, alias="accessToken")
+    speech_recognition: SpeechRecognitionAgentConfig | None = Field(
+        default=None,
+        alias="speechRecognition",
+    )
+    text_to_speech: TextToSpeechAgentConfig | None = Field(
+        default=None,
+        alias="textToSpeech",
+    )
+
+    @field_validator("provider", "app_id", "access_token", mode="before")
+    @classmethod
+    def _normalize_optional_str(cls, value: Any) -> str | None:
+        """归一化语音配置中的可选字符串字段。"""
+
+        return _strip_optional_str(value)
+
+
 class AgentConfigSnapshot(BaseModel):
     """Agent 运行时配置快照。"""
 
@@ -229,6 +316,7 @@ class AgentConfigSnapshot(BaseModel):
         default=None,
         alias="chatTitle",
     )
+    speech: SpeechAgentConfig | None = None
 
     @field_validator("updated_by", mode="before")
     @classmethod
@@ -307,6 +395,69 @@ class AgentConfigSnapshot(BaseModel):
         if chat_title is None:
             return None
         return chat_title.chat_title_model
+
+    def get_speech_shared_auth(self) -> tuple[str, str] | None:
+        """读取语音共享鉴权配置。
+
+        Returns:
+            当 Redis 中 `appId/accessToken` 同时存在时返回鉴权二元组；
+            任一缺失时返回 ``None``，由调用方继续回退环境变量。
+        """
+
+        speech = self.speech
+        if speech is None:
+            return None
+        if speech.app_id is None or speech.access_token is None:
+            return None
+        return speech.app_id, speech.access_token
+
+    def get_speech_stt_resource_id(self) -> str | None:
+        """读取语音识别资源 ID。
+
+        Returns:
+            语音识别 `resourceId`；未配置时返回 ``None``。
+        """
+
+        speech = self.speech
+        if speech is None or speech.speech_recognition is None:
+            return None
+        return speech.speech_recognition.resource_id
+
+    def get_speech_tts_voice_type(self) -> str | None:
+        """读取文本转语音音色类型。
+
+        Returns:
+            文本转语音 `voiceType`；未配置时返回 ``None``。
+        """
+
+        speech = self.speech
+        if speech is None or speech.text_to_speech is None:
+            return None
+        return speech.text_to_speech.voice_type
+
+    def get_speech_tts_resource_id(self) -> str | None:
+        """读取文本转语音资源 ID。
+
+        Returns:
+            文本转语音 `resourceId`；未配置时返回 ``None``。
+        """
+
+        speech = self.speech
+        if speech is None or speech.text_to_speech is None:
+            return None
+        return speech.text_to_speech.resource_id
+
+    def get_speech_tts_max_text_chars(self) -> int | None:
+        """读取文本转语音最大字符数限制。
+
+        Returns:
+            文本转语音 `maxTextChars`；未配置或非法时返回 ``None``。
+        """
+
+        speech = self.speech
+        if speech is None or speech.text_to_speech is None:
+            return None
+        return speech.text_to_speech.max_text_chars
 
 
 class AgentConfigLoadError(RuntimeError):
@@ -393,6 +544,42 @@ def _decode_redis_payload(*, raw_payload: Any, redis_key: str) -> str:
     )
 
 
+def _unwrap_snapshot_payload_root(*, data: Any) -> dict[str, Any]:
+    """提取 Agent 配置实际根对象。
+
+    说明：
+        - 标准格式为平铺根对象，即用户确认的 `agent:config:all` JSON；
+        - 兼容当前 Redis 中已存在的包装格式 `{\"@class\": ..., \"data\": {...}}`，
+          当检测到 `data` 为对象时，自动下钻到该对象作为实际配置根。
+
+    Args:
+        data: `json.loads` 后的原始对象。
+
+    Returns:
+        dict[str, Any]: 供 `AgentConfigSnapshot` 校验的实际配置根对象。
+
+    Raises:
+        AgentConfigLoadError: 根对象不是 JSON object，或包装层 `data` 非对象时抛出。
+    """
+
+    if not isinstance(data, dict):
+        raise AgentConfigLoadError(
+            AgentConfigLoadReason.INVALID_SCHEMA,
+            "Agent config payload root must be a JSON object",
+        )
+
+    if "data" not in data:
+        return data
+
+    wrapped_data = data.get("data")
+    if not isinstance(wrapped_data, dict):
+        raise AgentConfigLoadError(
+            AgentConfigLoadReason.INVALID_SCHEMA,
+            "Wrapped agent config payload data must be a JSON object",
+        )
+    return wrapped_data
+
+
 def _load_snapshot_from_redis(*, redis_key: str) -> AgentConfigSnapshot:
     """从 Redis 读取并反序列化 Agent 配置快照。
 
@@ -422,9 +609,11 @@ def _load_snapshot_from_redis(*, redis_key: str) -> AgentConfigSnapshot:
             AgentConfigLoadReason.INVALID_JSON,
             "Agent config payload is not valid JSON",
         ) from exc
+
+    effective_root = _unwrap_snapshot_payload_root(data=data)
     try:
-        snapshot = AgentConfigSnapshot.model_validate(data)
-    except ValidationError as exc:
+        snapshot = AgentConfigSnapshot.model_validate(effective_root)
+    except (ValidationError, AgentConfigLoadError) as exc:
         raise AgentConfigLoadError(
             AgentConfigLoadReason.INVALID_SCHEMA,
             "Agent config payload schema is invalid",

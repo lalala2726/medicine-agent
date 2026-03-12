@@ -1,9 +1,28 @@
+import json
+
 import pytest
 
+from app.core.agent.config_sync import snapshot as agent_config_module
 from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException
 from app.core.speech import env_utils as speech_env_utils
 from app.core.speech.stt import config as stt_config_module
+
+
+class _FakeRedis:
+    def __init__(self, return_value=None) -> None:
+        self.return_value = return_value
+
+    def get(self, _key: str):
+        return self.return_value
+
+
+@pytest.fixture(autouse=True)
+def _clear_agent_config_state(monkeypatch: pytest.MonkeyPatch) -> None:
+    agent_config_module.clear_agent_config_snapshot_state()
+    monkeypatch.setattr(agent_config_module, "get_redis_connection", lambda: _FakeRedis(return_value=None))
+    yield
+    agent_config_module.clear_agent_config_snapshot_state()
 
 
 def _set_required_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -97,3 +116,56 @@ def test_build_volcengine_stt_headers_contains_required_fields(monkeypatch: pyte
         "X-Api-Resource-Id": "volc.seedasr.sauc.duration",
         "X-Api-Connect-Id": "connect-1",
     }
+
+
+def test_resolve_volcengine_stt_config_prefers_redis_speech_config(
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _disable_dotenv_lookup(monkeypatch)
+    _set_required_env(monkeypatch)
+    payload = json.dumps(
+        {
+            "speech": {
+                "provider": "volcengine",
+                "appId": "redis-app-id",
+                "accessToken": "redis-access-token",
+                "speechRecognition": {
+                    "resourceId": "redis-resource-id",
+                },
+            },
+        }
+    ).encode("utf-8")
+    monkeypatch.setattr(agent_config_module, "get_redis_connection", lambda: _FakeRedis(return_value=payload))
+    agent_config_module.initialize_agent_config_snapshot()
+
+    config = stt_config_module.resolve_volcengine_stt_config()
+
+    assert config.app_id == "redis-app-id"
+    assert config.access_token == "redis-access-token"
+    assert config.resource_id == "redis-resource-id"
+
+
+def test_resolve_volcengine_stt_config_falls_back_to_env_when_redis_auth_is_partial(
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _disable_dotenv_lookup(monkeypatch)
+    _set_required_env(monkeypatch)
+    payload = json.dumps(
+        {
+            "speech": {
+                "provider": "volcengine",
+                "appId": "redis-only-app-id",
+                "speechRecognition": {
+                    "resourceId": "redis-resource-id",
+                },
+            },
+        }
+    ).encode("utf-8")
+    monkeypatch.setattr(agent_config_module, "get_redis_connection", lambda: _FakeRedis(return_value=payload))
+    agent_config_module.initialize_agent_config_snapshot()
+
+    config = stt_config_module.resolve_volcengine_stt_config()
+
+    assert config.app_id == "test-app-id"
+    assert config.access_token == "test-access-token"
+    assert config.resource_id == "redis-resource-id"
