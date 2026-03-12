@@ -497,8 +497,8 @@ def _build_local_fallback_snapshot() -> AgentConfigSnapshot:
     """
 
     return AgentConfigSnapshot(
-        updated_at=datetime.now(timezone.utc),
-        updated_by="local_env_fallback",
+        updatedAt=datetime.now(timezone.utc),
+        updatedBy="local_env_fallback",
     )
 
 
