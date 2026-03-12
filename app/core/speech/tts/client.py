@@ -206,9 +206,10 @@ def prepare_tts_text(
 
     truncated_body_text = sanitized_text[:max_text_chars]
     truncation_prefix = DEFAULT_TTS_TRUNCATION_PREFIX_TEMPLATE.format(max_chars=max_text_chars).strip()
-    final_text = truncation_prefix
-    if truncated_body_text:
-        final_text = f"{truncation_prefix}\n{truncated_body_text}" if truncation_prefix else truncated_body_text
+    if truncation_prefix:
+        final_text = f"{truncation_prefix}\n{truncated_body_text}"
+    else:
+        final_text = truncated_body_text
 
     logger.info(
         "Volcengine TTS input text truncated max_chars={max_chars} source_chars={source_chars} body_chars={body_chars} final_chars={final_chars}",
