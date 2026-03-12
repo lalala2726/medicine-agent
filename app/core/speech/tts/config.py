@@ -102,8 +102,8 @@ def resolve_volcengine_tts_config() -> VolcengineTtsConfig:
         resolved_voice_type = (redis_voice_type or "").strip()
         if not resolved_voice_type:
             raise ServiceException(
-                code=ResponseCode.BAD_REQUEST,
-                message="speech.textToSpeech.voiceType 不能为空",
+                code=ResponseCode.INTERNAL_ERROR,
+                message="Redis 中 TTS 配置不完整: speech.textToSpeech.voiceType 缺失或为空",
             )
         if redis_max_text_chars is None:
             raise ServiceException(
