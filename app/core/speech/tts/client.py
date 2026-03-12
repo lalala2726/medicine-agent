@@ -38,7 +38,7 @@ from app.services.message_tts_usage_service import add_message_tts_usage
 # WebSocket 单帧最大载荷（bytes）。
 MAX_WS_MESSAGE_SIZE = 10 * 1024 * 1024
 # 文本被截断时的固定前缀模板。
-DEFAULT_TTS_TRUNCATION_PREFIX_TEMPLATE = "文本太多了，这边只读取前{max_chars}个字符。"
+DEFAULT_TTS_TRUNCATION_PREFIX_TEMPLATE = "文本太多了，这边只读前{max_chars}个字符。"
 
 # 不同编码对应的 HTTP 媒体类型映射表。
 _AUDIO_MEDIA_TYPE_BY_ENCODING = {
@@ -75,7 +75,7 @@ class PreparedTtsTextDetail:
         source_text_chars: 原始文本字符数。
         sanitized_text_chars: 清洗后字符数。
         billable_chars: 按发送文本计费字符数。
-        max_text_chars: 最大可发送字符数限制。
+        max_text_chars: 正文最大可发送字符数限制，不包含截断提示前缀。
         is_truncated: 是否发生截断。
     """
 
@@ -169,7 +169,8 @@ def prepare_tts_text(
     处理规则：
     1. 先做白名单清洗，仅保留可播报文本；
     2. 清洗后为空则拒绝转语音；
-    3. 超过 `max_text_chars` 时，追加截断提示前缀，并保证最终发送文本总长度不超过上限。
+    3. 超过 `max_text_chars` 时，只保留前 `max_text_chars` 个正文字符；
+    4. 截断提示前缀单独追加，不占用正文字符额度。
 
     Args:
         raw_text: 原始消息文本。
@@ -191,7 +192,7 @@ def prepare_tts_text(
 
     source_text_chars = len(raw_text)
     sanitized_text_chars = len(sanitized_text)
-    if len(sanitized_text) <= max_text_chars:
+    if sanitized_text_chars <= max_text_chars:
         return PreparedTtsTextDetail(
             raw_text=raw_text,
             sanitized_text=sanitized_text,
@@ -203,18 +204,17 @@ def prepare_tts_text(
             is_truncated=False,
         )
 
+    truncated_body_text = sanitized_text[:max_text_chars]
     truncation_prefix = DEFAULT_TTS_TRUNCATION_PREFIX_TEMPLATE.format(max_chars=max_text_chars).strip()
-    if truncation_prefix:
-        prefix_part = truncation_prefix[:max_text_chars]
-        remaining_chars = max(max_text_chars - len(prefix_part), 0)
-        final_text = f"{prefix_part}{sanitized_text[:remaining_chars]}"
-    else:
-        final_text = sanitized_text[:max_text_chars]
+    final_text = truncation_prefix
+    if truncated_body_text:
+        final_text = f"{truncation_prefix}\n{truncated_body_text}" if truncation_prefix else truncated_body_text
 
     logger.info(
-        "Volcengine TTS input text truncated max_chars={max_chars} source_chars={source_chars} final_chars={final_chars}",
+        "Volcengine TTS input text truncated max_chars={max_chars} source_chars={source_chars} body_chars={body_chars} final_chars={final_chars}",
         max_chars=max_text_chars,
         source_chars=sanitized_text_chars,
+        body_chars=len(truncated_body_text),
         final_chars=len(final_text),
     )
     return PreparedTtsTextDetail(

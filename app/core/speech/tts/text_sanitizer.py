@@ -50,8 +50,25 @@ class TtsTextSanitizer:
             str: 清洗后的可播报文本；为空时返回空字符串。
         """
 
+        return " ".join(cls.sanitize_lines(raw_text)).strip()
+
+    @classmethod
+    def sanitize_lines(cls, raw_text: str) -> list[str]:
+        """
+        清洗原始文本，并尽量保留行边界。
+
+        处理顺序与 `sanitize_text` 一致，但输出为逐行结果，便于上层实现
+        “按前 N 行播报”的逻辑。
+
+        Args:
+            raw_text: 原始待播报文本。
+
+        Returns:
+            list[str]: 清洗后的非空文本行列表；为空时返回空列表。
+        """
+
         if not raw_text:
-            return ""
+            return []
 
         text = raw_text
         text = cls._MARKDOWN_CODE_BLOCK_PATTERN.sub(" ", text)
@@ -63,7 +80,12 @@ class TtsTextSanitizer:
         text = cls._remove_structured_segments(text)
 
         filtered = "".join(ch for ch in text if cls.is_whitelist_char(ch))
-        return cls._WHITESPACE_PATTERN.sub(" ", filtered).strip()
+        sanitized_lines: list[str] = []
+        for line in filtered.splitlines():
+            normalized_line = cls._WHITESPACE_PATTERN.sub(" ", line).strip()
+            if normalized_line:
+                sanitized_lines.append(normalized_line)
+        return sanitized_lines
 
     @classmethod
     def is_whitelist_char(cls, ch: str) -> bool:

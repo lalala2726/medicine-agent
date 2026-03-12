@@ -118,20 +118,53 @@ def test_prepare_tts_text_truncates_with_prefix():
         max_text_chars=10,
     )
 
-    raw_text = "###Hello**World** https://example.com 这是一段很长的测试文本"
+    raw_text = "\n".join(
+        [
+            "###第一行内容",
+            "**第二行内容很长很长**",
+            "第三行内容 https://example.com",
+        ],
+    )
     prepared = service_module.prepare_tts_text(
         raw_text=raw_text,
         max_text_chars=config.max_text_chars,
     )
 
     expected_prefix = service_module.DEFAULT_TTS_TRUNCATION_PREFIX_TEMPLATE.format(max_chars=10).strip()
-    assert prepared.sent_text.startswith(expected_prefix[: len(prepared.sent_text)])
-    assert len(prepared.sent_text) <= config.max_text_chars
+    assert prepared.sent_text.startswith(expected_prefix)
+    truncated_body = prepared.sent_text[len(expected_prefix):].lstrip("\n")
+    assert len(truncated_body) <= config.max_text_chars
     assert "https://" not in prepared.sent_text.lower()
     assert "#" not in prepared.sent_text
     assert "*" not in prepared.sent_text
+    assert "第三行内容" not in truncated_body
     assert prepared.is_truncated is True
     assert prepared.billable_chars == len(prepared.sent_text)
+
+
+def test_prepare_tts_text_keeps_prefix_outside_body_char_budget():
+    config = VolcengineTtsConfig(
+        endpoint="wss://example.com/tts",
+        app_id="app-id",
+        access_token="token",
+        resource_id="volc.service_type.10029",
+        voice_type="zh_female_1",
+        encoding="mp3",
+        sample_rate=24000,
+        max_text_chars=5,
+    )
+
+    prepared = service_module.prepare_tts_text(
+        raw_text="第一行很长很长\n第二行",
+        max_text_chars=config.max_text_chars,
+    )
+
+    expected_prefix = service_module.DEFAULT_TTS_TRUNCATION_PREFIX_TEMPLATE.format(max_chars=5).strip()
+    assert prepared.sent_text.startswith(expected_prefix)
+    truncated_body = prepared.sent_text[len(expected_prefix):].lstrip("\n")
+    assert truncated_body == "第一行很长"
+    assert len(truncated_body) == config.max_text_chars
+    assert len(prepared.sent_text) > config.max_text_chars
 
 
 def test_prepare_tts_text_raises_when_sanitized_empty():
@@ -378,7 +411,8 @@ def test_stream_message_tts_persists_usage_with_truncated_flag(monkeypatch):
     assert usage_calls[0]["max_text_chars"] == 5
     expected_prefix = service_module.DEFAULT_TTS_TRUNCATION_PREFIX_TEMPLATE.format(max_chars=5).strip()
     assert usage_calls[0]["sent_text"].startswith(expected_prefix[: len(usage_calls[0]["sent_text"])])
-    assert len(usage_calls[0]["sent_text"]) <= 5
+    truncated_body = usage_calls[0]["sent_text"][len(expected_prefix):].lstrip("\n")
+    assert len(truncated_body) <= 5
     assert usage_calls[0]["sanitized_text_chars"] >= 5
 
 
