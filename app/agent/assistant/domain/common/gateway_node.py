@@ -6,7 +6,6 @@ from typing import Any
 from typing import Literal
 
 from langchain.agents import create_agent
-from langchain.agents.structured_output import ToolStrategy
 from langchain_core.messages import SystemMessage
 from pydantic import BaseModel, Field, ValidationError
 
@@ -128,25 +127,25 @@ def _resolve_gateway_routing_result(raw_payload: Any) -> dict[str, Any]:
 
     if not isinstance(raw_payload, Mapping):
         return dict(_GATEWAY_ROUTE_FALLBACK)
-    structured_response = raw_payload.get("structured_response")
 
-    structured_mapping: Mapping[str, Any] | None = None
-    if isinstance(structured_response, Mapping):
-        structured_mapping = structured_response
-    elif isinstance(structured_response, BaseModel):
-        structured_mapping = structured_response.model_dump()
-    elif isinstance(structured_response, str):
-        try:
-            parsed_json = json.loads(structured_response)
-        except json.JSONDecodeError:
-            parsed_json = None
-        if isinstance(parsed_json, Mapping):
-            structured_mapping = parsed_json
-
-    if structured_mapping is None:
+    raw_messages = raw_payload.get("messages")
+    if not isinstance(raw_messages, list) or not raw_messages:
         return dict(_GATEWAY_ROUTE_FALLBACK)
+
+    last_message = raw_messages[-1]
+    raw_content = getattr(last_message, "content", None)
+    if not isinstance(raw_content, str):
+        return dict(_GATEWAY_ROUTE_FALLBACK)
+
     try:
-        parsed = GatewayRoutingSchema.model_validate(structured_mapping)
+        parsed_json = json.loads(raw_content.strip())
+    except json.JSONDecodeError:
+        return dict(_GATEWAY_ROUTE_FALLBACK)
+    if not isinstance(parsed_json, Mapping):
+        return dict(_GATEWAY_ROUTE_FALLBACK)
+
+    try:
+        parsed = GatewayRoutingSchema.model_validate(parsed_json)
     except ValidationError:
         return dict(_GATEWAY_ROUTE_FALLBACK)
     normalized_targets = _normalize_route_targets(list(parsed.route_targets))
@@ -184,7 +183,6 @@ def gateway_router(state: AgentState) -> dict[str, Any]:
         model=llm,
         system_prompt=SystemMessage(content=_GATEWAY_PROMPT),
         middleware=[BasePromptMiddleware()],
-        response_format=ToolStrategy(GatewayRoutingSchema),
     )
     history_messages = list(state.get("history_messages") or [])
     # 路由节点无需过多的上下文，只需要截取最近的20条消息

@@ -8,6 +8,8 @@ from langchain_core.messages import AIMessage, SystemMessage
 from app.agent.assistant.state import AgentState, ExecutionTraceState
 from app.agent.assistant.domain.common.tools import get_current_time
 from app.agent.assistant.domain.common.tools import get_safe_user_info
+from app.agent.assistant.domain.common.tools import search_knowledge_context
+from app.core.agent.agent_tool_events import build_tool_status_middleware
 from app.core.config_sync import AgentChatModelSlot
 from app.core.agent.agent_event_bus import emit_answer_delta, emit_thinking_delta
 from app.core.config_sync import create_agent_chat_llm
@@ -36,8 +38,9 @@ def chat_agent(state: AgentState) -> dict[str, Any]:
 
     history_messages = list(state.get("history_messages") or [])
     tools = [
+        search_knowledge_context,
         get_current_time,
-        get_safe_user_info
+        get_safe_user_info,
     ]
     llm = create_agent_chat_llm(
         slot=AgentChatModelSlot.CHAT,
@@ -50,8 +53,9 @@ def chat_agent(state: AgentState) -> dict[str, Any]:
         system_prompt=SystemMessage(content=_CHAT_SYSTEM_PROMPT),
         middleware=[
             BasePromptMiddleware(),
+            build_tool_status_middleware(),
             SkillMiddleware(scope="chat"),
-        ]
+        ],
     )
     stream_result = agent_stream(
         agent,
@@ -76,7 +80,7 @@ def chat_agent(state: AgentState) -> dict[str, Any]:
         output_text=text,
         llm_usage_complete=bool(trace.get("is_usage_complete", False)),
         llm_token_usage=trace.get("usage"),
-        tool_calls=[],
+        tool_calls=list(trace.get("tool_calls") or []),
         node_context=None,
     )
     execution_traces, token_usage = append_trace_and_refresh_token_usage(

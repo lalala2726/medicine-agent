@@ -13,6 +13,8 @@ from app.core.database import get_redis_connection
 
 #: Redis 中保存 Agent 全量运行时配置的固定 key。
 AGENT_CONFIG_REDIS_KEY = "agent:config:all"
+#: 当前支持的 Agent 配置快照 schema 版本。
+AGENT_CONFIG_SCHEMA_VERSION = 3
 
 
 class AgentChatModelSlot(str, Enum):
@@ -64,18 +66,8 @@ _LOAD_REASON_LABELS: dict[AgentConfigLoadReason, str] = {
     AgentConfigLoadReason.INVALID_SCHEMA: "配置结构校验失败",
 }
 
-#: 管理端 provider 名称到内部 provider 标识的归一化映射。
-_PROVIDER_ALIAS_MAP: dict[str, str] = {
-    "openai": "openai",
-    "open ai": "openai",
-    "aliyun": "aliyun",
-    "qwen": "aliyun",
-    "dashscope": "aliyun",
-    "阿里云百联": "aliyun",
-    "volcengine": "volcengine",
-    "ark": "volcengine",
-    "火山引擎": "volcengine",
-}
+#: V3 结构允许的 LLM providerType 列表。
+_SUPPORTED_PROVIDER_TYPES = {"openai", "aliyun", "volcengine"}
 
 
 def _strip_optional_str(value: Any) -> str | None:
@@ -120,77 +112,168 @@ def _normalize_optional_positive_int(value: Any) -> int | None:
     return resolved
 
 
+def _normalize_string_list(value: Any) -> list[str] | None:
+    """将字符串列表规整为去重且保持顺序的结果。
+
+    Args:
+        value: 原始输入值，允许为 ``None`` 或可迭代对象。
+
+    Returns:
+        去空白、去重、保序后的字符串列表；若输入为空则返回 ``None``。
+
+    Raises:
+        ValueError: 当输入不是列表类结构时抛出。
+    """
+
+    if value is None:
+        return None
+    if not isinstance(value, (list, tuple)):
+        raise ValueError("knowledgeNames must be a list")
+
+    seen: set[str] = set()
+    normalized_values: list[str] = []
+    for item in value:
+        normalized = _strip_optional_str(item)
+        if normalized is None or normalized in seen:
+            continue
+        seen.add(normalized)
+        normalized_values.append(normalized)
+    return normalized_values or None
+
+
 class AgentModelRuntimeConfig(BaseModel):
-    """Redis 中单个运行时模型配置。"""
+    """Redis 顶层 `llm` 运行时配置。"""
 
-    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
-    provider: str | None = None
-    model: str | None = None
-    model_type: str | None = Field(default=None, alias="modelType")
+    provider_type: str | None = Field(default=None, alias="providerType")
     base_url: str | None = Field(default=None, alias="baseUrl")
     api_key: str | None = Field(default=None, alias="apiKey")
-    support_reasoning: bool | None = Field(default=None, alias="supportReasoning")
-    support_vision: bool | None = Field(default=None, alias="supportVision")
 
-    @field_validator("provider", mode="before")
+    @field_validator("provider_type", mode="before")
     @classmethod
-    def _normalize_provider(cls, value: Any) -> str | None:
-        """归一化 Redis 里的 provider 名称。"""
+    def _normalize_provider_type(cls, value: Any) -> str | None:
+        """归一化 V3 顶层 `providerType` 字段。
+
+        Args:
+            value: Redis 中的原始 providerType 值。
+
+        Returns:
+            规整后的 providerType；未提供时返回 ``None``。
+
+        Raises:
+            ValueError: 当 providerType 不在支持范围内时抛出。
+        """
 
         normalized = _strip_optional_str(value)
         if normalized is None:
             return None
-        alias = _PROVIDER_ALIAS_MAP.get(normalized.lower())
-        if alias is None:
-            raise ValueError(f"Unsupported agent config provider: {normalized}")
-        return alias
+        lowered = normalized.lower()
+        if lowered not in _SUPPORTED_PROVIDER_TYPES:
+            raise ValueError(f"Unsupported agent config providerType: {normalized}")
+        return lowered
 
-    @field_validator("model", "model_type", "base_url", "api_key", mode="before")
+    @field_validator("base_url", "api_key", mode="before")
     @classmethod
     def _normalize_optional_str(cls, value: Any) -> str | None:
-        """归一化可选字符串字段。"""
+        """归一化顶层运行时配置中的可选字符串字段。"""
 
         return _strip_optional_str(value)
 
     @model_validator(mode="after")
     def _validate_runtime_shape(self) -> AgentModelRuntimeConfig:
-        """校验运行时模型配置的最小完整性。"""
+        """校验顶层 `llm` 配置是否完整。
+
+        Returns:
+            AgentModelRuntimeConfig: 当前模型实例。
+
+        Raises:
+            ValueError: 当 `llm` 对象存在但字段不完整时抛出。
+        """
 
         has_any_runtime_value = any(
             value is not None
-            for value in (self.provider, self.model, self.base_url, self.api_key)
+            for value in (self.provider_type, self.base_url, self.api_key)
         )
-        if has_any_runtime_value and (self.provider is None or self.model is None):
-            raise ValueError("Agent runtime config requires both provider and model")
+        if has_any_runtime_value and (
+                self.provider_type is None or self.base_url is None or self.api_key is None
+        ):
+            raise ValueError("Agent runtime config requires providerType, baseUrl and apiKey")
         return self
 
 
 class AgentModelSlotConfig(BaseModel):
     """业务槽位配置。"""
 
-    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
+    model_name: str | None = Field(default=None, alias="modelName")
     reasoning_enabled: bool | None = Field(default=None, alias="reasoningEnabled")
     max_tokens: int | None = Field(default=None, alias="maxTokens")
     temperature: float | None = None
-    model: AgentModelRuntimeConfig | None = None
+
+    @field_validator("model_name", mode="before")
+    @classmethod
+    def _normalize_model_name(cls, value: Any) -> str | None:
+        """归一化槽位模型名称。"""
+
+        return _strip_optional_str(value)
 
 
 class KnowledgeBaseAgentConfig(BaseModel):
     """知识库配置。"""
 
-    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
+    knowledge_names: list[str] | None = Field(default=None, alias="knowledgeNames")
     embedding_dim: int | None = Field(default=None, alias="embeddingDim")
-    embedding_model: AgentModelSlotConfig | None = Field(default=None, alias="embeddingModel")
-    rerank_model: AgentModelSlotConfig | None = Field(default=None, alias="rerankModel")
+    embedding_model: str | None = Field(default=None, alias="embeddingModel")
+    ranking_enabled: bool = Field(default=False, alias="rankingEnabled")
+    ranking_model: str | None = Field(default=None, alias="rankingModel")
+    top_k: int | None = Field(default=None, alias="topK")
+
+    @field_validator("knowledge_names", mode="before")
+    @classmethod
+    def _normalize_knowledge_names(cls, value: Any) -> list[str] | None:
+        """归一化知识库名称列表。"""
+
+        return _normalize_string_list(value)
+
+    @field_validator("embedding_model", "ranking_model", mode="before")
+    @classmethod
+    def _normalize_optional_model_name(cls, value: Any) -> str | None:
+        """归一化知识库模型名称字符串。"""
+
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise ValueError("knowledgeBase model name must be a string")
+        return _strip_optional_str(value)
+
+    @field_validator("embedding_dim", "top_k", mode="before")
+    @classmethod
+    def _normalize_optional_positive_number(cls, value: Any) -> int | None:
+        """归一化知识库配置中的可选正整数。"""
+
+        return _normalize_optional_positive_int(value)
+
+    @model_validator(mode="after")
+    def _validate_ranking_config(self) -> KnowledgeBaseAgentConfig:
+        """校验知识库排序相关字段组合是否合法。"""
+
+        if self.top_k is not None and self.top_k > 100:
+            raise ValueError("knowledgeBase.topK must be between 1 and 100")
+        if not self.ranking_enabled and self.ranking_model is not None:
+            raise ValueError("knowledgeBase.rankingModel must be null when rankingEnabled is false")
+        if self.ranking_enabled and self.ranking_model is None:
+            raise ValueError("knowledgeBase.rankingModel is required when rankingEnabled is true")
+        return self
 
 
 class AdminAssistantAgentConfig(BaseModel):
     """管理助手配置。"""
 
-    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
     route_model: AgentModelSlotConfig | None = Field(default=None, alias="routeModel")
     business_node_simple_model: AgentModelSlotConfig | None = Field(
@@ -207,7 +290,7 @@ class AdminAssistantAgentConfig(BaseModel):
 class ImageRecognitionAgentConfig(BaseModel):
     """图片识别配置。"""
 
-    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
     image_recognition_model: AgentModelSlotConfig | None = Field(
         default=None,
@@ -218,7 +301,7 @@ class ImageRecognitionAgentConfig(BaseModel):
 class ChatHistorySummaryAgentConfig(BaseModel):
     """聊天历史总结配置。"""
 
-    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
     chat_history_summary_model: AgentModelSlotConfig | None = Field(
         default=None,
@@ -229,7 +312,7 @@ class ChatHistorySummaryAgentConfig(BaseModel):
 class ChatTitleAgentConfig(BaseModel):
     """聊天标题生成配置。"""
 
-    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
     chat_title_model: AgentModelSlotConfig | None = Field(
         default=None,
@@ -237,10 +320,31 @@ class ChatTitleAgentConfig(BaseModel):
     )
 
 
+class AgentConfigsConfig(BaseModel):
+    """V3 顶层 `agentConfigs` 容器。"""
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    knowledge_base: KnowledgeBaseAgentConfig | None = Field(default=None, alias="knowledgeBase")
+    admin_assistant: AdminAssistantAgentConfig | None = Field(default=None, alias="adminAssistant")
+    image_recognition: ImageRecognitionAgentConfig | None = Field(
+        default=None,
+        alias="imageRecognition",
+    )
+    chat_history_summary: ChatHistorySummaryAgentConfig | None = Field(
+        default=None,
+        alias="chatHistorySummary",
+    )
+    chat_title: ChatTitleAgentConfig | None = Field(
+        default=None,
+        alias="chatTitle",
+    )
+
+
 class SpeechRecognitionAgentConfig(BaseModel):
     """语音识别配置。"""
 
-    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
     resource_id: str | None = Field(default=None, alias="resourceId")
 
@@ -255,7 +359,7 @@ class SpeechRecognitionAgentConfig(BaseModel):
 class TextToSpeechAgentConfig(BaseModel):
     """文本转语音配置。"""
 
-    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
     resource_id: str | None = Field(default=None, alias="resourceId")
     voice_type: str | None = Field(default=None, alias="voiceType")
@@ -279,7 +383,7 @@ class TextToSpeechAgentConfig(BaseModel):
 class SpeechAgentConfig(BaseModel):
     """语音配置。"""
 
-    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
     provider: str | None = None
     app_id: str | None = Field(default=None, alias="appId")
@@ -304,24 +408,13 @@ class SpeechAgentConfig(BaseModel):
 class AgentConfigSnapshot(BaseModel):
     """Agent 运行时配置快照。"""
 
-    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
+    schema_version: int | None = Field(default=None, alias="schemaVersion")
     updated_at: datetime | None = Field(default=None, alias="updatedAt")
     updated_by: str | None = Field(default=None, alias="updatedBy")
-    knowledge_base: KnowledgeBaseAgentConfig | None = Field(default=None, alias="knowledgeBase")
-    admin_assistant: AdminAssistantAgentConfig | None = Field(default=None, alias="adminAssistant")
-    image_recognition: ImageRecognitionAgentConfig | None = Field(
-        default=None,
-        alias="imageRecognition",
-    )
-    chat_history_summary: ChatHistorySummaryAgentConfig | None = Field(
-        default=None,
-        alias="chatHistorySummary",
-    )
-    chat_title: ChatTitleAgentConfig | None = Field(
-        default=None,
-        alias="chatTitle",
-    )
+    llm: AgentModelRuntimeConfig | None = None
+    agent_configs: AgentConfigsConfig | None = Field(default=None, alias="agentConfigs")
     speech: SpeechAgentConfig | None = None
 
     @field_validator("updated_by", mode="before")
@@ -331,6 +424,15 @@ class AgentConfigSnapshot(BaseModel):
 
         return _strip_optional_str(value)
 
+    def get_llm_runtime_config(self) -> AgentModelRuntimeConfig | None:
+        """读取顶层 LLM 运行时配置。
+
+        Returns:
+            Redis 顶层 `llm` 配置；本地兜底或未配置时返回 ``None``。
+        """
+
+        return self.llm
+
     def get_chat_slot(self, slot: AgentChatModelSlot) -> AgentModelSlotConfig | None:
         """根据聊天槽位枚举读取管理助手对应槽位配置。
 
@@ -338,12 +440,13 @@ class AgentConfigSnapshot(BaseModel):
             slot: 目标聊天槽位。
 
         Returns:
-            命中的槽位配置；若当前快照没有管理助手配置或该槽位为空则返回 ``None``。
+            命中的槽位配置；若当前快照未配置对应槽位则返回 ``None``。
         """
 
-        admin_assistant = self.admin_assistant
-        if admin_assistant is None:
+        agent_configs = self.agent_configs
+        if agent_configs is None or agent_configs.admin_assistant is None:
             return None
+        admin_assistant = agent_configs.admin_assistant
         if slot is AgentChatModelSlot.ROUTE:
             return admin_assistant.route_model
         if slot is AgentChatModelSlot.CHAT:
@@ -361,10 +464,10 @@ class AgentConfigSnapshot(BaseModel):
             图片识别模型槽位配置；未配置时返回 ``None``。
         """
 
-        image_recognition = self.image_recognition
-        if image_recognition is None:
+        agent_configs = self.agent_configs
+        if agent_configs is None or agent_configs.image_recognition is None:
             return None
-        return image_recognition.image_recognition_model
+        return agent_configs.image_recognition.image_recognition_model
 
     def get_embedding_slot(self) -> AgentModelSlotConfig | None:
         """读取知识库 embedding 槽位配置。
@@ -373,10 +476,82 @@ class AgentConfigSnapshot(BaseModel):
             知识库 embedding 模型槽位配置；未配置时返回 ``None``。
         """
 
-        knowledge_base = self.knowledge_base
-        if knowledge_base is None:
+        model_name = self.get_knowledge_embedding_model_name()
+        if model_name is None:
             return None
-        return knowledge_base.embedding_model
+        return AgentModelSlotConfig(modelName=model_name)
+
+    def get_knowledge_names(self) -> list[str]:
+        """读取当前允许访问的知识库名称列表。
+
+        Returns:
+            去重且保序后的知识库名称列表；未配置时返回空列表。
+        """
+
+        agent_configs = self.agent_configs
+        if agent_configs is None or agent_configs.knowledge_base is None:
+            return []
+        return list(agent_configs.knowledge_base.knowledge_names or [])
+
+    def get_knowledge_embedding_model_name(self) -> str | None:
+        """读取知识库统一的向量模型名称。
+
+        Returns:
+            当前知识库统一 embedding 模型名；未配置时返回 ``None``。
+        """
+
+        agent_configs = self.agent_configs
+        if agent_configs is None or agent_configs.knowledge_base is None:
+            return None
+        return agent_configs.knowledge_base.embedding_model
+
+    def get_knowledge_embedding_dim(self) -> int | None:
+        """读取知识库统一的向量维度。
+
+        Returns:
+            当前知识库统一 embedding 维度；未配置时返回 ``None``。
+        """
+
+        agent_configs = self.agent_configs
+        if agent_configs is None or agent_configs.knowledge_base is None:
+            return None
+        return agent_configs.knowledge_base.embedding_dim
+
+    def is_knowledge_ranking_enabled(self) -> bool:
+        """读取知识库排序开关。
+
+        Returns:
+            当前 Redis 是否显式启用了排序。
+        """
+
+        agent_configs = self.agent_configs
+        if agent_configs is None or agent_configs.knowledge_base is None:
+            return False
+        return bool(agent_configs.knowledge_base.ranking_enabled)
+
+    def get_knowledge_ranking_model_name(self) -> str | None:
+        """读取知识库排序模型名称。
+
+        Returns:
+            当前知识库排序模型名称；未配置时返回 ``None``。
+        """
+
+        agent_configs = self.agent_configs
+        if agent_configs is None or agent_configs.knowledge_base is None:
+            return None
+        return agent_configs.knowledge_base.ranking_model
+
+    def get_knowledge_top_k(self) -> int | None:
+        """读取知识库最终返回条数配置。
+
+        Returns:
+            Redis 中配置的最终返回条数；未配置或非法时返回 ``None``。
+        """
+
+        agent_configs = self.agent_configs
+        if agent_configs is None or agent_configs.knowledge_base is None:
+            return None
+        return agent_configs.knowledge_base.top_k
 
     def get_summary_slot(self) -> AgentModelSlotConfig | None:
         """读取聊天历史总结槽位配置。
@@ -385,10 +560,10 @@ class AgentConfigSnapshot(BaseModel):
             聊天历史总结模型槽位配置；未配置时返回 ``None``。
         """
 
-        chat_history_summary = self.chat_history_summary
-        if chat_history_summary is None:
+        agent_configs = self.agent_configs
+        if agent_configs is None or agent_configs.chat_history_summary is None:
             return None
-        return chat_history_summary.chat_history_summary_model
+        return agent_configs.chat_history_summary.chat_history_summary_model
 
     def get_title_slot(self) -> AgentModelSlotConfig | None:
         """读取聊天标题生成槽位配置。
@@ -397,10 +572,10 @@ class AgentConfigSnapshot(BaseModel):
             聊天标题生成模型槽位配置；未配置时返回 ``None``。
         """
 
-        chat_title = self.chat_title
-        if chat_title is None:
+        agent_configs = self.agent_configs
+        if agent_configs is None or agent_configs.chat_title is None:
             return None
-        return chat_title.chat_title_model
+        return agent_configs.chat_title.chat_title_model
 
     def get_speech_shared_auth(self) -> tuple[str, str] | None:
         """读取语音共享鉴权配置。
@@ -493,12 +668,14 @@ def _build_local_fallback_snapshot() -> AgentConfigSnapshot:
     """构造本地 `.env` 兜底场景使用的空快照。
 
     Returns:
-        一个不包含 Redis 业务配置的本地兜底快照。
+        一个不包含 Redis 运行时配置的本地兜底快照。
     """
 
     return AgentConfigSnapshot(
+        schemaVersion=AGENT_CONFIG_SCHEMA_VERSION,
         updatedAt=datetime.now(timezone.utc),
         updatedBy="local_env_fallback",
+        agentConfigs={},
     )
 
 
@@ -553,19 +730,14 @@ def _decode_redis_payload(*, raw_payload: Any, redis_key: str) -> str:
 def _unwrap_snapshot_payload_root(*, data: Any) -> dict[str, Any]:
     """提取 Agent 配置实际根对象。
 
-    说明：
-        - 标准格式为平铺根对象，即用户确认的 `agent:config:all` JSON；
-        - 兼容当前 Redis 中已存在的包装格式 `{\"@class\": ..., \"data\": {...}}`，
-          当检测到 `data` 为对象时，自动下钻到该对象作为实际配置根。
-
     Args:
         data: `json.loads` 后的原始对象。
 
     Returns:
-        dict[str, Any]: 供 `AgentConfigSnapshot` 校验的实际配置根对象。
+        供 `AgentConfigSnapshot` 校验的实际配置根对象。
 
     Raises:
-        AgentConfigLoadError: 根对象不是 JSON object，或包装层 `data` 非对象时抛出。
+        AgentConfigLoadError: 当根对象不是 JSON object，或包装层 `data` 不是对象时抛出。
     """
 
     if not isinstance(data, dict):
@@ -573,17 +745,61 @@ def _unwrap_snapshot_payload_root(*, data: Any) -> dict[str, Any]:
             AgentConfigLoadReason.INVALID_SCHEMA,
             "Agent config payload root must be a JSON object",
         )
-
-    if "data" not in data:
-        return data
-
     wrapped_data = data.get("data")
+    if wrapped_data is None:
+        return data
     if not isinstance(wrapped_data, dict):
         raise AgentConfigLoadError(
             AgentConfigLoadReason.INVALID_SCHEMA,
             "Wrapped agent config payload data must be a JSON object",
         )
     return wrapped_data
+
+
+def _ensure_snapshot_matches_v3(snapshot: AgentConfigSnapshot) -> AgentConfigSnapshot:
+    """校验快照是否满足 V3 Redis 结构要求。
+
+    Args:
+        snapshot: 已通过 Pydantic 基础校验的快照对象。
+
+    Returns:
+        AgentConfigSnapshot: 原样返回当前快照对象。
+
+    Raises:
+        AgentConfigLoadError: 当快照未满足 V3 必填结构时抛出。
+    """
+
+    if snapshot.schema_version != AGENT_CONFIG_SCHEMA_VERSION:
+        raise AgentConfigLoadError(
+            AgentConfigLoadReason.INVALID_SCHEMA,
+            "Agent config payload schemaVersion must be 3",
+        )
+    if snapshot.llm is None:
+        raise AgentConfigLoadError(
+            AgentConfigLoadReason.INVALID_SCHEMA,
+            "Agent config payload llm is required",
+        )
+    if snapshot.agent_configs is None:
+        raise AgentConfigLoadError(
+            AgentConfigLoadReason.INVALID_SCHEMA,
+            "Agent config payload agentConfigs is required",
+        )
+    runtime_config = snapshot.get_llm_runtime_config()
+    if runtime_config is None:
+        raise AgentConfigLoadError(
+            AgentConfigLoadReason.INVALID_SCHEMA,
+            "Agent config payload llm is required",
+        )
+    if (
+            runtime_config.provider_type is None
+            or runtime_config.base_url is None
+            or runtime_config.api_key is None
+    ):
+        raise AgentConfigLoadError(
+            AgentConfigLoadReason.INVALID_SCHEMA,
+            "Agent config payload llm is incomplete",
+        )
+    return snapshot
 
 
 def _load_snapshot_from_redis(*, redis_key: str) -> AgentConfigSnapshot:
@@ -619,12 +835,12 @@ def _load_snapshot_from_redis(*, redis_key: str) -> AgentConfigSnapshot:
     effective_root = _unwrap_snapshot_payload_root(data=data)
     try:
         snapshot = AgentConfigSnapshot.model_validate(effective_root)
-    except (ValidationError, AgentConfigLoadError) as exc:
+    except ValidationError as exc:
         raise AgentConfigLoadError(
             AgentConfigLoadReason.INVALID_SCHEMA,
             "Agent config payload schema is invalid",
         ) from exc
-    return snapshot
+    return _ensure_snapshot_matches_v3(snapshot)
 
 
 def _set_current_snapshot(snapshot: AgentConfigSnapshot, *, source: AgentConfigSource) -> None:

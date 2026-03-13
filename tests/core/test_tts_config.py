@@ -1,4 +1,5 @@
 import json
+from typing import Any
 
 import pytest
 
@@ -32,6 +33,23 @@ def _set_shared_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def _disable_dotenv_lookup(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(speech_env_utils, "_read_dotenv_value", lambda _name: "")
+
+
+def _build_v3_payload(*, speech: dict[str, Any]) -> bytes:
+    return json.dumps(
+        {
+            "schemaVersion": 3,
+            "updatedAt": "2026-03-13T10:30:00+08:00",
+            "updatedBy": "admin",
+            "llm": {
+                "providerType": "openai",
+                "baseUrl": "https://api.openai.com/v1",
+                "apiKey": "sk-runtime",
+            },
+            "agentConfigs": {},
+            "speech": speech,
+        }
+    ).encode("utf-8")
 
 
 def test_resolve_volcengine_tts_config_uses_shared_auth_and_defaults(
@@ -103,20 +121,18 @@ def test_resolve_volcengine_tts_config_prefers_redis_voice_and_max_text_chars(
     monkeypatch.setenv("VOLCENGINE_TTS_VOICE_TYPE", "env_voice")
     monkeypatch.setenv("VOLCENGINE_TTS_RESOURCE_ID", "env-resource")
     monkeypatch.setenv("VOLCENGINE_TTS_MAX_TEXT_CHARS", "500")
-    payload = json.dumps(
-        {
-            "speech": {
-                "provider": "volcengine",
-                "appId": "redis-app-id",
-                "accessToken": "redis-access-token",
-                "textToSpeech": {
-                    "resourceId": "redis-resource-id",
-                    "voiceType": "S_demo_voice",
-                    "maxTextChars": 256,
-                },
+    payload = _build_v3_payload(
+        speech={
+            "provider": "volcengine",
+            "appId": "redis-app-id",
+            "accessToken": "redis-access-token",
+            "textToSpeech": {
+                "resourceId": "redis-resource-id",
+                "voiceType": "S_demo_voice",
+                "maxTextChars": 256,
             },
         }
-    ).encode("utf-8")
+    )
     monkeypatch.setattr(agent_config_module, "get_redis_connection", lambda: _FakeRedis(return_value=payload))
     agent_config_module.initialize_agent_config_snapshot()
 
@@ -136,19 +152,17 @@ def test_resolve_volcengine_tts_config_falls_back_to_env_auth_when_redis_auth_is
     _set_shared_env(monkeypatch)
     monkeypatch.setenv("VOLCENGINE_TTS_RESOURCE_ID", "env-resource-id")
     monkeypatch.setenv("VOLCENGINE_TTS_VOICE_TYPE", "env_voice")
-    payload = json.dumps(
-        {
-            "speech": {
-                "provider": "volcengine",
-                "appId": "redis-only-app-id",
-                "textToSpeech": {
-                    "resourceId": "redis-resource-id",
-                    "voiceType": "redis_voice",
-                    "maxTextChars": 128,
-                },
+    payload = _build_v3_payload(
+        speech={
+            "provider": "volcengine",
+            "appId": "redis-only-app-id",
+            "textToSpeech": {
+                "resourceId": "redis-resource-id",
+                "voiceType": "redis_voice",
+                "maxTextChars": 128,
             },
         }
-    ).encode("utf-8")
+    )
     monkeypatch.setattr(agent_config_module, "get_redis_connection", lambda: _FakeRedis(return_value=payload))
     agent_config_module.initialize_agent_config_snapshot()
 
@@ -169,19 +183,17 @@ def test_resolve_volcengine_tts_config_falls_back_to_env_tts_config_when_redis_r
     monkeypatch.setenv("VOLCENGINE_TTS_RESOURCE_ID", "env-resource-id")
     monkeypatch.setenv("VOLCENGINE_TTS_VOICE_TYPE", "env_voice")
     monkeypatch.setenv("VOLCENGINE_TTS_MAX_TEXT_CHARS", "500")
-    payload = json.dumps(
-        {
-            "speech": {
-                "provider": "volcengine",
-                "appId": "redis-app-id",
-                "accessToken": "redis-access-token",
-                "textToSpeech": {
-                    "voiceType": "redis_voice",
-                    "maxTextChars": 128,
-                },
+    payload = _build_v3_payload(
+        speech={
+            "provider": "volcengine",
+            "appId": "redis-app-id",
+            "accessToken": "redis-access-token",
+            "textToSpeech": {
+                "voiceType": "redis_voice",
+                "maxTextChars": 128,
             },
         }
-    ).encode("utf-8")
+    )
     monkeypatch.setattr(agent_config_module, "get_redis_connection", lambda: _FakeRedis(return_value=payload))
     agent_config_module.initialize_agent_config_snapshot()
 
@@ -201,19 +213,17 @@ def test_resolve_volcengine_tts_config_raises_when_resource_id_missing_in_redis_
     _set_shared_env(monkeypatch)
     monkeypatch.delenv("VOLCENGINE_TTS_RESOURCE_ID", raising=False)
     monkeypatch.setenv("VOLCENGINE_TTS_VOICE_TYPE", "env_voice")
-    payload = json.dumps(
-        {
-            "speech": {
-                "provider": "volcengine",
-                "appId": "redis-app-id",
-                "accessToken": "redis-access-token",
-                "textToSpeech": {
-                    "voiceType": "redis_voice",
-                    "maxTextChars": 128,
-                },
+    payload = _build_v3_payload(
+        speech={
+            "provider": "volcengine",
+            "appId": "redis-app-id",
+            "accessToken": "redis-access-token",
+            "textToSpeech": {
+                "voiceType": "redis_voice",
+                "maxTextChars": 128,
             },
         }
-    ).encode("utf-8")
+    )
     monkeypatch.setattr(agent_config_module, "get_redis_connection", lambda: _FakeRedis(return_value=payload))
     agent_config_module.initialize_agent_config_snapshot()
 

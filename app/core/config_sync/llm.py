@@ -8,7 +8,6 @@ from langchain_openai import OpenAIEmbeddings
 
 from app.core.config_sync.snapshot import (
     AgentChatModelSlot,
-    AgentModelRuntimeConfig,
     AgentModelSlotConfig,
     get_current_agent_config_snapshot,
 )
@@ -21,7 +20,6 @@ from app.core.llms.provider import LlmProvider, resolve_provider
 class _ResolvedSlotOverrides:
     """槽位解析后的运行时覆盖项。"""
 
-    runtime_config: AgentModelRuntimeConfig | None
     think: bool
     model_kwargs: dict[str, Any]
 
@@ -131,10 +129,9 @@ def _resolve_slot_overrides(
         kwargs: 调用方传入的其余模型构造参数。
 
     Returns:
-        一个包含运行时模型配置、最终思考开关和透传模型参数的解析结果。
+        一个包含最终思考开关和透传模型参数的解析结果。
     """
 
-    runtime_config = slot_config.model if slot_config is not None else None
     resolved_temperature = (
         slot_config.temperature
         if slot_config is not None and slot_config.temperature is not None
@@ -157,7 +154,6 @@ def _resolve_slot_overrides(
         model_kwargs["max_tokens"] = resolved_max_tokens
 
     return _ResolvedSlotOverrides(
-        runtime_config=runtime_config,
         think=bool(resolved_think),
         model_kwargs=model_kwargs,
     )
@@ -178,8 +174,9 @@ def _resolve_slot_runtime_model_name(
         当前生效模型名；若 Redis 与本地兜底都不存在则返回 ``None``。
     """
 
-    runtime_config = slot_config.model if slot_config is not None else None
-    return runtime_config.model if runtime_config is not None else fallback_model
+    if slot_config is not None and slot_config.model_name is not None:
+        return slot_config.model_name
+    return fallback_model
 
 
 def create_agent_chat_llm(
@@ -208,6 +205,7 @@ def create_agent_chat_llm(
     normalized_slot = _normalize_chat_slot(slot)
     snapshot = get_current_agent_config_snapshot()
     slot_config = snapshot.get_chat_slot(normalized_slot)
+    runtime_config = snapshot.get_llm_runtime_config()
     resolved_overrides = _resolve_slot_overrides(
         slot_config,
         temperature=temperature,
@@ -215,15 +213,14 @@ def create_agent_chat_llm(
         max_tokens=max_tokens,
         kwargs=kwargs,
     )
-    runtime_config = resolved_overrides.runtime_config
 
-    resolved_model = runtime_config.model if runtime_config is not None else None
+    resolved_model = _resolve_slot_runtime_model_name(slot_config)
     if resolved_model is None and normalized_slot is AgentChatModelSlot.ROUTE:
         resolved_model = _resolve_gateway_router_fallback_model_name()
 
     return create_chat_model(
         model=resolved_model,
-        provider=runtime_config.provider if runtime_config is not None else None,
+        provider=runtime_config.provider_type if runtime_config is not None else None,
         api_key=runtime_config.api_key if runtime_config is not None else None,
         base_url=runtime_config.base_url if runtime_config is not None else None,
         extra_body=extra_body,
@@ -255,6 +252,7 @@ def create_agent_image_llm(
 
     snapshot = get_current_agent_config_snapshot()
     slot_config = snapshot.get_image_slot()
+    runtime_config = snapshot.get_llm_runtime_config()
     resolved_overrides = _resolve_slot_overrides(
         slot_config,
         temperature=temperature,
@@ -262,11 +260,10 @@ def create_agent_image_llm(
         max_tokens=max_tokens,
         kwargs=kwargs,
     )
-    runtime_config = resolved_overrides.runtime_config
 
     return create_image_model(
-        model=runtime_config.model if runtime_config is not None else None,
-        provider=runtime_config.provider if runtime_config is not None else None,
+        model=_resolve_slot_runtime_model_name(slot_config),
+        provider=runtime_config.provider_type if runtime_config is not None else None,
         api_key=runtime_config.api_key if runtime_config is not None else None,
         base_url=runtime_config.base_url if runtime_config is not None else None,
         extra_body=extra_body,
@@ -298,6 +295,7 @@ def create_agent_summary_llm(
 
     snapshot = get_current_agent_config_snapshot()
     slot_config = snapshot.get_summary_slot()
+    runtime_config = snapshot.get_llm_runtime_config()
     resolved_overrides = _resolve_slot_overrides(
         slot_config,
         temperature=temperature,
@@ -305,14 +303,13 @@ def create_agent_summary_llm(
         max_tokens=max_tokens,
         kwargs=kwargs,
     )
-    runtime_config = resolved_overrides.runtime_config
 
     return create_chat_model(
         model=_resolve_slot_runtime_model_name(
             slot_config,
             fallback_model=_resolve_summary_fallback_model_name(),
         ),
-        provider=runtime_config.provider if runtime_config is not None else None,
+        provider=runtime_config.provider_type if runtime_config is not None else None,
         api_key=runtime_config.api_key if runtime_config is not None else None,
         base_url=runtime_config.base_url if runtime_config is not None else None,
         extra_body=extra_body,
@@ -344,6 +341,7 @@ def create_agent_title_llm(
 
     snapshot = get_current_agent_config_snapshot()
     slot_config = snapshot.get_title_slot()
+    runtime_config = snapshot.get_llm_runtime_config()
     resolved_overrides = _resolve_slot_overrides(
         slot_config,
         temperature=temperature,
@@ -351,11 +349,10 @@ def create_agent_title_llm(
         max_tokens=max_tokens,
         kwargs=kwargs,
     )
-    runtime_config = resolved_overrides.runtime_config
 
     return create_chat_model(
         model=_resolve_slot_runtime_model_name(slot_config),
-        provider=runtime_config.provider if runtime_config is not None else None,
+        provider=runtime_config.provider_type if runtime_config is not None else None,
         api_key=runtime_config.api_key if runtime_config is not None else None,
         base_url=runtime_config.base_url if runtime_config is not None else None,
         extra_body=extra_body,
@@ -396,14 +393,14 @@ def resolve_agent_summary_max_tokens() -> int | None:
 def create_agent_embedding_client(
         *,
         model: str | None = None,
-        dimensions: int | None = 1024,
+        dimensions: int | None = None,
         **kwargs: Any,
 ) -> OpenAIEmbeddings:
     """按 Agent 配置创建向量模型客户端。
 
     Args:
         model: 显式传入的 embedding 模型名，优先级高于 Redis 槽位。
-        dimensions: 向量维度。
+        dimensions: 显式传入的向量维度，优先级高于 Redis 配置。
         **kwargs: 其余透传到底层 ``create_embedding_model`` 的构造参数。
 
     Returns:
@@ -411,15 +408,15 @@ def create_agent_embedding_client(
     """
 
     snapshot = get_current_agent_config_snapshot()
-    slot_config = snapshot.get_embedding_slot()
-    runtime_config = slot_config.model if slot_config is not None else None
+    runtime_config = snapshot.get_llm_runtime_config()
+    resolved_dimensions = dimensions or snapshot.get_knowledge_embedding_dim() or 1024
 
-    resolved_model = model or (runtime_config.model if runtime_config is not None else None)
+    resolved_model = model or snapshot.get_knowledge_embedding_model_name()
     return create_embedding_model(
         model=resolved_model,
-        provider=runtime_config.provider if runtime_config is not None else None,
+        provider=runtime_config.provider_type if runtime_config is not None else None,
         api_key=runtime_config.api_key if runtime_config is not None else None,
         base_url=runtime_config.base_url if runtime_config is not None else None,
-        dimensions=dimensions,
+        dimensions=resolved_dimensions,
         **kwargs,
     )

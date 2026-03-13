@@ -10,10 +10,15 @@
 import datetime
 
 from langchain_core.tools import tool
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.agent.assistant.domain.common.schema import UserInfo
 from app.core.agent.agent_tool_events import tool_call_status
 from app.core.security import get_current_user
+from app.rag import (
+    format_knowledge_search_hits,
+    query_knowledge_by_rewritten_question,
+)
 
 
 def format_ids_to_string(ids: list[str]) -> str:
@@ -29,6 +34,38 @@ def _normalize_id_list(ids: list[str], *, field_name: str) -> list[str]:
     if not normalized:
         raise ValueError(f"{field_name} 必须为非空字符串数组（List[str]），例如 [\"A1\",\"A2\"]")
     return normalized
+
+
+class KnowledgeSearchToolRequest(BaseModel):
+    """知识库检索工具的入参模型。
+
+    Attributes:
+        query: 用于检索的原始用户问题。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    query: str = Field(..., min_length=1, description="用户原始问题")
+
+    @field_validator("query")
+    @classmethod
+    def _normalize_query(cls, value: str) -> str:
+        """在字段校验通过前规范化 query。
+
+        Args:
+            value: tool 调用时传入的原始查询文本。
+
+        Returns:
+            去除首尾空白后的查询文本。
+
+        Raises:
+            ValueError: 当 query 去空白后为空时抛出。
+        """
+
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("query 不能为空")
+        return normalized
 
 
 @tool(
@@ -66,7 +103,39 @@ def get_current_time() -> dict:
     }
 
 
+@tool(
+    args_schema=KnowledgeSearchToolRequest,
+    description=(
+            "检索固定知识库中的相关文档片段。"
+            "适用于制度说明、文档知识、产品资料、FAQ、规则解释等问题。"
+            "先检索再回答，不要编造未检索到的知识内容。直接传入用户的原始问题即可，不要添加其他文字。"
+    ),
+)
+@tool_call_status(
+    tool_name="知识库检索",
+    start_message="正在检索知识库",
+    error_message="知识库检索失败",
+    timely_message="知识库检索正在持续处理中",
+)
+def search_knowledge_context(query: str) -> str:
+    """检索知识库并返回格式化后的上下文文本。
+
+    Args:
+        query: 需要先改写再检索的原始用户问题。
+
+    Returns:
+        基于改写检索命中结果拼接得到的格式化文本块。
+    """
+
+    hits = query_knowledge_by_rewritten_question(
+        question=query,
+        top_k=None,
+    )
+    return format_knowledge_search_hits(hits)
+
+
 ADMIN_TOOLS = [
+    search_knowledge_context,
     get_safe_user_info,
     get_current_time,
 ]

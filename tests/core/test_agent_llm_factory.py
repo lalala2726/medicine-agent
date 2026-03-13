@@ -12,82 +12,53 @@ from app.core.config_sync import llm as llm_factory
 def _build_snapshot() -> AgentConfigSnapshot:
     return AgentConfigSnapshot.model_validate(
         {
+            "schemaVersion": 3,
             "updatedAt": "2026-03-11T14:30:00+08:00",
             "updatedBy": "admin",
-            "knowledgeBase": {
-                "embeddingModel": {
-                    "model": {
-                        "provider": "Qwen",
-                        "model": "redis-embedding-model",
-                        "modelType": "EMBEDDING",
-                        "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-                        "apiKey": "sk-embed",
-                        "supportReasoning": False,
-                        "supportVision": False,
+            "llm": {
+                "providerType": "OpenAI",
+                "baseUrl": "https://api.openai.com/v1",
+                "apiKey": "sk-runtime",
+            },
+            "agentConfigs": {
+                "knowledgeBase": {
+                    "knowledgeNames": ["common_medicine_kb", "otc_guide_kb"],
+                    "embeddingDim": 2048,
+                    "embeddingModel": "redis-embedding-model",
+                    "rankingEnabled": False,
+                    "rankingModel": None,
+                    "topK": 10,
+                },
+                "adminAssistant": {
+                    "routeModel": {
+                        "modelName": "gpt-route-redis",
+                        "reasoningEnabled": True,
+                        "maxTokens": 4096,
+                        "temperature": 0.2,
                     },
                 },
-            },
-            "adminAssistant": {
-                "routeModel": {
-                    "reasoningEnabled": True,
-                    "maxTokens": 4096,
-                    "temperature": 0.2,
-                    "model": {
-                        "provider": "OpenAI",
-                        "model": "gpt-route-redis",
-                        "modelType": "CHAT",
-                        "baseUrl": "https://api.openai.com/v1",
-                        "apiKey": "sk-route",
-                        "supportReasoning": True,
-                        "supportVision": False,
+                "imageRecognition": {
+                    "imageRecognitionModel": {
+                        "modelName": "qwen-vl-redis",
+                        "reasoningEnabled": True,
+                        "maxTokens": 2048,
+                        "temperature": 0.3,
                     },
                 },
-            },
-            "imageRecognition": {
-                "imageRecognitionModel": {
-                    "reasoningEnabled": True,
-                    "maxTokens": 2048,
-                    "temperature": 0.3,
-                    "model": {
-                        "provider": "Qwen",
-                        "model": "qwen-vl-redis",
-                        "modelType": "CHAT",
-                        "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-                        "apiKey": "sk-image",
-                        "supportReasoning": True,
-                        "supportVision": True,
+                "chatHistorySummary": {
+                    "chatHistorySummaryModel": {
+                        "modelName": "gpt-summary-redis",
+                        "reasoningEnabled": False,
+                        "maxTokens": 4096,
+                        "temperature": 0.1,
                     },
                 },
-            },
-            "chatHistorySummary": {
-                "chatHistorySummaryModel": {
-                    "reasoningEnabled": False,
-                    "maxTokens": 4096,
-                    "temperature": 0.1,
-                    "model": {
-                        "provider": "OpenAI",
-                        "model": "gpt-summary-redis",
-                        "modelType": "CHAT",
-                        "baseUrl": "https://api.openai.com/v1",
-                        "apiKey": "sk-summary",
-                        "supportReasoning": True,
-                        "supportVision": False,
-                    },
-                },
-            },
-            "chatTitle": {
-                "chatTitleModel": {
-                    "reasoningEnabled": False,
-                    "maxTokens": 32,
-                    "temperature": 0.2,
-                    "model": {
-                        "provider": "OpenAI",
-                        "model": "gpt-title-redis",
-                        "modelType": "CHAT",
-                        "baseUrl": "https://api.openai.com/v1",
-                        "apiKey": "sk-title",
-                        "supportReasoning": True,
-                        "supportVision": False,
+                "chatTitle": {
+                    "chatTitleModel": {
+                        "modelName": "gpt-title-redis",
+                        "reasoningEnabled": False,
+                        "maxTokens": 32,
+                        "temperature": 0.2,
                     },
                 },
             },
@@ -98,7 +69,7 @@ def _build_snapshot() -> AgentConfigSnapshot:
 def test_create_agent_chat_llm_prefers_redis_slot_over_local_defaults(
         monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """测试目的：聊天包装工厂应优先使用 Redis 槽位参数；预期结果：temperature/think/max_tokens 与运行时模型参数均来自 Redis。"""
+    """测试目的：聊天包装工厂应优先使用 Redis 槽位参数；预期结果：模型名来自槽位，provider/base_url/api_key 来自顶层 llm。"""
 
     captured: dict[str, Any] = {}
     monkeypatch.setattr(llm_factory, "get_current_agent_config_snapshot", _build_snapshot)
@@ -115,7 +86,7 @@ def test_create_agent_chat_llm_prefers_redis_slot_over_local_defaults(
     assert captured["model"] == "gpt-route-redis"
     assert captured["provider"] == "openai"
     assert captured["base_url"] == "https://api.openai.com/v1"
-    assert captured["api_key"] == "sk-route"
+    assert captured["api_key"] == "sk-runtime"
     assert captured["temperature"] == 0.2
     assert captured["max_tokens"] == 4096
     assert captured["think"] is True
@@ -169,7 +140,7 @@ def test_create_agent_chat_llm_treats_zero_max_tokens_as_unlimited(
 def test_create_agent_image_llm_prefers_redis_slot_over_local_defaults(
         monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """测试目的：图片识别包装工厂应优先使用 Redis 槽位参数；预期结果：运行时模型与温度/思考配置均来自 Redis。"""
+    """测试目的：图片识别包装工厂应优先使用 Redis 槽位参数；预期结果：模型名来自槽位，provider 来自顶层 llm。"""
 
     captured: dict[str, Any] = {}
     monkeypatch.setattr(llm_factory, "get_current_agent_config_snapshot", _build_snapshot)
@@ -183,7 +154,9 @@ def test_create_agent_image_llm_prefers_redis_slot_over_local_defaults(
 
     assert result == "image-llm"
     assert captured["model"] == "qwen-vl-redis"
-    assert captured["provider"] == "aliyun"
+    assert captured["provider"] == "openai"
+    assert captured["base_url"] == "https://api.openai.com/v1"
+    assert captured["api_key"] == "sk-runtime"
     assert captured["temperature"] == 0.3
     assert captured["max_tokens"] == 2048
     assert captured["think"] is True
@@ -192,7 +165,7 @@ def test_create_agent_image_llm_prefers_redis_slot_over_local_defaults(
 def test_create_agent_summary_llm_prefers_redis_slot_over_local_defaults(
         monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """测试目的：聊天历史总结包装工厂应优先使用 Redis 槽位参数；预期结果：模型与温度/token 配置均来自 Redis。"""
+    """测试目的：聊天历史总结包装工厂应优先使用 Redis 槽位参数；预期结果：模型名来自槽位，provider/base_url/api_key 来自顶层 llm。"""
 
     captured: dict[str, Any] = {}
     monkeypatch.setattr(llm_factory, "get_current_agent_config_snapshot", _build_snapshot)
@@ -207,6 +180,8 @@ def test_create_agent_summary_llm_prefers_redis_slot_over_local_defaults(
     assert result == "summary-llm"
     assert captured["model"] == "gpt-summary-redis"
     assert captured["provider"] == "openai"
+    assert captured["base_url"] == "https://api.openai.com/v1"
+    assert captured["api_key"] == "sk-runtime"
     assert captured["temperature"] == 0.1
     assert captured["max_tokens"] == 4096
     assert captured["think"] is False
@@ -215,7 +190,7 @@ def test_create_agent_summary_llm_prefers_redis_slot_over_local_defaults(
 def test_create_agent_title_llm_prefers_redis_slot_over_local_defaults(
         monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """测试目的：聊天标题包装工厂应优先使用 Redis 槽位参数；预期结果：模型与温度/token 配置均来自 Redis。"""
+    """测试目的：聊天标题包装工厂应优先使用 Redis 槽位参数；预期结果：模型名来自槽位，provider/base_url/api_key 来自顶层 llm。"""
 
     captured: dict[str, Any] = {}
     monkeypatch.setattr(llm_factory, "get_current_agent_config_snapshot", _build_snapshot)
@@ -230,6 +205,8 @@ def test_create_agent_title_llm_prefers_redis_slot_over_local_defaults(
     assert result == "title-llm"
     assert captured["model"] == "gpt-title-redis"
     assert captured["provider"] == "openai"
+    assert captured["base_url"] == "https://api.openai.com/v1"
+    assert captured["api_key"] == "sk-runtime"
     assert captured["temperature"] == 0.2
     assert captured["max_tokens"] == 32
     assert captured["think"] is False
@@ -256,19 +233,21 @@ def test_summary_slot_zero_max_tokens_means_unlimited(
 
     snapshot = AgentConfigSnapshot.model_validate(
         {
-            "chatHistorySummary": {
-                "chatHistorySummaryModel": {
-                    "reasoningEnabled": False,
-                    "maxTokens": 0,
-                    "temperature": 0.1,
-                    "model": {
-                        "provider": "OpenAI",
-                        "model": "gpt-summary-redis",
-                        "modelType": "CHAT",
-                        "baseUrl": "https://api.openai.com/v1",
-                        "apiKey": "sk-summary",
-                        "supportReasoning": True,
-                        "supportVision": False,
+            "schemaVersion": 3,
+            "updatedAt": "2026-03-11T14:30:00+08:00",
+            "updatedBy": "admin",
+            "llm": {
+                "providerType": "openai",
+                "baseUrl": "https://api.openai.com/v1",
+                "apiKey": "sk-runtime",
+            },
+            "agentConfigs": {
+                "chatHistorySummary": {
+                    "chatHistorySummaryModel": {
+                        "modelName": "gpt-summary-redis",
+                        "reasoningEnabled": False,
+                        "maxTokens": 0,
+                        "temperature": 0.1,
                     },
                 },
             },
@@ -281,6 +260,7 @@ def test_summary_slot_zero_max_tokens_means_unlimited(
     result = llm_factory.create_agent_summary_llm(max_tokens=128)
 
     assert result == "summary-llm"
+    assert captured["model"] == "gpt-summary-redis"
     assert "max_tokens" not in captured
     assert llm_factory.resolve_agent_summary_max_tokens() is None
 
@@ -288,7 +268,7 @@ def test_summary_slot_zero_max_tokens_means_unlimited(
 def test_create_agent_embedding_client_prefers_explicit_model_name(
         monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """测试目的：向量包装工厂应优先使用显式传入模型名；预期结果：model 使用显式值，provider/base_url/api_key 仍来自 Redis。"""
+    """测试目的：向量包装工厂应优先使用显式传入模型名；预期结果：model 使用显式值，provider/base_url/api_key 仍来自顶层 llm。"""
 
     captured: dict[str, Any] = {}
     monkeypatch.setattr(llm_factory, "get_current_agent_config_snapshot", _build_snapshot)
@@ -305,10 +285,33 @@ def test_create_agent_embedding_client_prefers_explicit_model_name(
 
     assert result == "embedding-client"
     assert captured["model"] == "remote-embedding-model"
-    assert captured["provider"] == "aliyun"
-    assert captured["base_url"] == "https://dashscope.aliyuncs.com/compatible-mode/v1"
-    assert captured["api_key"] == "sk-embed"
+    assert captured["provider"] == "openai"
+    assert captured["base_url"] == "https://api.openai.com/v1"
+    assert captured["api_key"] == "sk-runtime"
     assert captured["dimensions"] == 1536
+
+
+def test_create_agent_embedding_client_uses_redis_model_and_dim_when_not_explicit(
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """测试目的：向量包装工厂在未显式传参时应读取 Redis 知识库配置；预期结果：model 与 dimensions 均来自 knowledgeBase。"""
+
+    captured: dict[str, Any] = {}
+    monkeypatch.setattr(llm_factory, "get_current_agent_config_snapshot", _build_snapshot)
+    monkeypatch.setattr(
+        llm_factory,
+        "create_embedding_model",
+        lambda **kwargs: captured.update(kwargs) or "embedding-client",
+    )
+
+    result = llm_factory.create_agent_embedding_client()
+
+    assert result == "embedding-client"
+    assert captured["model"] == "redis-embedding-model"
+    assert captured["provider"] == "openai"
+    assert captured["base_url"] == "https://api.openai.com/v1"
+    assert captured["api_key"] == "sk-runtime"
+    assert captured["dimensions"] == 2048
 
 
 def test_model_switch_returns_complex_slot_for_high_difficulty() -> None:

@@ -5,6 +5,7 @@ from typing import Any
 
 import pytest
 
+from app.core.config_sync import AgentChatModelSlot
 from app.core.config_sync import snapshot as agent_config_module
 
 
@@ -30,100 +31,64 @@ def _clear_agent_config_state() -> None:
 
 def _build_snapshot_payload(*, route_model_name: str = "gpt-4.1-mini") -> dict[str, Any]:
     return {
+        "schemaVersion": 3,
         "updatedAt": "2026-03-11T14:30:00+08:00",
         "updatedBy": "admin",
-        "knowledgeBase": {
-            "embeddingDim": 1024,
-            "embeddingModel": {
-                "reasoningEnabled": False,
-                "maxTokens": None,
-                "temperature": None,
-                "model": {
-                    "provider": "Qwen",
-                    "model": "text-embedding-v4",
-                    "modelType": "EMBEDDING",
-                    "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-                    "apiKey": "sk-embed",
-                    "supportReasoning": False,
-                    "supportVision": False,
-                },
-            },
+        "llm": {
+            "providerType": "OpenAI",
+            "baseUrl": "https://api.openai.com/v1",
+            "apiKey": "sk-runtime",
         },
-        "adminAssistant": {
-            "routeModel": {
-                "reasoningEnabled": False,
-                "maxTokens": 1024,
-                "temperature": 0.0,
-                "model": {
-                    "provider": "OpenAI",
-                    "model": route_model_name,
-                    "modelType": "CHAT",
-                    "baseUrl": "https://api.openai.com/v1",
-                    "apiKey": "sk-route",
-                    "supportReasoning": True,
-                    "supportVision": False,
+        "agentConfigs": {
+            "knowledgeBase": {
+                "knowledgeNames": [
+                    "common_medicine_kb",
+                    "common_medicine_kb",
+                    "otc_guide_kb",
+                    "   ",
+                ],
+                "embeddingDim": 1024,
+                "embeddingModel": "text-embedding-v4",
+                "rankingEnabled": True,
+                "rankingModel": "gpt-4.1-mini",
+                "topK": 8,
+            },
+            "adminAssistant": {
+                "routeModel": {
+                    "modelName": route_model_name,
+                    "reasoningEnabled": False,
+                    "maxTokens": 1024,
+                    "temperature": 0.0,
+                },
+                "chatModel": {
+                    "modelName": "gpt-4.1",
+                    "reasoningEnabled": True,
+                    "maxTokens": 4096,
+                    "temperature": 0.7,
                 },
             },
-            "chatModel": {
-                "reasoningEnabled": True,
-                "maxTokens": 4096,
-                "temperature": 0.7,
-                "model": {
-                    "provider": "OpenAI",
-                    "model": "gpt-4.1",
-                    "modelType": "CHAT",
-                    "baseUrl": "https://api.openai.com/v1",
-                    "apiKey": "sk-chat",
-                    "supportReasoning": True,
-                    "supportVision": True,
+            "imageRecognition": {
+                "imageRecognitionModel": {
+                    "modelName": "qwen-vl",
+                    "reasoningEnabled": True,
+                    "maxTokens": 2048,
+                    "temperature": 0.2,
                 },
             },
-        },
-        "imageRecognition": {
-            "imageRecognitionModel": {
-                "reasoningEnabled": True,
-                "maxTokens": 2048,
-                "temperature": 0.2,
-                "model": {
-                    "provider": "Qwen",
-                    "model": "qwen-vl",
-                    "modelType": "CHAT",
-                    "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-                    "apiKey": "sk-image",
-                    "supportReasoning": True,
-                    "supportVision": True,
+            "chatHistorySummary": {
+                "chatHistorySummaryModel": {
+                    "modelName": "gpt-summary",
+                    "reasoningEnabled": False,
+                    "maxTokens": 4096,
+                    "temperature": 0.3,
                 },
             },
-        },
-        "chatHistorySummary": {
-            "chatHistorySummaryModel": {
-                "reasoningEnabled": False,
-                "maxTokens": 4096,
-                "temperature": 0.3,
-                "model": {
-                    "provider": "OpenAI",
-                    "model": "gpt-summary",
-                    "modelType": "CHAT",
-                    "baseUrl": "https://api.openai.com/v1",
-                    "apiKey": "sk-summary",
-                    "supportReasoning": True,
-                    "supportVision": False,
-                },
-            },
-        },
-        "chatTitle": {
-            "chatTitleModel": {
-                "reasoningEnabled": False,
-                "maxTokens": 32,
-                "temperature": 0.2,
-                "model": {
-                    "provider": "OpenAI",
-                    "model": "gpt-title",
-                    "modelType": "CHAT",
-                    "baseUrl": "https://api.openai.com/v1",
-                    "apiKey": "sk-title",
-                    "supportReasoning": True,
-                    "supportVision": False,
+            "chatTitle": {
+                "chatTitleModel": {
+                    "modelName": "gpt-title",
+                    "reasoningEnabled": False,
+                    "maxTokens": 32,
+                    "temperature": 0.2,
                 },
             },
         },
@@ -143,8 +108,10 @@ def _build_snapshot_payload(*, route_model_name: str = "gpt-4.1-mini") -> dict[s
     }
 
 
-def test_initialize_agent_config_snapshot_loads_valid_redis_payload(monkeypatch: pytest.MonkeyPatch) -> None:
-    """测试目的：启动时 Redis 有合法配置时应成功加载并归一化 provider；预期结果：图片识别与聊天历史总结等新字段均可正常解析。"""
+def test_initialize_agent_config_snapshot_loads_valid_v3_payload(
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """测试目的：启动时 Redis 有合法 V3 配置时应成功加载；预期结果：顶层 llm、agentConfigs 和 speech 均可正常解析。"""
 
     payload = json.dumps(_build_snapshot_payload()).encode("utf-8")
     fake_redis = _FakeRedis(return_value=payload)
@@ -152,25 +119,34 @@ def test_initialize_agent_config_snapshot_loads_valid_redis_payload(monkeypatch:
 
     snapshot = agent_config_module.initialize_agent_config_snapshot()
 
-    assert snapshot.admin_assistant is not None
-    assert snapshot.admin_assistant.route_model is not None
-    assert snapshot.admin_assistant.route_model.model is not None
-    assert snapshot.admin_assistant.route_model.model.provider == "openai"
-    assert snapshot.image_recognition is not None
-    assert snapshot.image_recognition.image_recognition_model is not None
-    assert snapshot.chat_history_summary is not None
-    assert snapshot.chat_history_summary.chat_history_summary_model is not None
-    assert snapshot.chat_title is not None
-    assert snapshot.chat_title.chat_title_model is not None
+    assert snapshot.schema_version == 3
+    assert snapshot.updated_by == "admin"
+    assert snapshot.llm is not None
+    assert snapshot.llm.provider_type == "openai"
+    assert snapshot.llm.base_url == "https://api.openai.com/v1"
+    assert snapshot.llm.api_key == "sk-runtime"
+    assert snapshot.agent_configs is not None
+    assert snapshot.get_chat_slot(AgentChatModelSlot.ROUTE) is not None
+    assert snapshot.get_chat_slot(AgentChatModelSlot.ROUTE).model_name == "gpt-4.1-mini"
+    assert snapshot.get_chat_slot(AgentChatModelSlot.CHAT) is not None
+    assert snapshot.get_chat_slot(AgentChatModelSlot.CHAT).model_name == "gpt-4.1"
+    assert snapshot.get_image_slot() is not None
+    assert snapshot.get_image_slot().model_name == "qwen-vl"
+    assert snapshot.get_summary_slot() is not None
+    assert snapshot.get_summary_slot().model_name == "gpt-summary"
+    assert snapshot.get_title_slot() is not None
+    assert snapshot.get_title_slot().model_name == "gpt-title"
+    assert snapshot.get_knowledge_names() == ["common_medicine_kb", "otc_guide_kb"]
+    assert snapshot.get_knowledge_embedding_model_name() == "text-embedding-v4"
+    assert snapshot.get_knowledge_embedding_dim() == 1024
+    assert snapshot.is_knowledge_ranking_enabled() is True
+    assert snapshot.get_knowledge_ranking_model_name() == "gpt-4.1-mini"
+    assert snapshot.get_knowledge_top_k() == 8
     assert snapshot.get_speech_shared_auth() == ("speech-app-id", "speech-access-token")
     assert snapshot.get_speech_stt_resource_id() == "volc.seedasr.sauc.duration"
     assert snapshot.get_speech_tts_resource_id() == "seed-tts-2.0"
     assert snapshot.get_speech_tts_voice_type() == "zh_female_xiaohe_uranus_bigtts"
     assert snapshot.get_speech_tts_max_text_chars() == 300
-    assert snapshot.knowledge_base is not None
-    assert snapshot.knowledge_base.embedding_model is not None
-    assert snapshot.knowledge_base.embedding_model.model is not None
-    assert snapshot.knowledge_base.embedding_model.model.provider == "aliyun"
     assert fake_redis.get_calls == [agent_config_module.AGENT_CONFIG_REDIS_KEY]
 
 
@@ -183,28 +159,48 @@ def test_initialize_agent_config_snapshot_falls_back_to_local_when_redis_missing
 
     snapshot = agent_config_module.initialize_agent_config_snapshot()
 
+    assert snapshot.schema_version == 3
     assert snapshot.updated_by == "local_env_fallback"
+    assert snapshot.get_llm_runtime_config() is None
+    assert snapshot.agent_configs is not None
 
 
-def test_initialize_agent_config_snapshot_accepts_payload_without_removed_config_version(
+def test_initialize_agent_config_snapshot_rejects_payload_without_schema_version(
         monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """测试目的：迁移后 Redis 配置不再携带 configVersion；预期结果：仍可成功加载快照。"""
+    """测试目的：Redis 配置缺失 schemaVersion 时应视为非法；预期结果：初始化回退本地快照。"""
 
     payload_dict = _build_snapshot_payload()
+    payload_dict.pop("schemaVersion")
     payload = json.dumps(payload_dict).encode("utf-8")
     monkeypatch.setattr(agent_config_module, "get_redis_connection", lambda: _FakeRedis(return_value=payload))
 
     snapshot = agent_config_module.initialize_agent_config_snapshot()
 
-    assert snapshot.admin_assistant is not None
-    assert not hasattr(snapshot, "config_version")
+    assert snapshot.updated_by == "local_env_fallback"
+    assert snapshot.get_chat_slot(AgentChatModelSlot.ROUTE) is None
 
 
-def test_initialize_agent_config_snapshot_unwraps_wrapped_data_root(
+def test_initialize_agent_config_snapshot_rejects_schema_version_not_equal_three(
         monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """测试目的：当前 Redis 可能存在 `data` 包装层；预期结果：应自动解包并正确读取语音与其他业务字段。"""
+    """测试目的：Redis 配置 schemaVersion 不为 3 时应拒绝；预期结果：初始化回退本地快照。"""
+
+    payload_dict = _build_snapshot_payload()
+    payload_dict["schemaVersion"] = 2
+    payload = json.dumps(payload_dict).encode("utf-8")
+    monkeypatch.setattr(agent_config_module, "get_redis_connection", lambda: _FakeRedis(return_value=payload))
+
+    snapshot = agent_config_module.initialize_agent_config_snapshot()
+
+    assert snapshot.updated_by == "local_env_fallback"
+    assert snapshot.get_llm_runtime_config() is None
+
+
+def test_initialize_agent_config_snapshot_accepts_wrapped_data_root(
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """测试目的：Redis 可能带有 Java 序列化包装层；预期结果：应读取 `data` 内层 V3 配置。"""
 
     payload_dict = {
         "@class": "java.util.LinkedHashMap",
@@ -215,34 +211,113 @@ def test_initialize_agent_config_snapshot_unwraps_wrapped_data_root(
 
     snapshot = agent_config_module.initialize_agent_config_snapshot()
 
-    assert snapshot.admin_assistant is not None
+    assert snapshot.updated_by == "admin"
+    assert snapshot.llm is not None
+    assert snapshot.llm.provider_type == "openai"
     assert snapshot.get_speech_shared_auth() == ("speech-app-id", "speech-access-token")
-    assert snapshot.get_speech_stt_resource_id() == "volc.seedasr.sauc.duration"
-    assert snapshot.get_speech_tts_resource_id() == "seed-tts-2.0"
-    assert snapshot.get_speech_tts_voice_type() == "zh_female_xiaohe_uranus_bigtts"
-    assert snapshot.get_speech_tts_max_text_chars() == 300
 
 
-def test_initialize_agent_config_snapshot_accepts_chinese_provider_aliases(
+def test_initialize_agent_config_snapshot_rejects_old_v1_slot_runtime_fields(
         monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """测试目的：管理端可能写入中文 provider 名称；预期结果：应正确归一化为内部 provider。"""
+    """测试目的：V3 不兼容槽位内旧运行时字段；预期结果：初始化回退本地快照。"""
 
     payload_dict = _build_snapshot_payload()
-    payload_dict["adminAssistant"]["chatModel"]["model"]["provider"] = "阿里云百联"
-    payload_dict["adminAssistant"]["routeModel"]["model"]["provider"] = "火山引擎"
+    payload_dict["agentConfigs"]["adminAssistant"]["chatModel"]["model"] = {
+        "provider": "openai",
+        "model": "legacy-model",
+    }
     payload = json.dumps(payload_dict).encode("utf-8")
     monkeypatch.setattr(agent_config_module, "get_redis_connection", lambda: _FakeRedis(return_value=payload))
 
     snapshot = agent_config_module.initialize_agent_config_snapshot()
 
-    assert snapshot.admin_assistant is not None
-    assert snapshot.admin_assistant.chat_model is not None
-    assert snapshot.admin_assistant.chat_model.model is not None
-    assert snapshot.admin_assistant.chat_model.model.provider == "aliyun"
-    assert snapshot.admin_assistant.route_model is not None
-    assert snapshot.admin_assistant.route_model.model is not None
-    assert snapshot.admin_assistant.route_model.model.provider == "volcengine"
+    assert snapshot.updated_by == "local_env_fallback"
+    assert snapshot.get_chat_slot(AgentChatModelSlot.CHAT) is None
+
+
+def test_initialize_agent_config_snapshot_rejects_non_string_embedding_model(
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """测试目的：知识库 embeddingModel 已改为纯字符串；预期结果：旧对象结构会触发本地回退。"""
+
+    payload_dict = _build_snapshot_payload()
+    payload_dict["agentConfigs"]["knowledgeBase"]["embeddingModel"] = {
+        "modelName": "legacy-embedding",
+    }
+    payload = json.dumps(payload_dict).encode("utf-8")
+    monkeypatch.setattr(agent_config_module, "get_redis_connection", lambda: _FakeRedis(return_value=payload))
+
+    snapshot = agent_config_module.initialize_agent_config_snapshot()
+
+    assert snapshot.updated_by == "local_env_fallback"
+    assert snapshot.get_knowledge_embedding_model_name() is None
+
+
+def test_initialize_agent_config_snapshot_rejects_ranking_model_when_disabled(
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """测试目的：rankingEnabled=false 时 rankingModel 必须为 null；预期结果：非法组合会触发本地回退。"""
+
+    payload_dict = _build_snapshot_payload()
+    payload_dict["agentConfigs"]["knowledgeBase"]["rankingEnabled"] = False
+    payload_dict["agentConfigs"]["knowledgeBase"]["rankingModel"] = "gpt-4.1-mini"
+    payload = json.dumps(payload_dict).encode("utf-8")
+    monkeypatch.setattr(agent_config_module, "get_redis_connection", lambda: _FakeRedis(return_value=payload))
+
+    snapshot = agent_config_module.initialize_agent_config_snapshot()
+
+    assert snapshot.updated_by == "local_env_fallback"
+    assert snapshot.is_knowledge_ranking_enabled() is False
+
+
+def test_initialize_agent_config_snapshot_rejects_missing_ranking_model_when_enabled(
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """测试目的：rankingEnabled=true 时 rankingModel 必填；预期结果：非法组合会触发本地回退。"""
+
+    payload_dict = _build_snapshot_payload()
+    payload_dict["agentConfigs"]["knowledgeBase"]["rankingEnabled"] = True
+    payload_dict["agentConfigs"]["knowledgeBase"]["rankingModel"] = None
+    payload = json.dumps(payload_dict).encode("utf-8")
+    monkeypatch.setattr(agent_config_module, "get_redis_connection", lambda: _FakeRedis(return_value=payload))
+
+    snapshot = agent_config_module.initialize_agent_config_snapshot()
+
+    assert snapshot.updated_by == "local_env_fallback"
+    assert snapshot.get_knowledge_ranking_model_name() is None
+
+
+def test_initialize_agent_config_snapshot_accepts_top_k_zero_as_unconfigured(
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """测试目的：topK 为 0 时应视为未配置；预期结果：getter 返回 None。"""
+
+    payload_dict = _build_snapshot_payload()
+    payload_dict["agentConfigs"]["knowledgeBase"]["topK"] = 0
+    payload = json.dumps(payload_dict).encode("utf-8")
+    monkeypatch.setattr(agent_config_module, "get_redis_connection", lambda: _FakeRedis(return_value=payload))
+
+    snapshot = agent_config_module.initialize_agent_config_snapshot()
+
+    assert snapshot.updated_by == "admin"
+    assert snapshot.get_knowledge_top_k() is None
+
+
+def test_initialize_agent_config_snapshot_rejects_unsupported_provider_type(
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """测试目的：providerType 仅允许文档规定值；预期结果：非法 providerType 会触发本地回退。"""
+
+    payload_dict = _build_snapshot_payload()
+    payload_dict["llm"]["providerType"] = "Open AI"
+    payload = json.dumps(payload_dict).encode("utf-8")
+    monkeypatch.setattr(agent_config_module, "get_redis_connection", lambda: _FakeRedis(return_value=payload))
+
+    snapshot = agent_config_module.initialize_agent_config_snapshot()
+
+    assert snapshot.updated_by == "local_env_fallback"
+    assert snapshot.get_llm_runtime_config() is None
 
 
 def test_refresh_agent_config_snapshot_keeps_previous_redis_snapshot_on_failure(
@@ -266,16 +341,14 @@ def test_refresh_agent_config_snapshot_keeps_previous_redis_snapshot_on_failure(
 
     current_snapshot = agent_config_module.get_current_agent_config_snapshot()
     assert refreshed is False
-    assert current_snapshot.admin_assistant is not None
-    assert current_snapshot.admin_assistant.route_model is not None
-    assert current_snapshot.admin_assistant.route_model.model is not None
-    assert current_snapshot.admin_assistant.route_model.model.model == "gpt-old"
+    assert current_snapshot.get_chat_slot(AgentChatModelSlot.ROUTE) is not None
+    assert current_snapshot.get_chat_slot(AgentChatModelSlot.ROUTE).model_name == "gpt-old"
 
 
 def test_refresh_agent_config_snapshot_always_reload_when_notification_arrives(
         monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """测试目的：收到通知后不再进行版本门控；预期结果：即使版本未变化也会重新读取 Redis。"""
+    """测试目的：收到通知后不再进行版本门控；预期结果：即使内容相同也会重新读取 Redis。"""
 
     initial_payload = json.dumps(_build_snapshot_payload(route_model_name="gpt-route-same")).encode("utf-8")
     initial_redis = _FakeRedis(return_value=initial_payload)
@@ -312,10 +385,8 @@ def test_refresh_agent_config_snapshot_applies_redis_payload(
 
     current_snapshot = agent_config_module.get_current_agent_config_snapshot()
     assert refreshed is True
-    assert current_snapshot.admin_assistant is not None
-    assert current_snapshot.admin_assistant.route_model is not None
-    assert current_snapshot.admin_assistant.route_model.model is not None
-    assert current_snapshot.admin_assistant.route_model.model.model == "gpt-new"
+    assert current_snapshot.get_chat_slot(AgentChatModelSlot.ROUTE) is not None
+    assert current_snapshot.get_chat_slot(AgentChatModelSlot.ROUTE).model_name == "gpt-new"
 
 
 def test_initialize_agent_config_snapshot_accepts_partial_speech_auth_without_failing(
