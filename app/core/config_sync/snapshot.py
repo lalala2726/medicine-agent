@@ -1,15 +1,22 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
 from datetime import datetime, timezone
 from enum import Enum
+from pathlib import Path
 from typing import Any
 
+from dotenv import dotenv_values
 from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from app.core.database import get_redis_connection
+from app.core.llms.provider import LlmProvider, normalize_provider
+from app.core.llms.providers.aliyun import DEFAULT_DASHSCOPE_BASE_URL
+from app.core.llms.providers.openai import DEFAULT_OPENAI_BASE_URL
+from app.core.llms.providers.volcengine import DEFAULT_VOLCENGINE_BASE_URL
 
 #: Redis 中保存 Agent 全量运行时配置的固定 key。
 AGENT_CONFIG_REDIS_KEY = "agent:config:all"
@@ -68,6 +75,20 @@ _LOAD_REASON_LABELS: dict[AgentConfigLoadReason, str] = {
 
 #: V3 结构允许的 LLM providerType 列表。
 _SUPPORTED_PROVIDER_TYPES = {"openai", "aliyun", "volcengine"}
+#: 本地 `.env` 中知识库名称列表的回退配置键。
+_ENV_AGENT_KNOWLEDGE_NAMES = "AGENT_KNOWLEDGE_NAMES"
+#: 本地 `.env` 中知识库向量维度的回退配置键。
+_ENV_AGENT_KNOWLEDGE_EMBEDDING_DIM = "AGENT_KNOWLEDGE_EMBEDDING_DIM"
+#: 本地 `.env` 中知识库向量模型的回退配置键。
+_ENV_AGENT_KNOWLEDGE_EMBEDDING_MODEL = "AGENT_KNOWLEDGE_EMBEDDING_MODEL"
+#: 本地 `.env` 中知识库默认返回条数的回退配置键。
+_ENV_AGENT_KNOWLEDGE_TOP_K = "AGENT_KNOWLEDGE_TOP_K"
+#: 本地 `.env` 中知识库排序开关的回退配置键。
+_ENV_AGENT_KNOWLEDGE_RANKING_ENABLED = "AGENT_KNOWLEDGE_RANKING_ENABLED"
+#: 本地 `.env` 中知识库排序模型的回退配置键。
+_ENV_AGENT_KNOWLEDGE_RANKING_MODEL = "AGENT_KNOWLEDGE_RANKING_MODEL"
+#: 项目根目录下的 `.env` 文件路径。
+_LOCAL_FALLBACK_DOTENV_FILE = Path(__file__).resolve().parents[3] / ".env"
 
 
 def _strip_optional_str(value: Any) -> str | None:
@@ -139,6 +160,157 @@ def _normalize_string_list(value: Any) -> list[str] | None:
         seen.add(normalized)
         normalized_values.append(normalized)
     return normalized_values or None
+
+
+def _normalize_optional_bool(value: Any) -> bool | None:
+    """将可选布尔值规整为 ``bool``。
+
+    Args:
+        value: 原始输入值，允许为 ``None``、布尔值或布尔语义字符串。
+
+    Returns:
+        解析成功时返回 ``True`` 或 ``False``；未配置或无法识别时返回 ``None``。
+    """
+
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    normalized = str(value).strip().lower()
+    if not normalized:
+        return None
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    return None
+
+
+def _read_local_fallback_env_value(name: str) -> str | None:
+    """读取本地兜底配置值且不污染进程环境。
+
+    Args:
+        name: 目标环境变量名。
+
+    Returns:
+        显式环境变量或 `.env` 中的非空字符串；均不存在时返回 ``None``。
+    """
+
+    env_value = (os.getenv(name) or "").strip()
+    if env_value:
+        return env_value
+
+    try:
+        dotenv_value = dotenv_values(_LOCAL_FALLBACK_DOTENV_FILE).get(name)
+    except Exception:
+        return None
+    normalized = str(dotenv_value or "").strip()
+    return normalized or None
+
+
+def _resolve_local_fallback_provider() -> LlmProvider:
+    """解析本地 `.env` 回退场景使用的 provider。"""
+
+    configured_provider = _read_local_fallback_env_value("LLM_PROVIDER")
+    if configured_provider:
+        return normalize_provider(configured_provider)
+    return LlmProvider.OPENAI
+
+
+def _resolve_local_fallback_runtime_values(provider: LlmProvider) -> tuple[str | None, str | None]:
+    """读取本地 `.env` 中当前 provider 对应的运行时连接信息。"""
+
+    if provider is LlmProvider.OPENAI:
+        return (
+            _read_local_fallback_env_value("OPENAI_API_KEY"),
+            _read_local_fallback_env_value("OPENAI_BASE_URL") or DEFAULT_OPENAI_BASE_URL,
+        )
+    if provider is LlmProvider.ALIYUN:
+        return (
+            _read_local_fallback_env_value("DASHSCOPE_API_KEY"),
+            _read_local_fallback_env_value("DASHSCOPE_BASE_URL") or DEFAULT_DASHSCOPE_BASE_URL,
+        )
+    return (
+        _read_local_fallback_env_value("VOLCENGINE_LLM_API_KEY"),
+        _read_local_fallback_env_value("VOLCENGINE_LLM_BASE_URL") or DEFAULT_VOLCENGINE_BASE_URL,
+    )
+
+
+def _resolve_local_fallback_chat_model_name(provider: LlmProvider) -> str | None:
+    """读取本地 `.env` 中当前 provider 对应的聊天模型名称。"""
+
+    if provider is LlmProvider.OPENAI:
+        return _read_local_fallback_env_value("OPENAI_CHAT_MODEL")
+    if provider is LlmProvider.ALIYUN:
+        return _read_local_fallback_env_value("DASHSCOPE_CHAT_MODEL")
+    return _read_local_fallback_env_value("VOLCENGINE_LLM_CHAT_MODEL")
+
+
+def _resolve_local_fallback_embedding_model_name(provider: LlmProvider) -> str | None:
+    """读取本地 `.env` 中当前 provider 对应的 embedding 模型名称。"""
+
+    explicit_model = _read_local_fallback_env_value(_ENV_AGENT_KNOWLEDGE_EMBEDDING_MODEL)
+    if explicit_model:
+        return explicit_model
+    if provider is LlmProvider.OPENAI:
+        return _read_local_fallback_env_value("OPENAI_EMBEDDING_MODEL")
+    if provider is LlmProvider.ALIYUN:
+        return _read_local_fallback_env_value("DASHSCOPE_EMBEDDING_MODEL")
+    return _read_local_fallback_env_value("VOLCENGINE_LLM_EMBEDDING_MODEL")
+
+
+def _resolve_local_fallback_llm_runtime_config() -> AgentModelRuntimeConfig | None:
+    """构造本地 `.env` 回退场景的顶层 `llm` 配置。"""
+
+    provider = _resolve_local_fallback_provider()
+    api_key, base_url = _resolve_local_fallback_runtime_values(provider)
+    if not api_key or not base_url:
+        return None
+    return AgentModelRuntimeConfig(
+        providerType=provider.value,
+        baseUrl=base_url,
+        apiKey=api_key,
+    )
+
+
+def _resolve_local_fallback_knowledge_base_config() -> KnowledgeBaseAgentConfig | None:
+    """构造本地 `.env` 回退场景的 `knowledgeBase` 配置。"""
+
+    provider = _resolve_local_fallback_provider()
+    raw_knowledge_names = _read_local_fallback_env_value(_ENV_AGENT_KNOWLEDGE_NAMES)
+    knowledge_names = _normalize_string_list(
+        raw_knowledge_names.split(",") if raw_knowledge_names else None
+    )
+    if not knowledge_names:
+        return None
+
+    ranking_enabled = _normalize_optional_bool(
+        _read_local_fallback_env_value(_ENV_AGENT_KNOWLEDGE_RANKING_ENABLED)
+    )
+    ranking_model = _read_local_fallback_env_value(_ENV_AGENT_KNOWLEDGE_RANKING_MODEL)
+    if ranking_enabled:
+        ranking_model = ranking_model or _resolve_local_fallback_chat_model_name(provider)
+
+    try:
+        return KnowledgeBaseAgentConfig(
+            knowledgeNames=knowledge_names,
+            embeddingDim=(
+                    _normalize_optional_positive_int(
+                        _read_local_fallback_env_value(_ENV_AGENT_KNOWLEDGE_EMBEDDING_DIM)
+                    )
+                    or 1024
+            ),
+            embeddingModel=_resolve_local_fallback_embedding_model_name(provider),
+            rankingEnabled=bool(ranking_enabled),
+            rankingModel=ranking_model,
+            topK=_normalize_optional_positive_int(_read_local_fallback_env_value(_ENV_AGENT_KNOWLEDGE_TOP_K)),
+        )
+    except ValidationError as exc:
+        logger.warning(
+            "本地 .env 知识库兜底配置无效，已忽略：error_count={}",
+            len(exc.errors()),
+        )
+        return None
 
 
 class AgentModelRuntimeConfig(BaseModel):
@@ -665,18 +837,41 @@ _current_source = AgentConfigSource.LOCAL_FALLBACK
 
 
 def _build_local_fallback_snapshot() -> AgentConfigSnapshot:
-    """构造本地 `.env` 兜底场景使用的空快照。
+    """构造本地 `.env` 兜底场景使用的快照。
 
     Returns:
-        一个不包含 Redis 运行时配置的本地兜底快照。
+        基于本地环境变量组装的 Agent 配置快照；无可用配置时返回空兜底快照。
     """
 
-    return AgentConfigSnapshot(
-        schemaVersion=AGENT_CONFIG_SCHEMA_VERSION,
-        updatedAt=datetime.now(timezone.utc),
-        updatedBy="local_env_fallback",
-        agentConfigs={},
-    )
+    payload: dict[str, Any] = {
+        "schemaVersion": AGENT_CONFIG_SCHEMA_VERSION,
+        "updatedAt": datetime.now(timezone.utc),
+        "updatedBy": "local_env_fallback",
+        "agentConfigs": {},
+    }
+    llm_runtime_config = _resolve_local_fallback_llm_runtime_config()
+    if llm_runtime_config is not None:
+        payload["llm"] = llm_runtime_config.model_dump(by_alias=True, exclude_none=True)
+    knowledge_base_config = _resolve_local_fallback_knowledge_base_config()
+    if knowledge_base_config is not None:
+        payload["agentConfigs"]["knowledgeBase"] = knowledge_base_config.model_dump(
+            by_alias=True,
+            exclude_none=True,
+        )
+
+    try:
+        return AgentConfigSnapshot.model_validate(payload)
+    except ValidationError as exc:
+        logger.warning(
+            "本地 .env Agent 配置兜底快照无效，已回退为空快照：error_count={}",
+            len(exc.errors()),
+        )
+        return AgentConfigSnapshot(
+            schemaVersion=AGENT_CONFIG_SCHEMA_VERSION,
+            updatedAt=datetime.now(timezone.utc),
+            updatedBy="local_env_fallback",
+            agentConfigs={},
+        )
 
 
 def _get_load_reason_label(reason: AgentConfigLoadReason) -> str:

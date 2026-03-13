@@ -72,6 +72,14 @@
 - Embedding provider configuration:
   `OPENAI_EMBEDDING_MODEL` / `DASHSCOPE_EMBEDDING_MODEL` / `VOLCENGINE_LLM_EMBEDDING_MODEL`
   （根据 provider 选择，向量模型名称必填；可由函数参数或环境变量提供）。
+- Agent Config Cache V3 / 知识库查询本地兜底配置（optional，仅在 Redis `agent:config:all` 缺失或非法时生效）：
+  `AGENT_KNOWLEDGE_NAMES`（逗号分隔的 knowledgeNames 列表），
+  `AGENT_KNOWLEDGE_EMBEDDING_DIM`（知识库统一向量维度，未配置时本地兜底默认 `1024`），
+  `AGENT_KNOWLEDGE_EMBEDDING_MODEL`（知识库统一向量模型名，未配置时回退当前 provider 的 embedding 环境变量），
+  `AGENT_KNOWLEDGE_TOP_K`（知识库默认最终返回条数，支持 `1..100`，空或 `0` 时回退代码默认 `10`），
+  `AGENT_KNOWLEDGE_RANKING_ENABLED`（是否启用普通聊天模型排序，支持 `true|false`），
+  `AGENT_KNOWLEDGE_RANKING_MODEL`（排序模型名；当 `AGENT_KNOWLEDGE_RANKING_ENABLED=true` 且未显式设置时，
+  回退当前 provider 的 chat 模型环境变量）。
 - Milvus configuration (optional): `MILVUS_URI`, `MILVUS_USER`, `MILVUS_PASSWORD`, `MILVUS_TOKEN`, `MILVUS_DB_NAME`,
   `MILVUS_TIMEOUT`.
 - MongoDB configuration (optional): `MONGODB_URI` (defaults to `mongodb://localhost:27017`),

@@ -23,7 +23,28 @@ class _FakeRedis:
 
 
 @pytest.fixture(autouse=True)
-def _clear_agent_config_state() -> None:
+def _clear_agent_config_state(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in [
+        "OPENAI_API_KEY",
+        "OPENAI_BASE_URL",
+        "OPENAI_CHAT_MODEL",
+        "OPENAI_EMBEDDING_MODEL",
+        "DASHSCOPE_API_KEY",
+        "DASHSCOPE_BASE_URL",
+        "DASHSCOPE_CHAT_MODEL",
+        "DASHSCOPE_EMBEDDING_MODEL",
+        "VOLCENGINE_LLM_API_KEY",
+        "VOLCENGINE_LLM_BASE_URL",
+        "VOLCENGINE_LLM_CHAT_MODEL",
+        "VOLCENGINE_LLM_EMBEDDING_MODEL",
+        "AGENT_KNOWLEDGE_NAMES",
+        "AGENT_KNOWLEDGE_EMBEDDING_DIM",
+        "AGENT_KNOWLEDGE_EMBEDDING_MODEL",
+        "AGENT_KNOWLEDGE_TOP_K",
+        "AGENT_KNOWLEDGE_RANKING_ENABLED",
+        "AGENT_KNOWLEDGE_RANKING_MODEL",
+    ]:
+        monkeypatch.setenv(name, "")
     agent_config_module.clear_agent_config_snapshot_state()
     yield
     agent_config_module.clear_agent_config_snapshot_state()
@@ -163,6 +184,38 @@ def test_initialize_agent_config_snapshot_falls_back_to_local_when_redis_missing
     assert snapshot.updated_by == "local_env_fallback"
     assert snapshot.get_llm_runtime_config() is None
     assert snapshot.agent_configs is not None
+
+
+def test_initialize_agent_config_snapshot_uses_env_fallback_when_redis_missing(
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """测试目的：Redis 缺失时应支持从本地环境变量组装知识库查询配置；预期结果：顶层 llm 与 knowledgeBase getter 都能读取到 env 兜底值。"""
+
+    monkeypatch.setenv("LLM_PROVIDER", "aliyun")
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "sk-local")
+    monkeypatch.setenv("DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+    monkeypatch.setenv("DASHSCOPE_CHAT_MODEL", "qwen-flash")
+    monkeypatch.setenv("DASHSCOPE_EMBEDDING_MODEL", "text-embedding-v4")
+    monkeypatch.setenv("AGENT_KNOWLEDGE_NAMES", "common_medicine_kb, otc_guide_kb")
+    monkeypatch.setenv("AGENT_KNOWLEDGE_EMBEDDING_DIM", "1024")
+    monkeypatch.setenv("AGENT_KNOWLEDGE_TOP_K", "6")
+    monkeypatch.setenv("AGENT_KNOWLEDGE_RANKING_ENABLED", "true")
+    monkeypatch.setenv("AGENT_KNOWLEDGE_RANKING_MODEL", "qwen-flash")
+    monkeypatch.setattr(agent_config_module, "get_redis_connection", lambda: _FakeRedis(return_value=None))
+
+    snapshot = agent_config_module.initialize_agent_config_snapshot()
+
+    assert snapshot.updated_by == "local_env_fallback"
+    assert snapshot.get_llm_runtime_config() is not None
+    assert snapshot.get_llm_runtime_config().provider_type == "aliyun"
+    assert snapshot.get_llm_runtime_config().base_url == "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    assert snapshot.get_llm_runtime_config().api_key == "sk-local"
+    assert snapshot.get_knowledge_names() == ["common_medicine_kb", "otc_guide_kb"]
+    assert snapshot.get_knowledge_embedding_model_name() == "text-embedding-v4"
+    assert snapshot.get_knowledge_embedding_dim() == 1024
+    assert snapshot.get_knowledge_top_k() == 6
+    assert snapshot.is_knowledge_ranking_enabled() is True
+    assert snapshot.get_knowledge_ranking_model_name() == "qwen-flash"
 
 
 def test_initialize_agent_config_snapshot_rejects_payload_without_schema_version(

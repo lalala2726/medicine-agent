@@ -159,7 +159,7 @@ def test_resolve_runtime_config_rejects_more_than_10_knowledge_names(
         monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        service_module,
+        service_module.runtime_module,
         "get_current_agent_config_snapshot",
         lambda: _build_snapshot(
             knowledge_names=[f"kb_{index}" for index in range(11)],
@@ -169,7 +169,7 @@ def test_resolve_runtime_config_rejects_more_than_10_knowledge_names(
     )
 
     with pytest.raises(ServiceException) as exc_info:
-        service_module._resolve_runtime_config()
+        service_module.runtime_module.resolve_runtime_config()
 
     assert exc_info.value.code == ResponseCode.SERVICE_UNAVAILABLE.code
     assert "不能超过 10 个" in exc_info.value.message
@@ -206,7 +206,7 @@ def test_query_knowledge_by_raw_question_aggregates_multi_collections(
             ],
         },
     )
-    monkeypatch.setattr(service_module, "_resolve_runtime_config", lambda: runtime_config)
+    monkeypatch.setattr(service_module.runtime_module, "resolve_runtime_config", lambda: runtime_config)
     monkeypatch.setattr(service_module, "_build_rag_milvus_client", lambda **_: fake_client)
     monkeypatch.setattr(
         service_module,
@@ -253,7 +253,7 @@ def test_query_knowledge_by_raw_question_skips_missing_collection(
             ],
         },
     )
-    monkeypatch.setattr(service_module, "_resolve_runtime_config", lambda: runtime_config)
+    monkeypatch.setattr(service_module.runtime_module, "resolve_runtime_config", lambda: runtime_config)
     monkeypatch.setattr(service_module, "_build_rag_milvus_client", lambda **_: fake_client)
     monkeypatch.setattr(
         service_module,
@@ -275,7 +275,7 @@ def test_query_knowledge_by_raw_question_raises_when_all_collections_missing(
         existing_collections=set(),
         results_by_collection={},
     )
-    monkeypatch.setattr(service_module, "_resolve_runtime_config", lambda: runtime_config)
+    monkeypatch.setattr(service_module.runtime_module, "resolve_runtime_config", lambda: runtime_config)
     monkeypatch.setattr(service_module, "_build_rag_milvus_client", lambda **_: fake_client)
     monkeypatch.setattr(
         service_module,
@@ -295,8 +295,8 @@ def test_query_knowledge_by_raw_question_prefers_explicit_top_k_over_redis(
 ) -> None:
     captured: dict[str, Any] = {}
     monkeypatch.setattr(
-        service_module,
-        "_resolve_runtime_config",
+        service_module.runtime_module,
+        "resolve_runtime_config",
         lambda: _build_runtime_config(configured_top_k=8),
     )
     monkeypatch.setattr(
@@ -320,13 +320,13 @@ def test_query_knowledge_by_raw_question_uses_redis_top_k_when_explicit_missing(
 ) -> None:
     captured: dict[str, Any] = {}
     monkeypatch.setattr(
-        service_module,
+        service_module.runtime_module,
         "get_current_agent_config_snapshot",
         lambda: _build_snapshot(top_k=6),
     )
     monkeypatch.setattr(
-        service_module,
-        "_resolve_runtime_config",
+        service_module.runtime_module,
+        "resolve_runtime_config",
         lambda: _build_runtime_config(configured_top_k=6),
     )
     monkeypatch.setattr(
@@ -349,8 +349,8 @@ def test_query_knowledge_by_raw_question_falls_back_to_default_top_k(
 ) -> None:
     captured: dict[str, Any] = {}
     monkeypatch.setattr(
-        service_module,
-        "_resolve_runtime_config",
+        service_module.runtime_module,
+        "resolve_runtime_config",
         lambda: _build_runtime_config(configured_top_k=None),
     )
     monkeypatch.setattr(
@@ -508,7 +508,7 @@ def test_query_knowledge_by_raw_question_falls_back_to_vector_when_ranking_fails
         KnowledgeSearchHit(knowledge_name="kb_a", content="A", score=0.91),
         KnowledgeSearchHit(knowledge_name="kb_b", content="B", score=0.90),
     ]
-    monkeypatch.setattr(service_module, "_resolve_runtime_config", lambda: runtime_config)
+    monkeypatch.setattr(service_module.runtime_module, "resolve_runtime_config", lambda: runtime_config)
     monkeypatch.setattr(
         service_module,
         "_search_knowledge_hits",
@@ -543,7 +543,7 @@ def test_query_knowledge_by_rewritten_question_uses_original_question_for_rankin
         KnowledgeSearchHit(knowledge_name="kb_b", content="B", score=0.8),
     ]
     monkeypatch.setattr(service_module, "_rewrite_question_for_knowledge_search", lambda question: "改写后的问题")
-    monkeypatch.setattr(service_module, "_resolve_runtime_config", lambda: runtime_config)
+    monkeypatch.setattr(service_module.runtime_module, "resolve_runtime_config", lambda: runtime_config)
     monkeypatch.setattr(
         service_module,
         "_search_knowledge_hits",
