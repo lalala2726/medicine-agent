@@ -9,8 +9,6 @@ from pathlib import Path
 from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException
 
-# Deprecated: URL 下载不再读取该环境变量，统一使用系统临时目录。
-FILE_DOWNLOAD_ROOT_DIR_ENV = "FILE_DOWNLOAD_ROOT_DIR"
 DEFAULT_SAFE_FILENAME = "downloaded_file"
 _INVALID_FILENAME_PATTERN = re.compile(r'[<>:"|?*\x00-\x1f]')
 
@@ -140,7 +138,6 @@ def build_download_target_path(
 
 
 __all__ = [
-    "FILE_DOWNLOAD_ROOT_DIR_ENV",
     "build_download_target_path",
     "resolve_download_root_dir",
     "safe_filename",

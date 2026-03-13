@@ -2,18 +2,15 @@ from __future__ import annotations
 
 from datetime import datetime
 
-import pytest
-
 import app.utils.download_storage as download_storage
 
 
 def test_resolve_download_root_dir_uses_system_temp_dir(monkeypatch, tmp_path):
     """
-    测试目的：验证下载根目录统一解析为系统临时目录，无需环境变量。
+    测试目的：验证下载根目录统一解析为系统临时目录。
     预期结果：resolve_download_root_dir 返回 monkeypatch 后的临时目录。
     """
     monkeypatch.setattr(download_storage.tempfile, "gettempdir", lambda: str(tmp_path))
-    monkeypatch.delenv(download_storage.FILE_DOWNLOAD_ROOT_DIR_ENV, raising=False)
     assert download_storage.resolve_download_root_dir() == tmp_path
 
 
