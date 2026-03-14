@@ -9,6 +9,12 @@ from typing import Any
 from fastapi import WebSocket
 from loguru import logger
 
+from app.core.speech.runtime import (
+    SPEECH_CONFIG_REFRESH_CLOSE_CODE,
+    SPEECH_CONFIG_REFRESH_CLOSE_REASON,
+    register_active_stt_session,
+    unregister_active_stt_session,
+)
 from app.core.speech.stt.client import SttStartRequest, VolcengineSttClient
 from app.core.speech.stt.config import VolcengineSttConfig
 from app.core.speech.volcengine_speech_protocol import MsgType, SttServerMessage
@@ -77,6 +83,8 @@ class AdminAssistantSttSession:
         self._upstream_ended = asyncio.Event()
         self._upstream_error: str | None = None
         self._close_sent = False
+        self._config_refresh_requested = asyncio.Event()
+        self._registered_in_runtime = False
 
     async def run(self) -> SttSessionCloseResult | None:
         """
@@ -87,6 +95,8 @@ class AdminAssistantSttSession:
         """
 
         await self._websocket.accept()
+        register_active_stt_session(self)
+        self._registered_in_runtime = True
         # 接入后立即启动会话超时计时，避免客户端长期空闲不发 start 占用连接资源。
         self._deadline_at = time.monotonic() + float(self._session_duration_seconds)
         try:
@@ -96,6 +106,8 @@ class AdminAssistantSttSession:
                 if ready["type"] == "timeout":
                     await self._handle_timeout()
                     return SttSessionCloseResult(reason="timeout")
+                if ready["type"] == "config_refresh":
+                    return SttSessionCloseResult(reason="config_refresh")
                 if ready["type"] == "upstream":
                     await self._handle_upstream_completion()
                     return SttSessionCloseResult(
@@ -115,8 +127,27 @@ class AdminAssistantSttSession:
                 if message.get("bytes") is not None:
                     await self._handle_frontend_audio(message["bytes"])
                     continue
+        except Exception:
+            if self._config_refresh_requested.is_set():
+                return SttSessionCloseResult(reason="config_refresh")
+            raise
         finally:
+            if self._registered_in_runtime:
+                unregister_active_stt_session(self)
+                self._registered_in_runtime = False
             await self._cleanup()
+
+    async def interrupt_due_to_config_refresh(self) -> None:
+        """在语音配置刷新时主动中断当前 STT 会话。"""
+
+        if self._config_refresh_requested.is_set():
+            return
+        self._config_refresh_requested.set()
+        await self._stt_client.close()
+        await self._close_websocket(
+            code=SPEECH_CONFIG_REFRESH_CLOSE_CODE,
+            reason=SPEECH_CONFIG_REFRESH_CLOSE_REASON,
+        )
 
     async def _handle_frontend_text(self, text_payload: str) -> bool:
         """
@@ -226,7 +257,10 @@ class AdminAssistantSttSession:
                     break
         except Exception as exc:
             self._upstream_error = str(exc)
-            logger.opt(exception=exc).warning("stt upstream receive failed")
+            if self._config_refresh_requested.is_set():
+                logger.info("stt upstream interrupted by speech config refresh")
+            else:
+                logger.opt(exception=exc).warning("stt upstream receive failed")
         finally:
             self._upstream_ended.set()
 
@@ -361,7 +395,8 @@ class AdminAssistantSttSession:
         """
 
         frontend_task = asyncio.create_task(self._websocket.receive())
-        wait_tasks: set[asyncio.Task[Any]] = {frontend_task}
+        config_refresh_task = asyncio.create_task(self._config_refresh_requested.wait())
+        wait_tasks: set[asyncio.Task[Any]] = {frontend_task, config_refresh_task}
         upstream_task = self._upstream_task
         if upstream_task is not None:
             wait_tasks.add(upstream_task)
@@ -372,27 +407,21 @@ class AdminAssistantSttSession:
             return_when=asyncio.FIRST_COMPLETED,
         )
         if not done:
-            frontend_task.cancel()
-            try:
-                await frontend_task
-            except asyncio.CancelledError:
-                pass
-            except Exception:
-                pass
+            await self._cancel_task(frontend_task)
+            await self._cancel_task(config_refresh_task)
             return {"type": "timeout"}
 
+        if config_refresh_task in done:
+            await self._cancel_task(frontend_task)
+            return {"type": "config_refresh"}
+
         if upstream_task is not None and upstream_task in done:
-            if not frontend_task.done():
-                frontend_task.cancel()
-                try:
-                    await frontend_task
-                except asyncio.CancelledError:
-                    pass
-                except Exception:
-                    pass
+            await self._cancel_task(frontend_task)
+            await self._cancel_task(config_refresh_task)
             return {"type": "upstream"}
 
         message = await frontend_task
+        await self._cancel_task(config_refresh_task)
         return {"type": "frontend", "message": message}
 
     async def _cleanup(self) -> None:
@@ -438,14 +467,17 @@ class AdminAssistantSttSession:
             None
         """
 
+        if self._config_refresh_requested.is_set():
+            return
         await self._websocket.send_json(payload)
 
-    async def _close_websocket(self, *, code: int) -> None:
+    async def _close_websocket(self, *, code: int, reason: str | None = None) -> None:
         """
         幂等关闭前端 WebSocket。
 
         Args:
             code: 关闭状态码。
+            reason: 关闭原因。
 
         Returns:
             None
@@ -455,7 +487,27 @@ class AdminAssistantSttSession:
             return
         self._close_sent = True
         try:
-            await self._websocket.close(code=code)
+            await self._websocket.close(code=code, reason=reason)
+        except Exception:
+            pass
+
+    @staticmethod
+    async def _cancel_task(task: asyncio.Task[Any]) -> None:
+        """取消并回收后台任务。"""
+
+        if task.done():
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                pass
+            return
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
         except Exception:
             pass
 

@@ -8,12 +8,27 @@ from langchain_openai import OpenAIEmbeddings
 
 from app.core.config_sync.snapshot import (
     AgentChatModelSlot,
+    AgentModelRuntimeConfig,
     AgentModelSlotConfig,
     get_current_agent_config_snapshot,
 )
 from app.core.llms import ChatModel, create_chat_model, create_embedding_model, create_image_model
 from app.core.llms.common import resolve_llm_value
 from app.core.llms.provider import LlmProvider, resolve_provider
+from app.core.llms.providers.aliyun import DEFAULT_DASHSCOPE_BASE_URL
+from app.core.llms.providers.openai import DEFAULT_OPENAI_BASE_URL
+from app.core.llms.providers.volcengine import DEFAULT_VOLCENGINE_BASE_URL
+
+_IMAGE_MODEL_ENV_NAMES = {
+    LlmProvider.OPENAI: "OPENAI_IMAGE_MODEL",
+    LlmProvider.ALIYUN: "DASHSCOPE_IMAGE_MODEL",
+    LlmProvider.VOLCENGINE: "VOLCENGINE_LLM_IMAGE_MODEL",
+}
+_IMAGE_API_KEY_ENV_NAMES = {
+    LlmProvider.OPENAI: "OPENAI_API_KEY",
+    LlmProvider.ALIYUN: "DASHSCOPE_API_KEY",
+    LlmProvider.VOLCENGINE: "VOLCENGINE_LLM_API_KEY",
+}
 
 
 @dataclass(frozen=True)
@@ -22,6 +37,16 @@ class _ResolvedSlotOverrides:
 
     think: bool
     model_kwargs: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class ResolvedAgentImageRuntime:
+    """图片解析直连模型服务所需的运行时信息。"""
+
+    provider: LlmProvider
+    model: str
+    api_key: str
+    base_url: str
 
 
 def _normalize_max_tokens_limit(value: int | None) -> int | None:
@@ -61,6 +86,17 @@ def _resolve_gateway_router_fallback_model_name() -> str | None:
     return resolve_llm_value(name=dedicated_key) or resolve_llm_value(name=fallback_key)
 
 
+def _resolve_image_fallback_model_name(provider: LlmProvider | str | None = None) -> str | None:
+    """解析图片识别槽位缺失时的本地环境兜底模型名。"""
+
+    resolved_provider = resolve_provider(provider)
+    if resolved_provider is LlmProvider.ALIYUN:
+        return resolve_llm_value(name="DASHSCOPE_IMAGE_MODEL")
+    if resolved_provider is LlmProvider.VOLCENGINE:
+        return resolve_llm_value(name="VOLCENGINE_LLM_IMAGE_MODEL")
+    return resolve_llm_value(name="OPENAI_IMAGE_MODEL")
+
+
 def _resolve_summary_fallback_model_name() -> str | None:
     """解析聊天历史总结任务的本地环境兜底模型名。
 
@@ -77,6 +113,62 @@ def _resolve_summary_fallback_model_name() -> str | None:
     else:
         provider_key = "OPENAI_SUMMARY_MODEL"
     return resolve_llm_value(name=provider_key) or resolve_llm_value(name="ASSISTANT_SUMMARY_MODEL")
+
+
+def _require_runtime_value(
+        value: str | None,
+        *,
+        provider: LlmProvider,
+        env_names: dict[LlmProvider, str],
+) -> str:
+    """要求运行时关键字段必须存在，否则抛出带环境变量名的错误。"""
+
+    if value:
+        return value
+    raise RuntimeError(f"{env_names[provider]} is not set")
+
+
+def _resolve_runtime_provider(runtime_config: AgentModelRuntimeConfig | None) -> LlmProvider:
+    """解析当前生效的模型 provider。"""
+
+    return resolve_provider(runtime_config.provider_type if runtime_config is not None else None)
+
+
+def _resolve_runtime_connection(
+        provider: LlmProvider,
+        runtime_config: AgentModelRuntimeConfig | None,
+) -> tuple[str | None, str | None]:
+    """解析当前 provider 生效的 API Key 与 Base URL。"""
+
+    explicit_api_key = runtime_config.api_key if runtime_config is not None else None
+    explicit_base_url = runtime_config.base_url if runtime_config is not None else None
+
+    if provider is LlmProvider.ALIYUN:
+        return (
+            resolve_llm_value(name="DASHSCOPE_API_KEY", explicit=explicit_api_key),
+            resolve_llm_value(
+                name="DASHSCOPE_BASE_URL",
+                explicit=explicit_base_url,
+                default=DEFAULT_DASHSCOPE_BASE_URL,
+            ),
+        )
+    if provider is LlmProvider.VOLCENGINE:
+        return (
+            resolve_llm_value(name="VOLCENGINE_LLM_API_KEY", explicit=explicit_api_key),
+            resolve_llm_value(
+                name="VOLCENGINE_LLM_BASE_URL",
+                explicit=explicit_base_url,
+                default=DEFAULT_VOLCENGINE_BASE_URL,
+            ),
+        )
+    return (
+        resolve_llm_value(name="OPENAI_API_KEY", explicit=explicit_api_key),
+        resolve_llm_value(
+            name="OPENAI_BASE_URL",
+            explicit=explicit_base_url,
+            default=DEFAULT_OPENAI_BASE_URL,
+        ),
+    )
 
 
 def _resolve_summary_fallback_max_tokens() -> int | None:
@@ -269,6 +361,43 @@ def create_agent_image_llm(
         extra_body=extra_body,
         think=resolved_overrides.think,
         **resolved_overrides.model_kwargs,
+    )
+
+
+def resolve_agent_image_runtime() -> ResolvedAgentImageRuntime:
+    """解析图片识别当前生效的直连运行时配置。"""
+
+    snapshot = get_current_agent_config_snapshot()
+    slot_config = snapshot.get_image_slot()
+    runtime_config = snapshot.get_llm_runtime_config()
+
+    resolved_provider = _resolve_runtime_provider(runtime_config)
+    resolved_model = _require_runtime_value(
+        _resolve_slot_runtime_model_name(
+            slot_config,
+            fallback_model=_resolve_image_fallback_model_name(resolved_provider),
+        ),
+        provider=resolved_provider,
+        env_names=_IMAGE_MODEL_ENV_NAMES,
+    )
+
+    resolved_api_key, resolved_base_url = _resolve_runtime_connection(
+        resolved_provider,
+        runtime_config,
+    )
+    resolved_api_key = _require_runtime_value(
+        resolved_api_key,
+        provider=resolved_provider,
+        env_names=_IMAGE_API_KEY_ENV_NAMES,
+    )
+    if not resolved_base_url:
+        raise RuntimeError("LLM base URL is not set")
+
+    return ResolvedAgentImageRuntime(
+        provider=resolved_provider,
+        model=resolved_model,
+        api_key=resolved_api_key,
+        base_url=resolved_base_url,
     )
 
 

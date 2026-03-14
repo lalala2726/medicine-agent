@@ -85,7 +85,6 @@ def test_create_chat_model_routes_to_openai_provider(monkeypatch: pytest.MonkeyP
     result = chat_factory.create_chat_model(
         model="gpt-test",
         provider=LlmProvider.OPENAI,
-        extra_body={"response_format": {"type": "json_object"}},
         temperature=0.2,
         think=True,
     )
@@ -164,7 +163,6 @@ def test_create_chat_model_routes_to_aliyun_provider_with_think_enabled(
     result = chat_factory.create_chat_model(
         model="qwen-test",
         provider=LlmProvider.ALIYUN,
-        extra_body={"response_format": {"type": "json_object"}},
         think=True,
     )
 
@@ -222,7 +220,6 @@ def test_create_chat_model_routes_to_volcengine_provider_with_think_enabled(
     result = chat_factory.create_chat_model(
         model="doubao-test",
         provider=LlmProvider.VOLCENGINE,
-        extra_body={"response_format": {"type": "json_object"}},
         think=True,
         temperature=0.1,
     )
@@ -303,7 +300,6 @@ def test_create_image_model_routes_to_volcengine_provider(monkeypatch: pytest.Mo
     result = chat_factory.create_image_model(
         model="doubao-vision-test",
         provider=LlmProvider.VOLCENGINE,
-        extra_body={"response_format": {"type": "json_object"}},
     )
 
     assert result == "volcengine-image-model"
@@ -525,7 +521,6 @@ def test_thinking_resolver_keeps_openai_extra_body() -> None:
 
     extra = llm_common_module.resolve_provider_extra_body(
         provider=LlmProvider.OPENAI,
-        extra_body={"response_format": {"type": "json_object"}},
         think=True,
     )
 
@@ -537,7 +532,6 @@ def test_thinking_resolver_applies_aliyun_rules() -> None:
 
     enabled = llm_common_module.resolve_provider_extra_body(
         provider=LlmProvider.ALIYUN,
-        extra_body={"response_format": {"type": "json_object"}},
         think=True,
     )
     disabled = llm_common_module.resolve_provider_extra_body(
@@ -561,12 +555,10 @@ def test_thinking_resolver_applies_volcengine_rules() -> None:
 
     enabled = llm_common_module.resolve_provider_extra_body(
         provider=LlmProvider.VOLCENGINE,
-        extra_body={"response_format": {"type": "json_object"}},
         think=True,
     )
     disabled = llm_common_module.resolve_provider_extra_body(
         provider=LlmProvider.VOLCENGINE,
-        extra_body={"response_format": {"type": "json_object"}},
         think=False,
     )
 

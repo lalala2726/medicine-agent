@@ -7,6 +7,7 @@ from loguru import logger
 from app.core.config_sync import refresh_agent_config_snapshot
 from app.core.mq.broker import get_broker
 from app.core.mq.models.agent_config_refresh import AgentConfigRefreshMessage
+from app.core.speech.runtime import handle_speech_config_refresh as handle_runtime_speech_config_refresh
 from app.core.mq.topology import agent_config_refresh_exchange, agent_config_refresh_queue
 
 broker = get_broker()
@@ -27,6 +28,12 @@ async def handle_agent_config_refresh(msg: AgentConfigRefreshMessage) -> None:
         msg.redis_key,
         msg.updated_by,
     )
-    refresh_agent_config_snapshot(
+    refresh_result = refresh_agent_config_snapshot(
         redis_key=msg.redis_key,
     )
+    if not refresh_result.applied:
+        return
+    if not refresh_result.speech_changed:
+        logger.info("本次 Agent 配置刷新未检测到语音配置变化，跳过语音重连。")
+        return
+    await handle_runtime_speech_config_refresh()

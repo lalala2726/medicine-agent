@@ -4,8 +4,14 @@ from dataclasses import dataclass
 
 import pytest
 
+import app.core.speech.stt.session as stt_session_module
 import app.services.speech_stt_service as speech_stt_service_module
 from app.core.exception.exceptions import ServiceException
+from app.core.speech.runtime import (
+    SPEECH_CONFIG_REFRESH_CLOSE_CODE,
+    SPEECH_CONFIG_REFRESH_CLOSE_REASON,
+    clear_speech_runtime_state,
+)
 from app.core.speech.stt.config import VolcengineSttConfig
 from app.core.speech.stt.session import AdminAssistantSttSession, SttSessionError
 from app.core.speech.volcengine_speech_protocol import (
@@ -18,6 +24,13 @@ from app.schemas.auth import AuthUser
 from app.services.speech_stt_service import speech_stt_stream_service
 
 
+@pytest.fixture(autouse=True)
+def _clear_speech_runtime_state() -> None:
+    clear_speech_runtime_state()
+    yield
+    clear_speech_runtime_state()
+
+
 class _FakeFrontendWebSocket:
     def __init__(self, messages: list[dict]):
         self._queue: asyncio.Queue = asyncio.Queue()
@@ -26,6 +39,7 @@ class _FakeFrontendWebSocket:
         self.accepted = False
         self.closed = False
         self.close_code: int | None = None
+        self.close_reason: str | None = None
         self.sent_json: list[dict] = []
 
     async def accept(self) -> None:
@@ -40,6 +54,7 @@ class _FakeFrontendWebSocket:
     async def close(self, code: int = 1000, reason: str | None = None) -> None:  # noqa: ARG002
         self.closed = True
         self.close_code = code
+        self.close_reason = reason
 
 
 @dataclass
@@ -288,6 +303,60 @@ def test_stt_session_returns_error_when_upstream_reports_error() -> None:
         item.get("type") == "error" and "provider bad request" in item.get("message", "")
         for item in websocket.sent_json
     )
+
+
+def test_stt_session_interrupts_on_config_refresh(monkeypatch: pytest.MonkeyPatch) -> None:
+    """测试目的：语音配置刷新时应主动中断进行中的 STT 会话；预期结果：返回 config_refresh 并以 1012 关闭前端连接。"""
+
+    websocket = _FakeFrontendWebSocket(
+        messages=[
+            {"type": "websocket.receive", "text": json.dumps({"type": "start"})},
+        ]
+    )
+    fake_client_holder: dict[str, _FakeSttClient] = {}
+    registered_sessions: list[AdminAssistantSttSession] = []
+    unregistered_sessions: list[AdminAssistantSttSession] = []
+
+    def _factory(*, config: VolcengineSttConfig) -> _FakeSttClient:
+        client = _FakeSttClient(config=config)
+        fake_client_holder["client"] = client
+        return client
+
+    monkeypatch.setattr(
+        stt_session_module,
+        "register_active_stt_session",
+        lambda session: registered_sessions.append(session),
+    )
+    monkeypatch.setattr(
+        stt_session_module,
+        "unregister_active_stt_session",
+        lambda session: unregistered_sessions.append(session),
+    )
+
+    session = AdminAssistantSttSession(
+        websocket=websocket,  # type: ignore[arg-type]
+        user=_build_user(),
+        config=_build_config(),
+        stt_client_factory=_factory,
+    )
+
+    async def _run_and_interrupt() -> tuple[str, bool]:
+        task = asyncio.create_task(session.run())
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        await session.interrupt_due_to_config_refresh()
+        result = await task
+        return result.reason, fake_client_holder["client"].closed
+
+    reason, client_closed = asyncio.run(_run_and_interrupt())
+
+    assert reason == "config_refresh"
+    assert client_closed is True
+    assert websocket.closed is True
+    assert websocket.close_code == SPEECH_CONFIG_REFRESH_CLOSE_CODE
+    assert websocket.close_reason == SPEECH_CONFIG_REFRESH_CLOSE_REASON
+    assert registered_sessions == [session]
+    assert unregistered_sessions == [session]
 
 
 def test_speech_stt_service_closes_when_stt_config_invalid(monkeypatch: pytest.MonkeyPatch) -> None:

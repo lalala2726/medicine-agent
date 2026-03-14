@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
@@ -61,6 +62,16 @@ class AgentConfigLoadReason(str, Enum):
     REDIS_READ_FAILED = "redis_read_failed"
     INVALID_JSON = "invalid_json"
     INVALID_SCHEMA = "invalid_schema"
+
+
+@dataclass(frozen=True)
+class AgentConfigRefreshResult:
+    """Agent 配置刷新结果。"""
+
+    applied: bool
+    previous_snapshot: "AgentConfigSnapshot | None"
+    current_snapshot: "AgentConfigSnapshot | None"
+    speech_changed: bool
 
 
 #: Agent 配置加载失败原因到中文日志文案的映射。
@@ -208,6 +219,26 @@ def _read_local_fallback_env_value(name: str) -> str | None:
     return normalized or None
 
 
+def _clone_snapshot(snapshot: "AgentConfigSnapshot | None") -> "AgentConfigSnapshot | None":
+    """深拷贝当前快照对象。"""
+
+    if snapshot is None:
+        return None
+    return snapshot.model_copy(deep=True)
+
+
+def _normalize_speech_config(snapshot: "AgentConfigSnapshot | None") -> dict[str, Any] | None:
+    """提取用于语音配置比对的归一化 speech 子树。"""
+
+    if snapshot is None or snapshot.speech is None:
+        return None
+    return snapshot.speech.model_dump(
+        mode="json",
+        by_alias=False,
+        exclude_none=False,
+    )
+
+
 def _resolve_local_fallback_provider() -> LlmProvider:
     """解析本地 `.env` 回退场景使用的 provider。"""
 
@@ -293,6 +324,7 @@ def _resolve_local_fallback_knowledge_base_config() -> KnowledgeBaseAgentConfig 
 
     try:
         return KnowledgeBaseAgentConfig(
+            enabled=True,
             knowledgeNames=knowledge_names,
             embeddingDim=(
                     _normalize_optional_positive_int(
@@ -397,12 +429,20 @@ class KnowledgeBaseAgentConfig(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
+    enabled: bool | None = None
     knowledge_names: list[str] | None = Field(default=None, alias="knowledgeNames")
     embedding_dim: int | None = Field(default=None, alias="embeddingDim")
     embedding_model: str | None = Field(default=None, alias="embeddingModel")
     ranking_enabled: bool = Field(default=False, alias="rankingEnabled")
     ranking_model: str | None = Field(default=None, alias="rankingModel")
     top_k: int | None = Field(default=None, alias="topK")
+
+    @field_validator("enabled", mode="before")
+    @classmethod
+    def _normalize_enabled(cls, value: Any) -> bool | None:
+        """归一化知识库总开关。"""
+
+        return _normalize_optional_bool(value)
 
     @field_validator("knowledge_names", mode="before")
     @classmethod
@@ -435,11 +475,27 @@ class KnowledgeBaseAgentConfig(BaseModel):
 
         if self.top_k is not None and self.top_k > 100:
             raise ValueError("knowledgeBase.topK must be between 1 and 100")
+        if self.enabled is False:
+            return self
         if not self.ranking_enabled and self.ranking_model is not None:
             raise ValueError("knowledgeBase.rankingModel must be null when rankingEnabled is false")
         if self.ranking_enabled and self.ranking_model is None:
             raise ValueError("knowledgeBase.rankingModel is required when rankingEnabled is true")
         return self
+
+    def has_legacy_enabled_content(self) -> bool:
+        """判断历史配置是否可视为已启用知识库。"""
+
+        return any(
+            (
+                bool(self.knowledge_names),
+                self.embedding_model is not None,
+                self.embedding_dim is not None,
+                self.top_k is not None,
+                bool(self.ranking_enabled),
+                self.ranking_model is not None,
+            )
+        )
 
 
 class AdminAssistantAgentConfig(BaseModel):
@@ -652,6 +708,21 @@ class AgentConfigSnapshot(BaseModel):
         if model_name is None:
             return None
         return AgentModelSlotConfig(modelName=model_name)
+
+    def is_knowledge_enabled(self) -> bool:
+        """判断当前知识库能力是否启用。
+
+        Returns:
+            当 Redis 显式配置 `enabled` 时以其为准；否则按历史字段兼容推断。
+        """
+
+        agent_configs = self.agent_configs
+        if agent_configs is None or agent_configs.knowledge_base is None:
+            return False
+        knowledge_base = agent_configs.knowledge_base
+        if knowledge_base.enabled is not None:
+            return knowledge_base.enabled
+        return knowledge_base.has_legacy_enabled_content()
 
     def get_knowledge_names(self) -> list[str]:
         """读取当前允许访问的知识库名称列表。
@@ -1102,15 +1173,18 @@ def get_current_agent_config_snapshot() -> AgentConfigSnapshot:
     return initialize_agent_config_snapshot()
 
 
-def refresh_agent_config_snapshot(*, redis_key: str) -> bool:
+def refresh_agent_config_snapshot(*, redis_key: str) -> AgentConfigRefreshResult:
     """在收到 MQ 刷新通知后重新拉取 Redis 配置并更新本地快照。
 
     Args:
         redis_key: 需要重新读取的 Redis key。
 
     Returns:
-        当成功从 Redis 读取并替换当前快照时返回 ``True``；否则返回 ``False``。
+        AgentConfigRefreshResult: 结构化刷新结果，包含语音配置是否变化。
     """
+
+    with _CONFIG_LOCK:
+        previous_snapshot = _clone_snapshot(_current_snapshot)
 
     try:
         snapshot = _load_snapshot_from_redis(redis_key=redis_key)
@@ -1120,16 +1194,29 @@ def refresh_agent_config_snapshot(*, redis_key: str) -> bool:
             redis_key,
             _get_load_reason_label(exc.reason),
         )
-        return False
+        return AgentConfigRefreshResult(
+            applied=False,
+            previous_snapshot=previous_snapshot,
+            current_snapshot=previous_snapshot,
+            speech_changed=False,
+        )
 
     with _CONFIG_LOCK:
         _set_current_snapshot(snapshot, source=AgentConfigSource.REDIS)
+    current_snapshot = snapshot.model_copy(deep=True)
+    speech_changed = _normalize_speech_config(previous_snapshot) != _normalize_speech_config(current_snapshot)
     logger.info(
-        "Agent 配置刷新已生效：来源={}，redis_key={}",
+        "Agent 配置刷新已生效：来源={}，redis_key={}，speech_changed={}",
         AgentConfigSource.REDIS.value,
         redis_key,
+        speech_changed,
     )
-    return True
+    return AgentConfigRefreshResult(
+        applied=True,
+        previous_snapshot=previous_snapshot,
+        current_snapshot=current_snapshot,
+        speech_changed=speech_changed,
+    )
 
 
 def clear_agent_config_snapshot_state() -> None:

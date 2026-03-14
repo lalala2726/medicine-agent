@@ -8,6 +8,8 @@ import pytest
 from app.core.config_sync import AgentChatModelSlot
 from app.core.config_sync import snapshot as agent_config_module
 
+_KNOWLEDGE_ENABLED_UNSET = object()
+
 
 class _FakeRedis:
     def __init__(self, return_value: Any = None, error: Exception | None = None) -> None:
@@ -50,7 +52,27 @@ def _clear_agent_config_state(monkeypatch: pytest.MonkeyPatch) -> None:
     agent_config_module.clear_agent_config_snapshot_state()
 
 
-def _build_snapshot_payload(*, route_model_name: str = "gpt-4.1-mini") -> dict[str, Any]:
+def _build_snapshot_payload(
+        *,
+        route_model_name: str = "gpt-4.1-mini",
+        knowledge_enabled: bool | None | object = _KNOWLEDGE_ENABLED_UNSET,
+) -> dict[str, Any]:
+    knowledge_base: dict[str, Any] = {
+        "knowledgeNames": [
+            "common_medicine_kb",
+            "common_medicine_kb",
+            "otc_guide_kb",
+            "   ",
+        ],
+        "embeddingDim": 1024,
+        "embeddingModel": "text-embedding-v4",
+        "rankingEnabled": True,
+        "rankingModel": "gpt-4.1-mini",
+        "topK": 8,
+    }
+    if knowledge_enabled is not _KNOWLEDGE_ENABLED_UNSET:
+        knowledge_base["enabled"] = knowledge_enabled
+
     return {
         "schemaVersion": 3,
         "updatedAt": "2026-03-11T14:30:00+08:00",
@@ -61,19 +83,7 @@ def _build_snapshot_payload(*, route_model_name: str = "gpt-4.1-mini") -> dict[s
             "apiKey": "sk-runtime",
         },
         "agentConfigs": {
-            "knowledgeBase": {
-                "knowledgeNames": [
-                    "common_medicine_kb",
-                    "common_medicine_kb",
-                    "otc_guide_kb",
-                    "   ",
-                ],
-                "embeddingDim": 1024,
-                "embeddingModel": "text-embedding-v4",
-                "rankingEnabled": True,
-                "rankingModel": "gpt-4.1-mini",
-                "topK": 8,
-            },
+            "knowledgeBase": knowledge_base,
             "adminAssistant": {
                 "routeModel": {
                     "modelName": route_model_name,
@@ -157,6 +167,7 @@ def test_initialize_agent_config_snapshot_loads_valid_v3_payload(
     assert snapshot.get_summary_slot().model_name == "gpt-summary"
     assert snapshot.get_title_slot() is not None
     assert snapshot.get_title_slot().model_name == "gpt-title"
+    assert snapshot.is_knowledge_enabled() is True
     assert snapshot.get_knowledge_names() == ["common_medicine_kb", "otc_guide_kb"]
     assert snapshot.get_knowledge_embedding_model_name() == "text-embedding-v4"
     assert snapshot.get_knowledge_embedding_dim() == 1024
@@ -210,12 +221,63 @@ def test_initialize_agent_config_snapshot_uses_env_fallback_when_redis_missing(
     assert snapshot.get_llm_runtime_config().provider_type == "aliyun"
     assert snapshot.get_llm_runtime_config().base_url == "https://dashscope.aliyuncs.com/compatible-mode/v1"
     assert snapshot.get_llm_runtime_config().api_key == "sk-local"
+    assert snapshot.is_knowledge_enabled() is True
     assert snapshot.get_knowledge_names() == ["common_medicine_kb", "otc_guide_kb"]
     assert snapshot.get_knowledge_embedding_model_name() == "text-embedding-v4"
     assert snapshot.get_knowledge_embedding_dim() == 1024
     assert snapshot.get_knowledge_top_k() == 6
     assert snapshot.is_knowledge_ranking_enabled() is True
     assert snapshot.get_knowledge_ranking_model_name() == "qwen-flash"
+
+
+def test_initialize_agent_config_snapshot_respects_explicit_knowledge_enabled_true(
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """测试目的：Redis 显式开启知识库时应直接以 enabled=true 为准；预期结果：知识库启用且原始配置可读。"""
+
+    payload = json.dumps(_build_snapshot_payload(knowledge_enabled=True)).encode("utf-8")
+    monkeypatch.setattr(agent_config_module, "get_redis_connection", lambda: _FakeRedis(return_value=payload))
+
+    snapshot = agent_config_module.initialize_agent_config_snapshot()
+
+    assert snapshot.is_knowledge_enabled() is True
+    assert snapshot.get_knowledge_names() == ["common_medicine_kb", "otc_guide_kb"]
+    assert snapshot.get_knowledge_embedding_model_name() == "text-embedding-v4"
+
+
+def test_initialize_agent_config_snapshot_respects_explicit_knowledge_enabled_false(
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """测试目的：Redis 显式关闭知识库时应以 enabled=false 为准；预期结果：运行时关闭但原始配置保留。"""
+
+    payload = json.dumps(_build_snapshot_payload(knowledge_enabled=False)).encode("utf-8")
+    monkeypatch.setattr(agent_config_module, "get_redis_connection", lambda: _FakeRedis(return_value=payload))
+
+    snapshot = agent_config_module.initialize_agent_config_snapshot()
+
+    assert snapshot.updated_by == "admin"
+    assert snapshot.is_knowledge_enabled() is False
+    assert snapshot.get_knowledge_names() == ["common_medicine_kb", "otc_guide_kb"]
+    assert snapshot.get_knowledge_embedding_model_name() == "text-embedding-v4"
+    assert snapshot.get_knowledge_top_k() == 8
+
+
+def test_initialize_agent_config_snapshot_treats_empty_legacy_knowledge_config_as_disabled(
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """测试目的：历史配置未带 enabled 且 knowledgeBase 为空时应视为关闭；预期结果：快照正常加载但知识库未启用。"""
+
+    payload_dict = _build_snapshot_payload()
+    payload_dict["agentConfigs"]["knowledgeBase"] = {}
+    payload = json.dumps(payload_dict).encode("utf-8")
+    monkeypatch.setattr(agent_config_module, "get_redis_connection", lambda: _FakeRedis(return_value=payload))
+
+    snapshot = agent_config_module.initialize_agent_config_snapshot()
+
+    assert snapshot.updated_by == "admin"
+    assert snapshot.is_knowledge_enabled() is False
+    assert snapshot.get_knowledge_names() == []
+    assert snapshot.get_knowledge_embedding_model_name() is None
 
 
 def test_initialize_agent_config_snapshot_rejects_payload_without_schema_version(
@@ -341,6 +403,25 @@ def test_initialize_agent_config_snapshot_rejects_missing_ranking_model_when_ena
     assert snapshot.get_knowledge_ranking_model_name() is None
 
 
+def test_initialize_agent_config_snapshot_allows_incomplete_ranking_when_knowledge_disabled(
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """测试目的：enabled=false 时应允许保留不完整知识库配置；预期结果：快照加载成功且知识库保持关闭。"""
+
+    payload_dict = _build_snapshot_payload(knowledge_enabled=False)
+    payload_dict["agentConfigs"]["knowledgeBase"]["rankingEnabled"] = True
+    payload_dict["agentConfigs"]["knowledgeBase"]["rankingModel"] = None
+    payload = json.dumps(payload_dict).encode("utf-8")
+    monkeypatch.setattr(agent_config_module, "get_redis_connection", lambda: _FakeRedis(return_value=payload))
+
+    snapshot = agent_config_module.initialize_agent_config_snapshot()
+
+    assert snapshot.updated_by == "admin"
+    assert snapshot.is_knowledge_enabled() is False
+    assert snapshot.is_knowledge_ranking_enabled() is True
+    assert snapshot.get_knowledge_ranking_model_name() is None
+
+
 def test_initialize_agent_config_snapshot_accepts_top_k_zero_as_unconfigured(
         monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -388,12 +469,14 @@ def test_refresh_agent_config_snapshot_keeps_previous_redis_snapshot_on_failure(
         lambda: _FakeRedis(error=RuntimeError("redis down")),
     )
 
-    refreshed = agent_config_module.refresh_agent_config_snapshot(
+    refresh_result = agent_config_module.refresh_agent_config_snapshot(
         redis_key=agent_config_module.AGENT_CONFIG_REDIS_KEY,
     )
 
     current_snapshot = agent_config_module.get_current_agent_config_snapshot()
-    assert refreshed is False
+    assert refresh_result.applied is False
+    assert refresh_result.speech_changed is False
+    assert refresh_result.current_snapshot is not None
     assert current_snapshot.get_chat_slot(AgentChatModelSlot.ROUTE) is not None
     assert current_snapshot.get_chat_slot(AgentChatModelSlot.ROUTE).model_name == "gpt-old"
 
@@ -412,11 +495,12 @@ def test_refresh_agent_config_snapshot_always_reload_when_notification_arrives(
     reloaded_redis = _FakeRedis(return_value=reloaded_payload)
     monkeypatch.setattr(agent_config_module, "get_redis_connection", lambda: reloaded_redis)
 
-    refreshed = agent_config_module.refresh_agent_config_snapshot(
+    refresh_result = agent_config_module.refresh_agent_config_snapshot(
         redis_key=agent_config_module.AGENT_CONFIG_REDIS_KEY,
     )
 
-    assert refreshed is True
+    assert refresh_result.applied is True
+    assert refresh_result.speech_changed is False
     assert reloaded_redis.get_calls == [agent_config_module.AGENT_CONFIG_REDIS_KEY]
 
 
@@ -432,12 +516,13 @@ def test_refresh_agent_config_snapshot_applies_redis_payload(
     refreshed_payload = json.dumps(_build_snapshot_payload(route_model_name="gpt-new")).encode("utf-8")
     monkeypatch.setattr(agent_config_module, "get_redis_connection", lambda: _FakeRedis(return_value=refreshed_payload))
 
-    refreshed = agent_config_module.refresh_agent_config_snapshot(
+    refresh_result = agent_config_module.refresh_agent_config_snapshot(
         redis_key=agent_config_module.AGENT_CONFIG_REDIS_KEY,
     )
 
     current_snapshot = agent_config_module.get_current_agent_config_snapshot()
-    assert refreshed is True
+    assert refresh_result.applied is True
+    assert refresh_result.speech_changed is False
     assert current_snapshot.get_chat_slot(AgentChatModelSlot.ROUTE) is not None
     assert current_snapshot.get_chat_slot(AgentChatModelSlot.ROUTE).model_name == "gpt-new"
 
@@ -475,12 +560,15 @@ def test_refresh_agent_config_snapshot_applies_latest_speech_values(
     refreshed_payload = json.dumps(refreshed_payload_dict).encode("utf-8")
     monkeypatch.setattr(agent_config_module, "get_redis_connection", lambda: _FakeRedis(return_value=refreshed_payload))
 
-    refreshed = agent_config_module.refresh_agent_config_snapshot(
+    refresh_result = agent_config_module.refresh_agent_config_snapshot(
         redis_key=agent_config_module.AGENT_CONFIG_REDIS_KEY,
     )
 
     current_snapshot = agent_config_module.get_current_agent_config_snapshot()
-    assert refreshed is True
+    assert refresh_result.applied is True
+    assert refresh_result.speech_changed is True
+    assert refresh_result.previous_snapshot is not None
+    assert refresh_result.current_snapshot is not None
     assert current_snapshot.get_speech_tts_resource_id() == "seed-tts-3.0"
     assert current_snapshot.get_speech_tts_voice_type() == "S_demo_voice"
     assert current_snapshot.get_speech_tts_max_text_chars() == 512

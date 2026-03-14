@@ -12,6 +12,8 @@ from app.core.exception.exceptions import ServiceException
 from app.rag.query import KnowledgeSearchHit
 from app.rag.query import service as service_module
 
+_KNOWLEDGE_ENABLED_UNSET = object()
+
 
 class _FakeMilvusClient:
     def __init__(
@@ -55,7 +57,19 @@ def _build_snapshot(
         ranking_enabled: bool = False,
         ranking_model: str | None = None,
         top_k: int | None = 8,
+        knowledge_enabled: bool | None | object = _KNOWLEDGE_ENABLED_UNSET,
 ) -> AgentConfigSnapshot:
+    knowledge_base: dict[str, Any] = {
+        "knowledgeNames": knowledge_names or ["common_medicine_kb", "otc_guide_kb"],
+        "embeddingDim": embedding_dim,
+        "embeddingModel": embedding_model,
+        "rankingEnabled": ranking_enabled,
+        "rankingModel": ranking_model,
+        "topK": top_k,
+    }
+    if knowledge_enabled is not _KNOWLEDGE_ENABLED_UNSET:
+        knowledge_base["enabled"] = knowledge_enabled
+
     return AgentConfigSnapshot.model_validate(
         {
             "schemaVersion": 3,
@@ -67,14 +81,7 @@ def _build_snapshot(
                 "apiKey": "sk-runtime",
             },
             "agentConfigs": {
-                "knowledgeBase": {
-                    "knowledgeNames": knowledge_names or ["common_medicine_kb", "otc_guide_kb"],
-                    "embeddingDim": embedding_dim,
-                    "embeddingModel": embedding_model,
-                    "rankingEnabled": ranking_enabled,
-                    "rankingModel": ranking_model,
-                    "topK": top_k,
-                },
+                "knowledgeBase": knowledge_base,
             },
         },
     )
@@ -173,6 +180,38 @@ def test_resolve_runtime_config_rejects_more_than_10_knowledge_names(
 
     assert exc_info.value.code == ResponseCode.SERVICE_UNAVAILABLE.code
     assert "不能超过 10 个" in exc_info.value.message
+
+
+def test_resolve_runtime_config_rejects_disabled_knowledge_base(
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        service_module.runtime_module,
+        "get_current_agent_config_snapshot",
+        lambda: _build_snapshot(knowledge_enabled=False),
+    )
+
+    with pytest.raises(ServiceException) as exc_info:
+        service_module.runtime_module.resolve_runtime_config()
+
+    assert exc_info.value.code == ResponseCode.SERVICE_UNAVAILABLE.code
+    assert exc_info.value.message == "知识库检索未启用"
+
+
+def test_resolve_runtime_config_accepts_legacy_knowledge_base_without_enabled(
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        service_module.runtime_module,
+        "get_current_agent_config_snapshot",
+        _build_snapshot,
+    )
+
+    runtime_config = service_module.runtime_module.resolve_runtime_config()
+
+    assert runtime_config.knowledge_names == ["common_medicine_kb", "otc_guide_kb"]
+    assert runtime_config.embedding_model_name == "text-embedding-v4"
+    assert runtime_config.configured_top_k == 8
 
 
 def test_query_knowledge_by_raw_question_aggregates_multi_collections(

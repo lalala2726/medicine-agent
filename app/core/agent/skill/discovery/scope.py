@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-SKILLS_ROOT = Path(__file__).resolve().parents[4] / "resources" / "skills"
+from app.utils.resource_text_utils import RESOURCES_DIR
+
+SKILLS_ROOT = RESOURCES_DIR / "skills"
 _MAX_SCOPE_LEVEL = 3
 
 
