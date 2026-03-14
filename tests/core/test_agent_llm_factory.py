@@ -162,6 +162,49 @@ def test_create_agent_image_llm_prefers_redis_slot_over_local_defaults(
     assert captured["think"] is True
 
 
+def test_resolve_agent_image_runtime_prefers_redis_slot_and_runtime_config(
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """测试目的：图片运行时解析应优先读取 Redis 槽位和顶层 llm；预期结果：返回 Redis 模型名与顶层连接信息。"""
+
+    monkeypatch.setattr(llm_factory, "get_current_agent_config_snapshot", _build_snapshot)
+
+    runtime = llm_factory.resolve_agent_image_runtime()
+
+    assert runtime.provider.value == "openai"
+    assert runtime.model == "qwen-vl-redis"
+    assert runtime.api_key == "sk-runtime"
+    assert runtime.base_url == "https://api.openai.com/v1"
+
+
+def test_resolve_agent_image_runtime_uses_provider_specific_env_fallback_when_slot_missing(
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """测试目的：图片槽位缺失时应按 provider 回退环境模型名；预期结果：返回对应 provider 的 env 模型。"""
+
+    snapshot = AgentConfigSnapshot.model_validate(
+        {
+            "schemaVersion": 3,
+            "updatedAt": "2026-03-11T14:30:00+08:00",
+            "updatedBy": "admin",
+            "llm": {
+                "providerType": "aliyun",
+                "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                "apiKey": "sk-dashscope",
+            },
+        },
+    )
+    monkeypatch.setattr(llm_factory, "get_current_agent_config_snapshot", lambda: snapshot)
+    monkeypatch.setattr(llm_factory, "_resolve_image_fallback_model_name", lambda _provider: "qwen-image-env")
+
+    runtime = llm_factory.resolve_agent_image_runtime()
+
+    assert runtime.provider.value == "aliyun"
+    assert runtime.model == "qwen-image-env"
+    assert runtime.api_key == "sk-dashscope"
+    assert runtime.base_url == "https://dashscope.aliyuncs.com/compatible-mode/v1"
+
+
 def test_create_agent_summary_llm_prefers_redis_slot_over_local_defaults(
         monkeypatch: pytest.MonkeyPatch,
 ) -> None:
