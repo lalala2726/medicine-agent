@@ -7,8 +7,6 @@
 3. 详情类工具在收到空 ID 或全空白 ID 时会直接报错并拒绝调用后端接口。
 """
 
-import datetime
-
 from langchain_core.tools import tool
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -85,25 +83,6 @@ def get_safe_user_info() -> UserInfo:
 
 
 @tool(
-    description="获取当前系统时间（ISO 8601 格式）获取当前的时间必须调用此参数。"
-)
-@tool_call_status(
-    tool_name="获取当前时间",
-    start_message="正在获取当前时间",
-    error_message="获取当前时间失败",
-    timely_message="当前时间正在持续处理中",
-)
-def get_current_time() -> dict:
-    """返回当前系统时间。"""
-
-    now = datetime.datetime.now(datetime.timezone.utc)
-    return {
-        "current_time": now.isoformat(),
-        "timezone": "UTC",
-    }
-
-
-@tool(
     args_schema=KnowledgeSearchToolRequest,
     description=(
             "检索固定知识库中的相关文档片段。"
@@ -137,5 +116,4 @@ def search_knowledge_context(query: str) -> str:
 ADMIN_TOOLS = [
     search_knowledge_context,
     get_safe_user_info,
-    get_current_time,
 ]

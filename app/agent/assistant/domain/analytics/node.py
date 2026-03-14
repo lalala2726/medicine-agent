@@ -9,12 +9,17 @@ from langchain_core.messages import AIMessage, SystemMessage
 from app.agent.assistant.model_switch import model_switch
 from app.agent.assistant.state import AgentState, ExecutionTraceState
 from app.agent.assistant.domain.analytics.tools import (
-    get_analytics_hot_products,
-    get_analytics_order_status_distribution,
-    get_analytics_order_trend,
-    get_analytics_overview,
-    get_analytics_payment_distribution,
-    get_analytics_product_return_rates,
+    get_analytics_after_sale_efficiency_summary,
+    get_analytics_after_sale_reason_distribution,
+    get_analytics_after_sale_status_distribution,
+    get_analytics_after_sale_trend,
+    get_analytics_conversion_summary,
+    get_analytics_fulfillment_summary,
+    get_analytics_range_summary,
+    get_analytics_realtime_overview,
+    get_analytics_return_refund_risk_products,
+    get_analytics_sales_trend,
+    get_analytics_top_selling_products,
 )
 from app.core.agent.agent_event_bus import emit_answer_delta, emit_thinking_delta
 from app.core.config_sync import create_agent_chat_llm
@@ -34,7 +39,7 @@ _ANALYTICS_NODE_SYSTEM_PROMPT = load_prompt("assistant/analytics_node_system_pro
 def analytics_agent(state: AgentState) -> dict[str, Any]:
     """
     功能描述：
-        执行运营分析业务节点，处理运营总览、趋势、分布与排行等分析任务。
+        执行运营分析业务节点，按业务块处理实时总览、经营结果、转化、履约、售后和排行等分析任务。
 
     参数说明：
         state (AgentState): LangGraph 节点状态；主要读取 `history_messages` 与 `execution_traces`。
@@ -62,12 +67,17 @@ def analytics_agent(state: AgentState) -> dict[str, Any]:
         model=llm,
         system_prompt=SystemMessage(content=_ANALYTICS_NODE_SYSTEM_PROMPT),
         tools=[
-            get_analytics_overview,
-            get_analytics_order_trend,
-            get_analytics_order_status_distribution,
-            get_analytics_payment_distribution,
-            get_analytics_hot_products,
-            get_analytics_product_return_rates,
+            get_analytics_realtime_overview,
+            get_analytics_range_summary,
+            get_analytics_conversion_summary,
+            get_analytics_fulfillment_summary,
+            get_analytics_after_sale_efficiency_summary,
+            get_analytics_after_sale_status_distribution,
+            get_analytics_after_sale_reason_distribution,
+            get_analytics_top_selling_products,
+            get_analytics_return_refund_risk_products,
+            get_analytics_sales_trend,
+            get_analytics_after_sale_trend,
         ],
         middleware=[
             BasePromptMiddleware(),

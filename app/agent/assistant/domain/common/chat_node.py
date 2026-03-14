@@ -6,7 +6,6 @@ from langchain.agents import create_agent
 from langchain_core.messages import AIMessage, SystemMessage
 
 from app.agent.assistant.state import AgentState, ExecutionTraceState
-from app.agent.assistant.domain.common.tools import get_current_time
 from app.agent.assistant.domain.common.tools import get_safe_user_info
 from app.agent.assistant.domain.common.tools import search_knowledge_context
 from app.core.agent.agent_tool_events import build_tool_status_middleware
@@ -20,7 +19,7 @@ from app.core.agent.base_prompt_middleware import BasePromptMiddleware
 from app.core.langsmith import traceable
 from app.core.agent.skill import SkillMiddleware
 from app.services.token_usage_service import append_trace_and_refresh_token_usage
-from app.utils.prompt_utils import load_prompt
+from app.utils.prompt_utils import append_current_time_to_prompt, load_prompt
 
 _CHAT_SYSTEM_PROMPT = load_prompt("assistant/chat_system_prompt.md")
 _CHAT_SYSTEM_PROMPT_WITHOUT_KNOWLEDGE = load_prompt(
@@ -32,7 +31,6 @@ def _build_chat_tools(*, knowledge_enabled: bool) -> list[Any]:
     """按知识库启用状态构造聊天节点工具列表。"""
 
     tools = [
-        get_current_time,
         get_safe_user_info,
     ]
     if knowledge_enabled:
@@ -72,7 +70,9 @@ def chat_agent(state: AgentState) -> dict[str, Any]:
         model=llm,
         tools=tools,
         system_prompt=SystemMessage(
-            content=_resolve_chat_system_prompt(knowledge_enabled=knowledge_enabled)
+            content=append_current_time_to_prompt(
+                _resolve_chat_system_prompt(knowledge_enabled=knowledge_enabled)
+            )
         ),
         middleware=[
             BasePromptMiddleware(),

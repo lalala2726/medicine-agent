@@ -13,14 +13,18 @@ from app.agent.assistant.domain.after_sale.tools import (
     get_admin_after_sale_list,
 )
 from app.agent.assistant.domain.analytics.tools import (
-    get_analytics_hot_products,
-    get_analytics_order_status_distribution,
-    get_analytics_order_trend,
-    get_analytics_overview,
-    get_analytics_payment_distribution,
-    get_analytics_product_return_rates,
+    get_analytics_after_sale_efficiency_summary,
+    get_analytics_after_sale_reason_distribution,
+    get_analytics_after_sale_status_distribution,
+    get_analytics_after_sale_trend,
+    get_analytics_conversion_summary,
+    get_analytics_fulfillment_summary,
+    get_analytics_range_summary,
+    get_analytics_realtime_overview,
+    get_analytics_return_refund_risk_products,
+    get_analytics_sales_trend,
+    get_analytics_top_selling_products,
 )
-from app.agent.assistant.domain.common.tools import get_current_time
 from app.agent.assistant.domain.common.tools import get_safe_user_info
 from app.agent.assistant.domain.order.tools import (
     get_order_list,
@@ -49,7 +53,7 @@ from app.core.agent.base_prompt_middleware import BasePromptMiddleware
 from app.core.langsmith import traceable
 from app.core.agent.skill import SkillMiddleware
 from app.services.token_usage_service import append_trace_and_refresh_token_usage
-from app.utils.prompt_utils import load_prompt
+from app.utils.prompt_utils import append_current_time_to_prompt, load_prompt
 
 _ADAPTIVE_AGENT_SYSTEM_PROMPT = load_prompt("assistant/adaptive_agent_system_prompt.md")
 
@@ -77,16 +81,20 @@ _DOMAIN_TOOL_MAP: dict[str, tuple[Any, ...]] = {
         get_admin_user_consume_info,
     ),
     "analytics_agent": (
-        get_analytics_overview,
-        get_analytics_order_trend,
-        get_analytics_order_status_distribution,
-        get_analytics_payment_distribution,
-        get_analytics_hot_products,
-        get_analytics_product_return_rates,
+        get_analytics_realtime_overview,
+        get_analytics_range_summary,
+        get_analytics_conversion_summary,
+        get_analytics_fulfillment_summary,
+        get_analytics_after_sale_efficiency_summary,
+        get_analytics_after_sale_status_distribution,
+        get_analytics_after_sale_reason_distribution,
+        get_analytics_top_selling_products,
+        get_analytics_return_refund_risk_products,
+        get_analytics_sales_trend,
+        get_analytics_after_sale_trend,
     ),
 }
 _BASE_ADAPTIVE_TOOLS: tuple[Any, ...] = (
-    get_current_time,
     get_safe_user_info,
 )
 
@@ -140,7 +148,7 @@ def _build_adaptive_tools(route_targets: list[str]) -> list[Any]:
         list[Any]:
             动态工具集合，规则为：
             1. 先按 `route_targets` 顺序追加对应业务域工具；
-            2. 再追加基础工具（当前时间、用户信息）；
+            2. 再追加基础工具（用户信息）；
             3. 全过程按对象标识去重。
 
     异常说明：
@@ -212,7 +220,9 @@ def adaptive_agent(state: AgentState) -> dict[str, Any]:
     llm_model_name = str(getattr(llm, "model_name", "") or "").strip()
     agent = create_agent(
         model=llm,
-        system_prompt=SystemMessage(content=_ADAPTIVE_AGENT_SYSTEM_PROMPT),
+        system_prompt=SystemMessage(
+            content=append_current_time_to_prompt(_ADAPTIVE_AGENT_SYSTEM_PROMPT)
+        ),
         tools=adaptive_tools,
         middleware=[
             BasePromptMiddleware(),

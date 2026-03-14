@@ -1,35 +1,33 @@
-"""
-运营分析工具参数模型。
-"""
+"""运营分析工具参数模型。"""
 
 from __future__ import annotations
-
-from typing import Literal
 
 from pydantic import BaseModel, Field
 
 
-class AnalyticsOrderTrendRequest(BaseModel):
-    """订单趋势查询请求。"""
+class AnalyticsDaysRequest(BaseModel):
+    """按最近天数查询的运营分析请求。"""
 
-    period: Literal["DAY", "WEEK", "MONTH"] = Field(
-        default="DAY",
-        description="时间周期，支持 DAY(日)、WEEK(周)、MONTH(月)",
+    days: int = Field(
+        default=30,
+        ge=1,
+        le=730,
+        description="最近天数，默认30，范围1-730",
     )
 
 
-class AnalyticsTopLimitRequest(BaseModel):
-    """排行榜/统计 TopN 查询请求。"""
+class AnalyticsRankRequest(AnalyticsDaysRequest):
+    """排行榜查询请求。"""
 
     limit: int = Field(
         default=10,
         ge=1,
-        le=200,
-        description="返回数量限制，默认10，范围1-200",
+        le=20,
+        description="返回数量限制，默认10，范围1-20",
     )
 
 
 __all__ = [
-    "AnalyticsOrderTrendRequest",
-    "AnalyticsTopLimitRequest",
+    "AnalyticsDaysRequest",
+    "AnalyticsRankRequest",
 ]

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 from app.utils.resource_text_utils import (
     RESOURCES_DIR,
     load_resource_text,
@@ -9,6 +11,7 @@ from app.utils.resource_text_utils import (
 PROMPT_DIR = RESOURCES_DIR / "prompt"
 _DEFAULT_PROMPT_DIR = PROMPT_DIR.resolve()
 _PROMPT_CACHE: dict[str, str] = {}
+_UTC_PLUS_8 = timezone(timedelta(hours=8))
 
 
 class PromptUtils:
@@ -50,3 +53,24 @@ def load_prompt(name: str) -> str:
     """按相对路径读取 `resources/prompt` 下的 markdown 提示词。"""
 
     return PromptUtils.load_prompt(name)
+
+
+def append_current_time_to_prompt(prompt: str, now: datetime | None = None) -> str:
+    """向提示词末尾追加当前时间说明。
+
+    Args:
+        prompt: 原始提示词文本。
+        now: 可选时间注入点；为空时使用当前 UTC 时间。
+
+    Returns:
+        str: 追加了 `当前时间：YYYY-MM-DD HH:MM UTC+8` 的提示词文本。
+    """
+
+    current_time = now or datetime.now(timezone.utc)
+    if current_time.tzinfo is None:
+        current_time = current_time.replace(tzinfo=timezone.utc)
+    formatted_time = current_time.astimezone(_UTC_PLUS_8).strftime("%Y-%m-%d %H:%M UTC+8")
+    normalized_prompt = prompt.rstrip()
+    if not normalized_prompt:
+        return f"当前时间：{formatted_time}"
+    return f"{normalized_prompt}\n\n当前时间：{formatted_time}"

@@ -217,6 +217,29 @@ def test_skill_middleware_defaults_to_root_scope_when_scope_missing(
     ]
 
 
+def test_discover_skills_finds_repo_chart_skill_in_direct_skill_mode() -> None:
+    """验证真实仓库中的 chart skill 能被 direct-skill 模式发现。
+
+    测试目的：
+        覆盖默认 `SKILLS_ROOT` 的真实路径解析，防止根目录偏移后导致
+        `skill_scope=\"chart\"` 返回空列表。
+
+    预期结果：
+        `discover_skills(skill_scope=\"chart\")` 返回名为 `chart` 的技能元数据。
+    """
+
+    metadata, _ = discover_skills(skill_scope="chart")
+
+    assert metadata == [
+        {
+            "name": "chart",
+            "description": "图表模板技能，提供 18 种图表类型的模板规范、字段说明与标准输出格式，基于 GPT-Vis (AntV) 规范。",
+            "license": "Apache-2.0",
+            "metadata": {"author": "Chuang", "version": "1.0"},
+        }
+    ]
+
+
 def test_before_agent_returns_metadata_without_path(
         monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
