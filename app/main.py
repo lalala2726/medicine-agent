@@ -51,20 +51,34 @@ OPENAPI_DESCRIPTION = """
 _speech_startup_probe_done = False
 
 
+async def _run_speech_startup_probes() -> None:
+    """在配置快照就绪后执行语音启动探活。"""
+
+    probe_results = await asyncio.gather(
+        verify_volcengine_stt_connection_on_startup(),
+        verify_volcengine_tts_connection_on_startup(),
+        return_exceptions=True,
+    )
+    for result in probe_results:
+        if isinstance(result, Exception):
+            raise result
+
+
+async def _prepare_runtime_before_serving() -> None:
+    """显式固化启动顺序：先加载配置快照，再探活语音连接。"""
+
+    initialize_agent_config_snapshot()
+    await _run_speech_startup_probes()
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     global _speech_startup_probe_done
-    initialize_agent_config_snapshot()
     if not _speech_startup_probe_done:
-        probe_results = await asyncio.gather(
-            verify_volcengine_stt_connection_on_startup(),
-            verify_volcengine_tts_connection_on_startup(),
-            return_exceptions=True,
-        )
-        for result in probe_results:
-            if isinstance(result, Exception):
-                raise result
+        await _prepare_runtime_before_serving()
         _speech_startup_probe_done = True
+    else:
+        initialize_agent_config_snapshot()
 
     # 启动 MQ broker（有配置时才启动）
     _broker = None

@@ -16,6 +16,7 @@ from app.core.config_sync.llm import (
 from app.core.config_sync.snapshot import (
     AGENT_CONFIG_REDIS_KEY,
     AgentChatModelSlot,
+    AgentConfigRefreshResult,
     AgentConfigLoadError,
     AgentConfigSnapshot,
     AgentEmbeddingModelSlot,
@@ -31,6 +32,7 @@ from app.core.config_sync.snapshot import (
 __all__ = [
     "AGENT_CONFIG_REDIS_KEY",
     "AgentChatModelSlot",
+    "AgentConfigRefreshResult",
     "AgentConfigLoadError",
     "AgentConfigSnapshot",
     "AgentEmbeddingModelSlot",

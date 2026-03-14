@@ -469,12 +469,14 @@ def test_refresh_agent_config_snapshot_keeps_previous_redis_snapshot_on_failure(
         lambda: _FakeRedis(error=RuntimeError("redis down")),
     )
 
-    refreshed = agent_config_module.refresh_agent_config_snapshot(
+    refresh_result = agent_config_module.refresh_agent_config_snapshot(
         redis_key=agent_config_module.AGENT_CONFIG_REDIS_KEY,
     )
 
     current_snapshot = agent_config_module.get_current_agent_config_snapshot()
-    assert refreshed is False
+    assert refresh_result.applied is False
+    assert refresh_result.speech_changed is False
+    assert refresh_result.current_snapshot is not None
     assert current_snapshot.get_chat_slot(AgentChatModelSlot.ROUTE) is not None
     assert current_snapshot.get_chat_slot(AgentChatModelSlot.ROUTE).model_name == "gpt-old"
 
@@ -493,11 +495,12 @@ def test_refresh_agent_config_snapshot_always_reload_when_notification_arrives(
     reloaded_redis = _FakeRedis(return_value=reloaded_payload)
     monkeypatch.setattr(agent_config_module, "get_redis_connection", lambda: reloaded_redis)
 
-    refreshed = agent_config_module.refresh_agent_config_snapshot(
+    refresh_result = agent_config_module.refresh_agent_config_snapshot(
         redis_key=agent_config_module.AGENT_CONFIG_REDIS_KEY,
     )
 
-    assert refreshed is True
+    assert refresh_result.applied is True
+    assert refresh_result.speech_changed is False
     assert reloaded_redis.get_calls == [agent_config_module.AGENT_CONFIG_REDIS_KEY]
 
 
@@ -513,12 +516,13 @@ def test_refresh_agent_config_snapshot_applies_redis_payload(
     refreshed_payload = json.dumps(_build_snapshot_payload(route_model_name="gpt-new")).encode("utf-8")
     monkeypatch.setattr(agent_config_module, "get_redis_connection", lambda: _FakeRedis(return_value=refreshed_payload))
 
-    refreshed = agent_config_module.refresh_agent_config_snapshot(
+    refresh_result = agent_config_module.refresh_agent_config_snapshot(
         redis_key=agent_config_module.AGENT_CONFIG_REDIS_KEY,
     )
 
     current_snapshot = agent_config_module.get_current_agent_config_snapshot()
-    assert refreshed is True
+    assert refresh_result.applied is True
+    assert refresh_result.speech_changed is False
     assert current_snapshot.get_chat_slot(AgentChatModelSlot.ROUTE) is not None
     assert current_snapshot.get_chat_slot(AgentChatModelSlot.ROUTE).model_name == "gpt-new"
 
@@ -556,12 +560,15 @@ def test_refresh_agent_config_snapshot_applies_latest_speech_values(
     refreshed_payload = json.dumps(refreshed_payload_dict).encode("utf-8")
     monkeypatch.setattr(agent_config_module, "get_redis_connection", lambda: _FakeRedis(return_value=refreshed_payload))
 
-    refreshed = agent_config_module.refresh_agent_config_snapshot(
+    refresh_result = agent_config_module.refresh_agent_config_snapshot(
         redis_key=agent_config_module.AGENT_CONFIG_REDIS_KEY,
     )
 
     current_snapshot = agent_config_module.get_current_agent_config_snapshot()
-    assert refreshed is True
+    assert refresh_result.applied is True
+    assert refresh_result.speech_changed is True
+    assert refresh_result.previous_snapshot is not None
+    assert refresh_result.current_snapshot is not None
     assert current_snapshot.get_speech_tts_resource_id() == "seed-tts-3.0"
     assert current_snapshot.get_speech_tts_voice_type() == "S_demo_voice"
     assert current_snapshot.get_speech_tts_max_text_chars() == 512

@@ -1,4 +1,5 @@
 import asyncio
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -6,21 +7,32 @@ import pytest
 import app.core.speech.tts.client as service_module
 from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException
+from app.core.speech.runtime import clear_speech_runtime_state
 from app.core.speech.tts.config import VolcengineTtsConfig
 from app.core.speech.volcengine_speech_protocol import EventType, Message, MsgType
 from app.schemas.document.message import MessageRole
+
+
+@pytest.fixture(autouse=True)
+def _clear_speech_runtime_state_fixture():
+    clear_speech_runtime_state()
+    yield
+    clear_speech_runtime_state()
 
 
 class _DummyWebSocket:
     def __init__(self):
         self.sent_frames: list[bytes] = []
         self.closed = False
+        self.closed_event: asyncio.Event | None = None
 
     async def send(self, frame: bytes):
         self.sent_frames.append(frame)
 
     async def close(self):
         self.closed = True
+        if self.closed_event is not None:
+            self.closed_event.set()
 
 
 def _build_config() -> VolcengineTtsConfig:
@@ -181,6 +193,50 @@ def test_prepare_tts_text_raises_when_sanitized_empty():
     assert "清洗后为空" in exc_info.value.message
 
 
+def test_build_start_session_payload_keeps_enable_timestamp_for_tts_1_resource():
+    payload = json.loads(
+        service_module._build_start_session_payload(config=_build_config()).decode("utf-8")
+    )
+
+    assert payload["req_params"]["audio_params"] == {
+        "format": "mp3",
+        "sample_rate": 24000,
+        "enable_timestamp": True,
+    }
+
+
+def test_build_start_session_payload_omits_enable_timestamp_for_tts_2_resource():
+    config = VolcengineTtsConfig(
+        endpoint="wss://example.com/tts",
+        app_id="app-id",
+        access_token="token",
+        resource_id="seed-tts-2.0",
+        voice_type="zh_female_xiaohe_uranus_bigtts",
+        encoding="mp3",
+        sample_rate=24000,
+        max_text_chars=300,
+    )
+
+    payload = json.loads(
+        service_module._build_start_session_payload(config=config).decode("utf-8")
+    )
+
+    assert payload["req_params"]["audio_params"] == {
+        "format": "mp3",
+        "sample_rate": 24000,
+    }
+
+
+def test_build_task_request_payload_only_sends_text():
+    payload = json.loads(
+        service_module._build_task_request_payload(text="测试文本").decode("utf-8")
+    )
+
+    assert payload["req_params"] == {
+        "text": "测试文本",
+    }
+
+
 def test_stream_message_tts_yields_audio_chunks_in_order(monkeypatch):
     monkeypatch.setattr(
         service_module,
@@ -326,6 +382,98 @@ def test_stream_message_tts_stops_gracefully_when_upstream_interrupted(monkeypat
     assert chunks == []
     assert dummy_ws.closed is True
     assert usage_calls == []
+
+
+def test_stream_message_tts_interrupts_on_config_refresh(monkeypatch):
+    monkeypatch.setattr(
+        service_module,
+        "get_message_by_uuid",
+        lambda _uuid: SimpleNamespace(
+            conversation_id="507f1f77bcf86cd799439011",
+            role=MessageRole.AI,
+            content="测试文本",
+        ),
+    )
+    monkeypatch.setattr(
+        service_module,
+        "get_admin_conversation_by_id",
+        lambda **_kwargs: SimpleNamespace(uuid="conv-refresh", user_id=7),
+    )
+    monkeypatch.setattr(
+        service_module,
+        "resolve_volcengine_tts_config",
+        lambda **_kwargs: _build_config(),
+    )
+    monkeypatch.setattr(
+        service_module,
+        "build_volcengine_tts_headers",
+        lambda *_args, **_kwargs: {"X-Api-App-Key": "app-id"},
+    )
+    usage_calls: list[dict] = []
+    monkeypatch.setattr(
+        service_module,
+        "add_message_tts_usage",
+        lambda **kwargs: usage_calls.append(kwargs) or "507f1f77bcf86cd799439074",
+    )
+
+    registered_handles: list[object] = []
+    unregistered_handles: list[object] = []
+    monkeypatch.setattr(
+        service_module,
+        "register_active_tts_stream",
+        lambda handle: registered_handles.append(handle),
+    )
+    monkeypatch.setattr(
+        service_module,
+        "unregister_active_tts_stream",
+        lambda handle: unregistered_handles.append(handle),
+    )
+
+    dummy_ws = _DummyWebSocket()
+    dummy_ws.closed_event = asyncio.Event()
+
+    async def _fake_connect(*_args, **_kwargs):
+        return dummy_ws
+
+    monkeypatch.setattr(service_module.websockets, "connect", _fake_connect)
+
+    async def _noop(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(service_module, "start_connection", _noop)
+    monkeypatch.setattr(service_module, "start_session", _noop)
+    monkeypatch.setattr(service_module, "task_request", _noop)
+    monkeypatch.setattr(service_module, "finish_session", _noop)
+    monkeypatch.setattr(service_module, "finish_connection", _noop)
+    monkeypatch.setattr(service_module, "wait_for_event", _noop)
+
+    async def _wait_until_closed(*_args, **_kwargs):
+        await dummy_ws.closed_event.wait()
+        raise RuntimeError("connection closed")
+
+    monkeypatch.setattr(service_module, "receive_message", _wait_until_closed)
+
+    stream = service_module.build_message_tts_stream(
+        message_uuid="msg-refresh",
+        user_id=7,
+    )
+
+    async def _run_stream_with_refresh() -> list[bytes]:
+        consume_task = asyncio.create_task(_collect_stream(stream.audio_stream))
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        assert len(registered_handles) == 1
+        handle = registered_handles[0]
+        await handle.interrupt_due_to_config_refresh()
+        return await consume_task
+
+    chunks = asyncio.run(_run_stream_with_refresh())
+
+    assert chunks == []
+    assert dummy_ws.closed is True
+    assert usage_calls == []
+    assert len(unregistered_handles) == 1
+    assert unregistered_handles[0] is registered_handles[0]
 
 
 def test_stream_message_tts_persists_usage_with_truncated_flag(monkeypatch):

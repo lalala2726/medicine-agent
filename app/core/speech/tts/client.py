@@ -5,12 +5,17 @@ import time
 import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from typing import Any
 
 import websockets
 from loguru import logger
 
 from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException
+from app.core.speech.runtime import (
+    register_active_tts_stream,
+    unregister_active_tts_stream,
+)
 from app.core.speech.tts.config import (
     VolcengineTtsConfig,
     build_volcengine_tts_headers,
@@ -46,6 +51,14 @@ _AUDIO_MEDIA_TYPE_BY_ENCODING = {
     "wav": "audio/wav",
     "pcm": "audio/L16",
     "ogg": "audio/ogg",
+}
+
+# 仅 TTS 1.0 资源支持 enable_timestamp。
+_TIMESTAMP_SUPPORTED_RESOURCE_IDS = {
+    "seed-tts-1.0",
+    "seed-tts-1.0-concurr",
+    "volc.service_type.10029",
+    "volc.service_type.10048",
 }
 
 
@@ -139,6 +152,48 @@ class TtsUsageContext:
     billable_chars: int
     max_text_chars: int
     is_truncated: bool
+
+
+class _ActiveTtsStreamHandle:
+    """运行中的 TTS 流句柄，用于配置刷新时中断上游连接。"""
+
+    def __init__(self, *, connect_id: str, session_id: str) -> None:
+        self.connect_id = connect_id
+        self.session_id = session_id
+        self._websocket: Any | None = None
+        self._interrupted = False
+
+    @property
+    def interrupted(self) -> bool:
+        return self._interrupted
+
+    def attach_websocket(self, websocket: Any) -> None:
+        self._websocket = websocket
+
+    async def interrupt_due_to_config_refresh(self) -> None:
+        if self._interrupted:
+            return
+        self._interrupted = True
+        websocket = self._websocket
+        if websocket is None:
+            return
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+
+
+def _supports_timestamp_for_resource(resource_id: str) -> bool:
+    """
+    判断当前资源是否支持 `enable_timestamp`。
+
+    火山双向 TTS 文档说明该参数仅适用于 TTS 1.0 资源。
+    """
+
+    normalized = resource_id.strip().lower()
+    if not normalized:
+        return False
+    return normalized in _TIMESTAMP_SUPPORTED_RESOURCE_IDS
 
 
 def resolve_audio_media_type(encoding: str) -> str:
@@ -381,6 +436,13 @@ def _build_start_session_payload(*, config: VolcengineTtsConfig) -> bytes:
         bytes: JSON 编码后的请求载荷。
     """
 
+    audio_params: dict[str, Any] = {
+        "format": config.encoding,
+        "sample_rate": config.sample_rate,
+    }
+    if _supports_timestamp_for_resource(config.resource_id):
+        audio_params["enable_timestamp"] = True
+
     payload = {
         "event": EventType.StartSession,
         "namespace": "BidirectionalTTS",
@@ -389,11 +451,7 @@ def _build_start_session_payload(*, config: VolcengineTtsConfig) -> bytes:
         },
         "req_params": {
             "speaker": config.voice_type,
-            "audio_params": {
-                "format": config.encoding,
-                "sample_rate": config.sample_rate,
-                "enable_timestamp": True,
-            },
+            "audio_params": audio_params,
             "additions": json.dumps(
                 {
                     "disable_markdown_filter": False,
@@ -404,12 +462,11 @@ def _build_start_session_payload(*, config: VolcengineTtsConfig) -> bytes:
     return json.dumps(payload, ensure_ascii=False).encode("utf-8")
 
 
-def _build_task_request_payload(*, config: VolcengineTtsConfig, text: str) -> bytes:
+def _build_task_request_payload(*, text: str) -> bytes:
     """
     构造 `TaskRequest` 事件请求体。
 
     Args:
-        config: TTS 配置对象。
         text: 待合成文本。
 
     Returns:
@@ -420,13 +477,7 @@ def _build_task_request_payload(*, config: VolcengineTtsConfig, text: str) -> by
         "event": EventType.TaskRequest,
         "namespace": "BidirectionalTTS",
         "req_params": {
-            "speaker": config.voice_type,
             "text": text,
-            "audio_params": {
-                "format": config.encoding,
-                "sample_rate": config.sample_rate,
-                "enable_timestamp": True,
-            },
         },
     }
     return json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -669,6 +720,11 @@ async def _stream_tts_audio(
     audio_chunk_count = 0
     audio_bytes = 0
     is_session_finished = False
+    runtime_handle = _ActiveTtsStreamHandle(
+        connect_id=connect_id,
+        session_id=session_id,
+    )
+    registered_in_runtime = False
 
     try:
         websocket = await websockets.connect(
@@ -676,6 +732,9 @@ async def _stream_tts_audio(
             additional_headers=headers,
             max_size=MAX_WS_MESSAGE_SIZE,
         )
+        runtime_handle.attach_websocket(websocket)
+        register_active_tts_stream(runtime_handle)
+        registered_in_runtime = True
         provider_log_id = _extract_log_id(websocket)
 
         await start_connection(websocket)
@@ -698,13 +757,20 @@ async def _stream_tts_audio(
 
         await task_request(
             websocket,
-            _build_task_request_payload(config=config, text=usage_context.sent_text),
+            _build_task_request_payload(text=usage_context.sent_text),
             session_id,
         )
         await finish_session(websocket, session_id)
 
         while True:
             message = await receive_message(websocket)
+            if runtime_handle.interrupted:
+                logger.info(
+                    "Volcengine TTS stream interrupted by speech config refresh connect_id={connect_id} session_id={session_id}",
+                    connect_id=connect_id,
+                    session_id=session_id,
+                )
+                break
             if message.type == MsgType.AudioOnlyServer:
                 if message.payload:
                     audio_chunk_count += 1
@@ -734,12 +800,21 @@ async def _stream_tts_audio(
                 break
 
     except Exception as exc:
-        logger.opt(exception=exc).warning(
-            "Volcengine TTS streaming interrupted connect_id={connect_id} session_id={session_id}",
-            connect_id=connect_id,
-            session_id=session_id,
-        )
+        if runtime_handle.interrupted:
+            logger.info(
+                "Volcengine TTS stream interrupted by speech config refresh connect_id={connect_id} session_id={session_id}",
+                connect_id=connect_id,
+                session_id=session_id,
+            )
+        else:
+            logger.opt(exception=exc).warning(
+                "Volcengine TTS streaming interrupted connect_id={connect_id} session_id={session_id}",
+                connect_id=connect_id,
+                session_id=session_id,
+            )
     finally:
+        if registered_in_runtime:
+            unregister_active_tts_stream(runtime_handle)
         duration_ms = int((time.monotonic() - started_at) * 1000)
         if is_session_finished:
             _persist_tts_usage_on_success(
@@ -754,12 +829,13 @@ async def _stream_tts_audio(
             )
         if websocket is not None:
             try:
-                await finish_connection(websocket)
-                await wait_for_event(
-                    websocket,
-                    msg_type=MsgType.FullServerResponse,
-                    event_type=EventType.ConnectionFinished,
-                )
+                if not runtime_handle.interrupted:
+                    await finish_connection(websocket)
+                    await wait_for_event(
+                        websocket,
+                        msg_type=MsgType.FullServerResponse,
+                        event_type=EventType.ConnectionFinished,
+                    )
             except Exception:
                 pass
             try:

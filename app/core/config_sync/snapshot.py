@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
@@ -61,6 +62,16 @@ class AgentConfigLoadReason(str, Enum):
     REDIS_READ_FAILED = "redis_read_failed"
     INVALID_JSON = "invalid_json"
     INVALID_SCHEMA = "invalid_schema"
+
+
+@dataclass(frozen=True)
+class AgentConfigRefreshResult:
+    """Agent 配置刷新结果。"""
+
+    applied: bool
+    previous_snapshot: "AgentConfigSnapshot | None"
+    current_snapshot: "AgentConfigSnapshot | None"
+    speech_changed: bool
 
 
 #: Agent 配置加载失败原因到中文日志文案的映射。
@@ -206,6 +217,26 @@ def _read_local_fallback_env_value(name: str) -> str | None:
         return None
     normalized = str(dotenv_value or "").strip()
     return normalized or None
+
+
+def _clone_snapshot(snapshot: "AgentConfigSnapshot | None") -> "AgentConfigSnapshot | None":
+    """深拷贝当前快照对象。"""
+
+    if snapshot is None:
+        return None
+    return snapshot.model_copy(deep=True)
+
+
+def _normalize_speech_config(snapshot: "AgentConfigSnapshot | None") -> dict[str, Any] | None:
+    """提取用于语音配置比对的归一化 speech 子树。"""
+
+    if snapshot is None or snapshot.speech is None:
+        return None
+    return snapshot.speech.model_dump(
+        mode="json",
+        by_alias=False,
+        exclude_none=False,
+    )
 
 
 def _resolve_local_fallback_provider() -> LlmProvider:
@@ -1142,15 +1173,18 @@ def get_current_agent_config_snapshot() -> AgentConfigSnapshot:
     return initialize_agent_config_snapshot()
 
 
-def refresh_agent_config_snapshot(*, redis_key: str) -> bool:
+def refresh_agent_config_snapshot(*, redis_key: str) -> AgentConfigRefreshResult:
     """在收到 MQ 刷新通知后重新拉取 Redis 配置并更新本地快照。
 
     Args:
         redis_key: 需要重新读取的 Redis key。
 
     Returns:
-        当成功从 Redis 读取并替换当前快照时返回 ``True``；否则返回 ``False``。
+        AgentConfigRefreshResult: 结构化刷新结果，包含语音配置是否变化。
     """
+
+    with _CONFIG_LOCK:
+        previous_snapshot = _clone_snapshot(_current_snapshot)
 
     try:
         snapshot = _load_snapshot_from_redis(redis_key=redis_key)
@@ -1160,16 +1194,29 @@ def refresh_agent_config_snapshot(*, redis_key: str) -> bool:
             redis_key,
             _get_load_reason_label(exc.reason),
         )
-        return False
+        return AgentConfigRefreshResult(
+            applied=False,
+            previous_snapshot=previous_snapshot,
+            current_snapshot=previous_snapshot,
+            speech_changed=False,
+        )
 
     with _CONFIG_LOCK:
         _set_current_snapshot(snapshot, source=AgentConfigSource.REDIS)
+    current_snapshot = snapshot.model_copy(deep=True)
+    speech_changed = _normalize_speech_config(previous_snapshot) != _normalize_speech_config(current_snapshot)
     logger.info(
-        "Agent 配置刷新已生效：来源={}，redis_key={}",
+        "Agent 配置刷新已生效：来源={}，redis_key={}，speech_changed={}",
         AgentConfigSource.REDIS.value,
         redis_key,
+        speech_changed,
     )
-    return True
+    return AgentConfigRefreshResult(
+        applied=True,
+        previous_snapshot=previous_snapshot,
+        current_snapshot=current_snapshot,
+        speech_changed=speech_changed,
+    )
 
 
 def clear_agent_config_snapshot_state() -> None:
