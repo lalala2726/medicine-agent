@@ -516,7 +516,6 @@ def test_assistant_chat_schedules_user_persist_without_blocking_main_flow(monkey
     initial_state = stream_config.build_initial_state("x")
     assert "context" in initial_state
     assert "messages" in initial_state
-    assert initial_state["enable_thinking"] is False
     assert [message.content for message in initial_state["history_messages"]] == [
         "历史问题",
         "历史回答",
@@ -548,80 +547,6 @@ def test_assistant_chat_schedules_user_persist_without_blocking_main_flow(monkey
             "content": "代理测试",
         }
     ]
-
-
-def test_assistant_chat_injects_enable_thinking_flag_into_initial_state(monkeypatch):
-    """测试目的：验证开启深度思考时状态透传生效；预期结果：initial_state.enable_thinking 为 True。"""
-
-    captured: dict = {}
-
-    def _fake_create_streaming_response(question: str, config: AssistantStreamConfig):
-        captured["question"] = question
-        captured["config"] = config
-
-        async def _stream():
-            yield (
-                    "data: "
-                    + json.dumps(
-                {
-                    "content": {"text": ""},
-                    "type": "answer",
-                    "is_end": True,
-                    "timestamp": 1,
-                },
-                ensure_ascii=False,
-            )
-                    + "\n\n"
-            )
-
-        return StreamingResponse(_stream(), media_type="text/event-stream")
-
-    monkeypatch.setattr(service_module, "create_streaming_response", _fake_create_streaming_response)
-    monkeypatch.setattr(service_module, "get_user_id", lambda: 100)
-    monkeypatch.setattr(service_module.uuid, "uuid4", lambda: "assistant-msg-uuid")
-    monkeypatch.setattr(
-        service_module,
-        "get_admin_conversation",
-        lambda *, conversation_uuid, user_id: ConversationDocument(
-            _id=ObjectId("507f1f77bcf86cd799439011"),
-            uuid=conversation_uuid,
-            conversation_type=ConversationType.ADMIN,
-            user_id=user_id,
-            title="会话标题",
-            create_time=datetime.datetime(2026, 1, 1, 10, 0, 0),
-            update_time=datetime.datetime(2026, 1, 1, 10, 0, 0),
-            is_deleted=0,
-        ),
-    )
-    monkeypatch.setattr(
-        service_module,
-        "resolve_assistant_memory_mode",
-        lambda: "window",
-    )
-    monkeypatch.setattr(
-        service_module,
-        "load_memory",
-        lambda *, memory_type, conversation_uuid, user_id: SimpleNamespace(
-            messages=[HumanMessage(content="历史问题"), AIMessage(content="历史回答")]
-        ),
-    )
-    monkeypatch.setattr(
-        service_module,
-        "_schedule_background_task",
-        lambda *, task_name, func, kwargs: None,
-    )
-
-    response = service_module.assistant_chat(
-        question="开启思考",
-        conversation_uuid="conv-1",
-        enable_thinking=True,
-    )
-
-    assert isinstance(response, StreamingResponse)
-    assert captured["question"] == "开启思考"
-    stream_config = captured["config"]
-    initial_state = stream_config.build_initial_state("x")
-    assert initial_state["enable_thinking"] is True
 
 
 def test_answer_completed_schedules_async_persist_with_execution_trace(monkeypatch):
@@ -1066,25 +991,31 @@ def test_conversation_messages_returns_latest_page_in_chronological_order(monkey
     ]
     monkeypatch.setattr(
         service_module,
+        "count_messages",
+        lambda **_kwargs: 2,
+    )
+    monkeypatch.setattr(
+        service_module,
         "list_messages",
         lambda **_kwargs: [
             type("Doc", (), item)() for item in mock_docs
         ],
     )
 
-    result = service_module.conversation_messages(
+    rows, total = service_module.conversation_messages(
         conversation_uuid="conv-1",
         page_request=PageRequest(page_num=1, page_size=50),
     )
 
-    assert [item.id for item in result] == ["msg-user-1", "msg-ai-2"]
-    assert result[0].role == "user"
-    assert result[0].status is None
-    assert result[0].thinking is None
-    assert result[1].role == "ai"
-    assert result[1].status == "success"
-    assert result[1].thinking is None
-    assert result[1].thought_chain is None
+    assert total == 2
+    assert [item.id for item in rows] == ["msg-user-1", "msg-ai-2"]
+    assert rows[0].role == "user"
+    assert rows[0].status is None
+    assert rows[0].thinking is None
+    assert rows[1].role == "ai"
+    assert rows[1].status == "success"
+    assert rows[1].thinking is None
+    assert rows[1].thought_chain is None
 
 
 def test_conversation_messages_returns_thinking_for_ai_when_present(monkeypatch):
@@ -1113,17 +1044,23 @@ def test_conversation_messages_returns_thinking_for_ai_when_present(monkeypatch)
     ]
     monkeypatch.setattr(
         service_module,
+        "count_messages",
+        lambda **_kwargs: 2,
+    )
+    monkeypatch.setattr(
+        service_module,
         "list_messages",
         lambda **_kwargs: [
             type("Doc", (), item)() for item in reversed(mock_docs)
         ],
     )
 
-    result = service_module.conversation_messages(
+    rows, total = service_module.conversation_messages(
         conversation_uuid="conv-1",
         page_request=PageRequest(page_num=1, page_size=50),
     )
 
-    assert [item.id for item in result] == ["msg-user-1", "msg-ai-2"]
-    assert result[0].thinking is None
-    assert result[1].thinking == "这是完整思考文本"
+    assert total == 2
+    assert [item.id for item in rows] == ["msg-user-1", "msg-ai-2"]
+    assert rows[0].thinking is None
+    assert rows[1].thinking == "这是完整思考文本"

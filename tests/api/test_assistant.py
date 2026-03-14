@@ -290,67 +290,6 @@ def test_assistant_request_defaults_conversation_uuid_to_none(monkeypatch):
     assert captured["conversation_uuid"] is None
 
 
-def test_assistant_route_passes_enable_thinking_when_true(monkeypatch):
-    """测试目的：验证路由在开启深度思考时透传开关；预期结果：service 收到 enable_thinking=True。"""
-
-    captured: dict = {}
-    _mock_auth(monkeypatch)
-
-    def _fake_assistant_chat(
-            *,
-            question: str,
-            conversation_uuid: str | None = None,
-            enable_thinking: bool = False,
-    ):
-        captured["question"] = question
-        captured["conversation_uuid"] = conversation_uuid
-        captured["enable_thinking"] = enable_thinking
-        return _build_streaming_response("ok")
-
-    monkeypatch.setattr(assistant_module, "assistant_chat", _fake_assistant_chat)
-    client = TestClient(app)
-
-    response = client.post(
-        "/admin/assistant/chat",
-        headers=_auth_headers(),
-        json={"question": "思考开关", "enable_thinking": True},
-    )
-
-    assert response.status_code == 200
-    assert captured == {
-        "question": "思考开关",
-        "conversation_uuid": None,
-        "enable_thinking": True,
-    }
-
-
-def test_assistant_route_keeps_backward_signature_when_thinking_disabled(monkeypatch):
-    """测试目的：验证默认不开启时不传额外参数；预期结果：旧签名 service 仍可正常调用。"""
-
-    captured: dict = {}
-    _mock_auth(monkeypatch)
-
-    def _fake_assistant_chat(*, question: str, conversation_uuid: str | None = None):
-        captured["question"] = question
-        captured["conversation_uuid"] = conversation_uuid
-        return _build_streaming_response("ok")
-
-    monkeypatch.setattr(assistant_module, "assistant_chat", _fake_assistant_chat)
-    client = TestClient(app)
-
-    response = client.post(
-        "/admin/assistant/chat",
-        headers=_auth_headers(),
-        json={"question": "默认不开启", "enable_thinking": False},
-    )
-
-    assert response.status_code == 200
-    assert captured == {
-        "question": "默认不开启",
-        "conversation_uuid": None,
-    }
-
-
 def test_assistant_route_new_conversation_stream_first_notice_contains_conversation_and_message_uuid(monkeypatch):
     captured: dict = {}
     _mock_auth(monkeypatch)
@@ -571,29 +510,32 @@ def test_conversation_messages_route_delegates_to_service(monkeypatch):
         captured["conversation_uuid"] = conversation_uuid
         captured["page_num"] = page_request.page_num
         captured["page_size"] = page_request.page_size
-        return [
-            ConversationMessageResponse(
-                id="msg-1",
-                role="user",
-                content="你好",
-            ),
-            ConversationMessageResponse(
-                id="msg-2",
-                role="ai",
-                content="您好",
-                thinking="这是完整思考文本",
-                status="success",
-                thought_chain=[
-                    ThoughtNodeResponse(
-                        id="node-1",
-                        node="planner",
-                        message="planner",
-                        status="success",
-                        children=[],
-                    )
-                ],
-            ),
-        ]
+        return (
+            [
+                ConversationMessageResponse(
+                    id="msg-1",
+                    role="user",
+                    content="你好",
+                ),
+                ConversationMessageResponse(
+                    id="msg-2",
+                    role="ai",
+                    content="您好",
+                    thinking="这是完整思考文本",
+                    status="success",
+                    thought_chain=[
+                        ThoughtNodeResponse(
+                            id="node-1",
+                            node="planner",
+                            message="planner",
+                            status="success",
+                            children=[],
+                        )
+                    ],
+                ),
+            ],
+            2,
+        )
 
     monkeypatch.setattr(
         assistant_module,
@@ -603,7 +545,7 @@ def test_conversation_messages_route_delegates_to_service(monkeypatch):
     client = TestClient(app)
 
     response = client.get(
-        "/admin/assistant/conversation/conv-1/messages",
+        "/admin/assistant/history/conv-1",
         headers=_auth_headers(),
         params={"page_num": 1, "page_size": 50},
     )
@@ -611,13 +553,16 @@ def test_conversation_messages_route_delegates_to_service(monkeypatch):
     assert response.status_code == 200
     body = response.json()
     assert body["code"] == 200
-    assert body["data"][0] == {"id": "msg-1", "role": "user", "content": "你好"}
-    assert body["data"][1]["id"] == "msg-2"
-    assert body["data"][1]["role"] == "ai"
-    assert body["data"][1]["status"] == "success"
-    assert body["data"][1]["thinking"] == "这是完整思考文本"
-    assert body["data"][1]["thoughtChain"][0]["node"] == "planner"
-    assert "thinking" not in body["data"][0]
+    assert body["data"]["total"] == 2
+    assert body["data"]["page_num"] == 1
+    assert body["data"]["page_size"] == 50
+    assert body["data"]["rows"][0] == {"id": "msg-1", "role": "user", "content": "你好"}
+    assert body["data"]["rows"][1]["id"] == "msg-2"
+    assert body["data"]["rows"][1]["role"] == "ai"
+    assert body["data"]["rows"][1]["status"] == "success"
+    assert body["data"]["rows"][1]["thinking"] == "这是完整思考文本"
+    assert body["data"]["rows"][1]["thoughtChain"][0]["node"] == "planner"
+    assert "thinking" not in body["data"]["rows"][0]
     assert captured == {"conversation_uuid": "conv-1", "page_num": 1, "page_size": 50}
 
 
@@ -629,7 +574,7 @@ def test_conversation_messages_route_uses_default_pagination(monkeypatch):
         captured["conversation_uuid"] = conversation_uuid
         captured["page_num"] = page_request.page_num
         captured["page_size"] = page_request.page_size
-        return []
+        return ([], 0)
 
     monkeypatch.setattr(
         assistant_module,
@@ -639,14 +584,19 @@ def test_conversation_messages_route_uses_default_pagination(monkeypatch):
     client = TestClient(app)
 
     response = client.get(
-        "/admin/assistant/conversation/conv-1/messages",
+        "/admin/assistant/history/conv-1",
         headers=_auth_headers(),
     )
 
     assert response.status_code == 200
     body = response.json()
     assert body["code"] == 200
-    assert body["data"] == []
+    assert body["data"] == {
+        "rows": [],
+        "total": 0,
+        "page_num": 1,
+        "page_size": 50,
+    }
     assert captured == {"conversation_uuid": "conv-1", "page_num": 1, "page_size": 50}
 
 
@@ -656,7 +606,7 @@ def test_conversation_messages_route_rejects_page_size_above_50(monkeypatch):
 
     def _fake_conversation_messages(*, conversation_uuid: str, page_request):
         called["value"] = True
-        return []
+        return ([], 0)
 
     monkeypatch.setattr(
         assistant_module,
@@ -666,7 +616,7 @@ def test_conversation_messages_route_rejects_page_size_above_50(monkeypatch):
     client = TestClient(app)
 
     response = client.get(
-        "/admin/assistant/conversation/conv-1/messages",
+        "/admin/assistant/history/conv-1",
         headers=_auth_headers(),
         params={"page_size": 51},
     )
@@ -684,7 +634,7 @@ def test_conversation_messages_route_forbidden_without_role_or_permission(monkey
 
     def _fake_conversation_messages(*, conversation_uuid: str, page_request):
         called["value"] = True
-        return []
+        return ([], 0)
 
     monkeypatch.setattr(
         assistant_module,
@@ -694,7 +644,7 @@ def test_conversation_messages_route_forbidden_without_role_or_permission(monkey
     client = TestClient(app)
 
     response = client.get(
-        "/admin/assistant/conversation/conv-1/messages",
+        "/admin/assistant/history/conv-1",
         headers=_auth_headers(),
     )
 
@@ -719,7 +669,7 @@ def test_conversation_messages_route_returns_404_when_conversation_missing(monke
     client = TestClient(app)
 
     response = client.get(
-        "/admin/assistant/conversation/missing/messages",
+        "/admin/assistant/history/missing",
         headers=_auth_headers(),
     )
 
@@ -852,7 +802,7 @@ def test_update_conversation_title_route_delegates_to_service(monkeypatch):
     client = TestClient(app)
 
     response = client.put(
-        "/admin/assistant/conversation/conv-1/title",
+        "/admin/assistant/conversation/conv-1",
         headers=_auth_headers(),
         json={"title": "  新标题  "},
     )
@@ -907,7 +857,7 @@ def test_update_conversation_title_forbidden_without_role_or_permission(monkeypa
     client = TestClient(app)
 
     response = client.put(
-        "/admin/assistant/conversation/conv-1/title",
+        "/admin/assistant/conversation/conv-1",
         headers=_auth_headers(),
         json={"title": "新标题"},
     )
@@ -1054,98 +1004,6 @@ def test_assistant_message_tts_stream_route_rejects_extra_fields(monkeypatch):
     assert called["value"] is False
 
 
-def test_rate_limit_test_route_allows_anonymous_without_auth_header(monkeypatch):
-    called = _mock_verify_authorization_counter(monkeypatch, raise_on_call=True)
-    client = TestClient(app)
-
-    response = client.get("/admin/assistant/rate-limit/test")
-
-    assert response.status_code == 200
-    body = response.json()
-    assert body["code"] == 200
-    assert body["message"] == "限流测试通过"
-    assert body["data"] == {"status": "ok"}
-    assert called["count"] == 0
-
-
-def test_rate_limit_test_route_does_not_call_verify_authorization_even_with_auth_header(monkeypatch):
-    called = _mock_verify_authorization_counter(monkeypatch, raise_on_call=True)
-    client = TestClient(app)
-
-    response = client.get(
-        "/admin/assistant/rate-limit/test",
-        headers=_auth_headers(),
-    )
-
-    assert response.status_code == 200
-    assert called["count"] == 0
-
-
-def test_rate_limit_test_route_rate_limit_headers_still_present_for_anonymous(monkeypatch):
-    called = _mock_verify_authorization_counter(monkeypatch, raise_on_call=True)
-    _mock_rate_limit_result(
-        monkeypatch,
-        allowed=True,
-        retry_after_seconds=0,
-        limit=10,
-        remaining=9,
-        reset_seconds=37,
-    )
-    client = TestClient(app)
-
-    response = client.get("/admin/assistant/rate-limit/test")
-
-    assert response.status_code == 200
-    body = response.json()
-    assert body["code"] == 200
-    assert body["message"] == "限流测试通过"
-    assert body["data"] == {"status": "ok"}
-    assert response.headers["x-ratelimit-limit"] == "10"
-    assert response.headers["x-ratelimit-remaining"] == "9"
-    assert response.headers["x-ratelimit-reset"] == "37"
-    assert response.headers["retry-after"] == "0"
-    assert called["count"] == 0
-
-
-def test_rate_limit_test_route_returns_429_for_anonymous_when_limited(monkeypatch):
-    called = _mock_verify_authorization_counter(monkeypatch, raise_on_call=True)
-    _mock_rate_limit_result(
-        monkeypatch,
-        allowed=False,
-        retry_after_seconds=13,
-        limit=10,
-        remaining=0,
-        reset_seconds=13,
-    )
-    client = TestClient(app)
-
-    response = client.get("/admin/assistant/rate-limit/test")
-
-    assert response.status_code == ResponseCode.TOO_MANY_REQUESTS.code
-    assert response.headers["retry-after"] == "13"
-    assert response.headers["x-ratelimit-limit"] == "10"
-    assert response.headers["x-ratelimit-remaining"] == "0"
-    body = response.json()
-    assert body["code"] == ResponseCode.TOO_MANY_REQUESTS.code
-    assert body["message"] == "访问 /admin/assistant/rate-limit/test 过于频繁，请在 13 秒后再试"
-    assert called["count"] == 0
-    assert "data" not in body
-
-
-def test_assistant_rate_limit_test_route_returns_503_when_redis_unavailable(monkeypatch):
-    called = _mock_verify_authorization_counter(monkeypatch, raise_on_call=True)
-    _mock_rate_limit_result(monkeypatch, allowed=True, exc=RedisError("redis down"))
-    client = TestClient(app)
-
-    response = client.get("/admin/assistant/rate-limit/test")
-
-    assert response.status_code == ResponseCode.SERVICE_UNAVAILABLE.code
-    assert response.headers["retry-after"] == "1"
-    body = response.json()
-    assert body["code"] == ResponseCode.SERVICE_UNAVAILABLE.code
-    assert body["message"] == "限流服务不可用，请稍后再试"
-    assert called["count"] == 0
-    assert "data" not in body
 
 
 def test_non_anonymous_route_still_requires_authentication(monkeypatch):

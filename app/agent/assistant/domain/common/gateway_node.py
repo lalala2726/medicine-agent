@@ -6,18 +6,15 @@ from typing import Any
 from typing import Literal
 
 from langchain.agents import create_agent
-from langchain.agents.structured_output import ToolStrategy
 from langchain_core.messages import SystemMessage
 from pydantic import BaseModel, Field, ValidationError
 
 from app.agent.assistant.state import AgentState, ExecutionTraceState
+from app.core.config_sync import AgentChatModelSlot, create_agent_chat_llm
 from app.core.agent.agent_runtime import agent_invoke
 from app.core.agent.agent_tool_trace import record_agent_trace
 from app.core.agent.base_prompt_middleware import BasePromptMiddleware
 from app.core.langsmith import traceable
-from app.core.llms import create_chat_model
-from app.core.llms.common import resolve_llm_value
-from app.core.llms.provider import LlmProvider, resolve_provider
 from app.services.token_usage_service import append_trace_and_refresh_token_usage
 from app.utils.prompt_utils import load_prompt
 
@@ -72,43 +69,6 @@ class GatewayRoutingSchema(BaseModel):
     task_difficulty: Literal["normal", "high"] = Field(
         description="任务难度，仅允许 normal 或 high",
     )
-
-
-def _resolve_gateway_router_model_name() -> str:
-    """
-    功能描述：
-        解析 Gateway 路由节点专用模型名称。
-
-    参数说明：
-        无。
-
-    返回值：
-        str: Gateway 路由节点最终模型名称。
-
-    异常说明：
-        RuntimeError: 当 provider 对应的“专用模型配置 + 通用 chat 模型配置”均缺失时抛出。
-    """
-
-    resolved_provider = resolve_provider(None)
-    if resolved_provider is LlmProvider.ALIYUN:
-        dedicated_key = "DASHSCOPE_GATEWAY_ROUTER_MODEL"
-        fallback_key = "DASHSCOPE_CHAT_MODEL"
-    elif resolved_provider is LlmProvider.VOLCENGINE:
-        dedicated_key = "VOLCENGINE_LLM_GATEWAY_ROUTER_MODEL"
-        fallback_key = "VOLCENGINE_LLM_CHAT_MODEL"
-    else:
-        dedicated_key = "OPENAI_GATEWAY_ROUTER_MODEL"
-        fallback_key = "OPENAI_CHAT_MODEL"
-
-    gateway_model_name = resolve_llm_value(name=dedicated_key)
-    if gateway_model_name:
-        return gateway_model_name
-
-    fallback_model_name = resolve_llm_value(name=fallback_key)
-    if fallback_model_name:
-        return fallback_model_name
-
-    raise RuntimeError(f"{dedicated_key} and {fallback_key} are not set")
 
 
 def _normalize_route_targets(route_targets: list[str]) -> list[str]:
@@ -167,25 +127,25 @@ def _resolve_gateway_routing_result(raw_payload: Any) -> dict[str, Any]:
 
     if not isinstance(raw_payload, Mapping):
         return dict(_GATEWAY_ROUTE_FALLBACK)
-    structured_response = raw_payload.get("structured_response")
 
-    structured_mapping: Mapping[str, Any] | None = None
-    if isinstance(structured_response, Mapping):
-        structured_mapping = structured_response
-    elif isinstance(structured_response, BaseModel):
-        structured_mapping = structured_response.model_dump()
-    elif isinstance(structured_response, str):
-        try:
-            parsed_json = json.loads(structured_response)
-        except json.JSONDecodeError:
-            parsed_json = None
-        if isinstance(parsed_json, Mapping):
-            structured_mapping = parsed_json
-
-    if structured_mapping is None:
+    raw_messages = raw_payload.get("messages")
+    if not isinstance(raw_messages, list) or not raw_messages:
         return dict(_GATEWAY_ROUTE_FALLBACK)
+
+    last_message = raw_messages[-1]
+    raw_content = getattr(last_message, "content", None)
+    if not isinstance(raw_content, str):
+        return dict(_GATEWAY_ROUTE_FALLBACK)
+
     try:
-        parsed = GatewayRoutingSchema.model_validate(structured_mapping)
+        parsed_json = json.loads(raw_content.strip())
+    except json.JSONDecodeError:
+        return dict(_GATEWAY_ROUTE_FALLBACK)
+    if not isinstance(parsed_json, Mapping):
+        return dict(_GATEWAY_ROUTE_FALLBACK)
+
+    try:
+        parsed = GatewayRoutingSchema.model_validate(parsed_json)
     except ValidationError:
         return dict(_GATEWAY_ROUTE_FALLBACK)
     normalized_targets = _normalize_route_targets(list(parsed.route_targets))
@@ -210,21 +170,19 @@ def gateway_router(state: AgentState) -> dict[str, Any]:
         dict[str, Any]: 节点输出状态增量，包含 `routing/execution_traces/token_usage`。
 
     异常说明：
-        RuntimeError:
-            - 当路由节点专用模型与通用模型均未配置时由 `_resolve_gateway_router_model_name` 抛出。
+        RuntimeError: 当 Redis 与本地环境均未提供可用模型时由底层模型工厂抛出。
     """
 
-    gateway_model_name = _resolve_gateway_router_model_name()
-    llm = create_chat_model(
-        model=gateway_model_name,
+    llm = create_agent_chat_llm(
+        slot=AgentChatModelSlot.ROUTE,
         temperature=0.0,
         think=False,
     )
+    llm_model_name = str(getattr(llm, "model_name", "") or "").strip()
     agent = create_agent(
         model=llm,
         system_prompt=SystemMessage(content=_GATEWAY_PROMPT),
         middleware=[BasePromptMiddleware()],
-        response_format=ToolStrategy(GatewayRoutingSchema),
     )
     history_messages = list(state.get("history_messages") or [])
     # 路由节点无需过多的上下文，只需要截取最近的20条消息
@@ -240,7 +198,7 @@ def gateway_router(state: AgentState) -> dict[str, Any]:
     trace_item = ExecutionTraceState(
         sequence=len(current_execution_traces) + 1,
         node_name="gateway_router",
-        model_name=gateway_model_name or str(trace.get("model_name") or "unknown"),
+        model_name=llm_model_name or str(trace.get("model_name") or "unknown"),
         status="success",
         output_text=str(trace.get("text") or ""),
         llm_usage_complete=bool(trace.get("is_usage_complete", False)),

@@ -11,6 +11,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import Response
 
 from app.api.main import api_router
+from app.core.config_sync import initialize_agent_config_snapshot
 from app.core.exception.exception_handlers import ExceptionHandlers
 from app.core.exception.exceptions import ServiceException
 from app.core.mq.broker import get_broker, is_mq_configured
@@ -53,6 +54,7 @@ _speech_startup_probe_done = False
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     global _speech_startup_probe_done
+    initialize_agent_config_snapshot()
     if not _speech_startup_probe_done:
         probe_results = await asyncio.gather(
             verify_volcengine_stt_connection_on_startup(),

@@ -422,6 +422,24 @@ def test_count_summarizable_messages_applies_summary_filter(monkeypatch):
     assert collection.last_count_query["_id"] == {"$gt": ObjectId("507f1f77bcf86cd799439010")}
 
 
+def test_count_messages_counts_only_current_conversation(monkeypatch):
+    """测试目的：普通消息总数统计仅按 conversation_id 过滤；预期结果：查询条件不包含其他过滤项。"""
+
+    collection = _DummyCollection()
+    collection.count_documents_result = 9
+    monkeypatch.setattr(service_module, "get_mongo_database", lambda: {"messages": collection})
+    monkeypatch.setattr(service_module, "_resolve_collection_name", lambda: "messages")
+
+    count = service_module.count_messages(
+        conversation_id="507f1f77bcf86cd799439011",
+    )
+
+    assert count == 9
+    assert collection.last_count_query == {
+        "conversation_id": ObjectId("507f1f77bcf86cd799439011"),
+    }
+
+
 def test_list_latest_summarizable_messages_returns_ascending(monkeypatch):
     """测试目的：读取最新可总结消息后返回正序；预期结果：输出顺序为旧到新。"""
 

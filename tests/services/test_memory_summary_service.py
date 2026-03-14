@@ -77,13 +77,13 @@ def test_refresh_conversation_summary_persists_latest_window_with_cas(monkeypatc
             ),
         ],
     )
-    monkeypatch.setattr(service_module, "resolve_assistant_summary_model", lambda: "summary-model")
+    monkeypatch.setattr(service_module, "resolve_agent_summary_model_name", lambda: "summary-model")
     monkeypatch.setattr(
         service_module,
         "_call_summary_llm",
         lambda *, system_prompt, user_prompt, model_name: "新摘要",
     )
-    monkeypatch.setattr(service_module, "resolve_assistant_summary_max_tokens", lambda: 2000)
+    monkeypatch.setattr(service_module, "_resolve_summary_budget_max_tokens", lambda: 2000)
     monkeypatch.setattr(
         service_module,
         "_enforce_summary_token_budget",
@@ -104,3 +104,47 @@ def test_refresh_conversation_summary_persists_latest_window_with_cas(monkeypatc
     assert saved_payload["summary_version"] == 4
     assert saved_payload["summary_token_count"] == 120
     assert saved_payload["expected_last_summarized_message_id"] == "507f1f77bcf86cd799439050"
+
+
+def test_resolve_summary_budget_max_tokens_prefers_agent_config(monkeypatch):
+    """测试目的：聊天历史总结预算应优先使用 Agent 配置槽位的 maxTokens；预期结果：Redis 槽位值优先于本地 env fallback。"""
+
+    monkeypatch.setattr(service_module, "resolve_agent_summary_max_tokens", lambda: 4096)
+
+    resolved_max_tokens = service_module._resolve_summary_budget_max_tokens()
+
+    assert resolved_max_tokens == 4096
+
+
+def test_resolve_summary_budget_max_tokens_treats_zero_as_unlimited(monkeypatch):
+    """测试目的：聊天历史总结预算为 0 时应视为不限制；预期结果：预算解析返回 None。"""
+
+    monkeypatch.setattr(service_module, "resolve_agent_summary_max_tokens", lambda: None)
+
+    resolved_max_tokens = service_module._resolve_summary_budget_max_tokens()
+
+    assert resolved_max_tokens is None
+
+
+def test_enforce_summary_token_budget_skips_truncation_when_max_tokens_is_zero(monkeypatch):
+    """测试目的：预算为 0 时应视为不限制；预期结果：直接返回原摘要与原 token 数。"""
+
+    # 使用本地桩避免测试环境首次加载 tiktoken 编码时触发外网请求。
+    def _fake_count_tokens_with_fallback(*, text: str, model_name: str | None) -> int:
+        del model_name
+        return len(text)
+
+    monkeypatch.setattr(
+        service_module,
+        "_count_tokens_with_fallback",
+        _fake_count_tokens_with_fallback,
+    )
+
+    normalized_summary, token_count = service_module._enforce_summary_token_budget(
+        summary_text="这是一个不会被裁剪的摘要文本",
+        max_tokens=0,
+        model_name=None,
+    )
+
+    assert normalized_summary == "这是一个不会被裁剪的摘要文本"
+    assert token_count > 0

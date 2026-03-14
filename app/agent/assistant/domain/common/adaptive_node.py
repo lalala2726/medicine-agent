@@ -41,12 +41,12 @@ from app.agent.assistant.domain.user.tools import (
     get_admin_user_wallet_flow,
 )
 from app.core.agent.agent_event_bus import emit_answer_delta, emit_thinking_delta
+from app.core.config_sync import create_agent_chat_llm
 from app.core.agent.agent_runtime import agent_stream
 from app.core.agent.agent_tool_events import build_tool_status_middleware
 from app.core.agent.agent_tool_trace import record_agent_trace
 from app.core.agent.base_prompt_middleware import BasePromptMiddleware
 from app.core.langsmith import traceable
-from app.core.llms import create_chat_model
 from app.core.agent.skill import SkillMiddleware
 from app.services.token_usage_service import append_trace_and_refresh_token_usage
 from app.utils.prompt_utils import load_prompt
@@ -200,14 +200,14 @@ def adaptive_agent(state: AgentState) -> dict[str, Any]:
         不主动抛出业务异常；模型、工具与中间件链路异常由上层统一捕获与降级处理。
     """
 
-    model_name, enable_think = model_switch(state)
+    model_slot = model_switch(state)
     adaptive_route_targets = _resolve_adaptive_route_targets(state)
     adaptive_tools = _build_adaptive_tools(adaptive_route_targets)
     history_messages = list(state.get("history_messages") or [])
-    llm = create_chat_model(
-        model=model_name,
+    llm = create_agent_chat_llm(
+        slot=model_slot,
         temperature=1.0,
-        think=enable_think,
+        think=False,
     )
     llm_model_name = str(getattr(llm, "model_name", "") or "").strip()
     agent = create_agent(
@@ -225,7 +225,7 @@ def adaptive_agent(state: AgentState) -> dict[str, Any]:
         agent,
         history_messages,
         on_model_delta=emit_answer_delta,
-        on_thinking_delta=emit_thinking_delta if enable_think else None,
+        on_thinking_delta=emit_thinking_delta,
     )
     trace = record_agent_trace(
         payload=stream_result,
@@ -238,7 +238,7 @@ def adaptive_agent(state: AgentState) -> dict[str, Any]:
     trace_item = ExecutionTraceState(
         sequence=len(current_execution_traces) + 1,
         node_name="adaptive_agent",
-        model_name=llm_model_name or trace_model_name or model_name or "unknown",
+        model_name=llm_model_name or trace_model_name or "unknown",
         status="success",
         output_text=text,
         llm_usage_complete=bool(trace.get("is_usage_complete", False)),

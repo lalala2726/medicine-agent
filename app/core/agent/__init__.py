@@ -2,4 +2,6 @@
 
 from app.core.agent.base_prompt_middleware import BasePromptMiddleware
 
-__all__ = ["BasePromptMiddleware"]
+__all__ = [
+    "BasePromptMiddleware",
+]

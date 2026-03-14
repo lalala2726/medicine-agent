@@ -5,11 +5,13 @@ from typing import Any, Sequence
 from langchain_core.messages import HumanMessage, SystemMessage
 from loguru import logger
 
-from app.core.llms import create_chat_model
+from app.core.config_sync import (
+    create_agent_summary_llm,
+    resolve_agent_summary_max_tokens,
+    resolve_agent_summary_model_name,
+)
 from app.schemas.document.message import MessageDocument, MessageRole
 from app.services.memory_service import (
-    resolve_assistant_summary_max_tokens,
-    resolve_assistant_summary_model,
     resolve_assistant_summary_trigger_window,
 )
 from app.services.message_service import (
@@ -75,7 +77,7 @@ def _call_summary_llm(
     参数说明：
         system_prompt (str): 系统提示词。
         user_prompt (str): 用户输入内容（摘要上下文载荷）。
-        model_name (str | None): 摘要模型名；为空时回退默认聊天模型配置。
+        model_name (str | None): 用于 token 统计的生效模型名。
 
     返回值：
         str: 模型生成的摘要文本；空响应返回空字符串。
@@ -85,8 +87,7 @@ def _call_summary_llm(
             模型配置不合法或调用失败时由底层抛出。
     """
 
-    llm_model = create_chat_model(
-        model=model_name,
+    llm_model = create_agent_summary_llm(
         temperature=0.1,
     )
     response = llm_model.invoke(
@@ -153,7 +154,7 @@ def _count_tokens_with_fallback(
 def _truncate_text_by_tokens(
         *,
         text: str,
-        max_tokens: int,
+        max_tokens: int | None,
         model_name: str | None,
 ) -> str:
     """
@@ -162,7 +163,7 @@ def _truncate_text_by_tokens(
 
     参数说明：
         text (str): 原始文本。
-        max_tokens (int): 最大 token 数。
+        max_tokens (int | None): 最大 token 数；``None``、``0`` 或负数表示不限制。
         model_name (str | None): 模型名，用于推断编码器。
 
     返回值：
@@ -173,8 +174,8 @@ def _truncate_text_by_tokens(
             - `tiktoken` 不可用且无法获取编码器时由底层抛出。
     """
 
-    if max_tokens <= 0:
-        return ""
+    if max_tokens is None or max_tokens <= 0:
+        return text
     try:
         encoder = TokenUtils._get_encoder(model_name=model_name)
     except Exception:
@@ -188,7 +189,7 @@ def _truncate_text_by_tokens(
 def _enforce_summary_token_budget(
         *,
         summary_text: str,
-        max_tokens: int,
+        max_tokens: int | None,
         model_name: str | None,
 ) -> tuple[str, int]:
     """
@@ -199,7 +200,7 @@ def _enforce_summary_token_budget(
 
     参数说明：
         summary_text (str): 原始摘要文本。
-        max_tokens (int): 摘要 token 上限。
+        max_tokens (int | None): 摘要 token 上限；``None``、``0`` 或负数表示不限制。
         model_name (str | None): 摘要模型名。
 
     返回值：
@@ -220,6 +221,8 @@ def _enforce_summary_token_budget(
         text=normalized_summary,
         model_name=model_name,
     )
+    if max_tokens is None or max_tokens <= 0:
+        return normalized_summary, token_count
     if token_count <= max_tokens:
         return normalized_summary, token_count
 
@@ -278,6 +281,25 @@ def _build_summary_update_payload(
         f"[已有摘要]\n{normalized_previous_summary}\n\n"
         f"[最新对话片段，共 {recent_dialogue_count} 条]\n{recent_dialogue_text}"
     )
+
+
+def _resolve_summary_budget_max_tokens() -> int | None:
+    """
+    功能描述：
+        解析聊天历史总结的摘要文本 token 预算。
+
+    参数说明：
+        无。
+
+    返回值：
+        int | None: 生效的摘要 token 上限；优先取 Redis 槽位，未配置时回退本地环境值；
+            ``None`` 表示不限制。
+
+    异常说明：
+        无。
+    """
+
+    return resolve_agent_summary_max_tokens()
 
 
 def refresh_conversation_summary_if_needed(
@@ -341,7 +363,7 @@ def refresh_conversation_summary_if_needed(
             if summary_document is not None and summary_document.status == "success"
             else None
         )
-        summary_model_name = resolve_assistant_summary_model()
+        summary_model_name = resolve_agent_summary_model_name()
         update_payload = _build_summary_update_payload(
             previous_summary=previous_summary,
             recent_dialogue_text=recent_dialogue_text,
@@ -354,7 +376,7 @@ def refresh_conversation_summary_if_needed(
         )
         normalized_summary, summary_token_count = _enforce_summary_token_budget(
             summary_text=generated_summary,
-            max_tokens=resolve_assistant_summary_max_tokens(),
+            max_tokens=_resolve_summary_budget_max_tokens(),
             model_name=summary_model_name,
         )
         if not normalized_summary:

@@ -57,6 +57,38 @@ def _parse_milvus_timeout(timeout_value: str | None) -> float | None:
         ) from exc
 
 
+def get_milvus_connection_args() -> dict[str, str | float]:
+    """从环境变量构造可复用的 Milvus 连接参数。
+
+    Returns:
+        可直接透传给 ``MilvusClient`` 或 ``langchain_milvus.Milvus`` 的参数字典。
+
+    Raises:
+        ServiceException: 当超时配置值非法时抛出。
+    """
+
+    connection_args: dict[str, str | float] = {
+        "uri": _build_milvus_uri(),
+    }
+    user = (os.getenv("MILVUS_USER") or os.getenv("MILVUS_USERNAME", "")).strip()
+    password = (os.getenv("MILVUS_PASSWORD") or "").strip()
+    token = (os.getenv("MILVUS_TOKEN") or "").strip()
+    db_name = (os.getenv("MILVUS_DB_NAME") or "").strip()
+    timeout = _parse_milvus_timeout(os.getenv("MILVUS_TIMEOUT"))
+
+    if user:
+        connection_args["user"] = user
+    if password:
+        connection_args["password"] = password
+    if token:
+        connection_args["token"] = token
+    if db_name:
+        connection_args["db_name"] = db_name
+    if timeout is not None:
+        connection_args["timeout"] = timeout
+    return connection_args
+
+
 def get_milvus_client() -> MilvusClient:
     """按环境变量配置创建 Milvus 客户端实例。
 
@@ -66,17 +98,4 @@ def get_milvus_client() -> MilvusClient:
     Raises:
         ServiceException: 配置非法时抛出。
     """
-    uri = _build_milvus_uri()
-    user = os.getenv("MILVUS_USER") or os.getenv("MILVUS_USERNAME", "")
-    password = os.getenv("MILVUS_PASSWORD", "")
-    token = os.getenv("MILVUS_TOKEN", "")
-    db_name = os.getenv("MILVUS_DB_NAME", "")
-    timeout = _parse_milvus_timeout(os.getenv("MILVUS_TIMEOUT"))
-    return MilvusClient(
-        uri=uri,
-        user=user,
-        password=password,
-        token=token,
-        db_name=db_name,
-        timeout=timeout,
-    )
+    return MilvusClient(**get_milvus_connection_args())

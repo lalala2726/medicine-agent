@@ -10,9 +10,9 @@ from loguru import logger
 from pymilvus import exceptions as milvus_exceptions
 
 from app.core.codes import ResponseCode
+from app.core.config_sync import create_agent_embedding_client
 from app.core.database import get_milvus_client
 from app.core.exception.exceptions import ServiceException
-from app.core.llms import create_embedding_model
 from app.core.mq.log import ImportStage, mq_log
 from app.core.mq.version_store import (
     get_chunk_rebuild_latest_version as get_chunk_edit_latest_version,
@@ -102,7 +102,7 @@ def create_embedding_client(*, embedding_model: str, embedding_dim: int):
         ServiceException: 模型初始化失败时抛出。
     """
     try:
-        return create_embedding_model(
+        return create_agent_embedding_client(
             model=embedding_model,
             dimensions=embedding_dim,
         )

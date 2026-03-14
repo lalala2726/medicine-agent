@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import pytest
-
 import app.utils.download_storage as download_storage
 import app.utils.file_utils as file_utils_module
 from app.utils.file_utils import FileUtils
@@ -56,12 +54,11 @@ def test_download_file_writes_to_system_temp_path(monkeypatch, tmp_path):
     saved_path.unlink(missing_ok=True)
 
 
-def test_download_file_succeeds_without_download_root_config(monkeypatch, tmp_path):
+def test_download_file_uses_system_temp_dir_without_extra_config(monkeypatch, tmp_path):
     """
-    测试目的：验证未配置 FILE_DOWNLOAD_ROOT_DIR 时下载流程仍可成功使用系统临时目录。
+    测试目的：验证下载流程默认使用系统临时目录，无需额外下载目录配置。
     预期结果：download_file 成功返回，并将文件写入系统临时目录。
     """
-    monkeypatch.delenv(download_storage.FILE_DOWNLOAD_ROOT_DIR_ENV, raising=False)
     monkeypatch.setattr(download_storage.tempfile, "gettempdir", lambda: str(tmp_path))
     monkeypatch.setattr(
         file_utils_module,

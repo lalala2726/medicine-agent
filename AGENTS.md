@@ -10,8 +10,8 @@
 
 ## Build, Test, and Development Commands
 
-- This project uses conda; run commands in env `medicine-ai-agent`.
-- Prefer `conda run -n medicine-ai-agent <command>` for reproducible execution.
+- This project uses conda; run commands in env `medicine-agent`.
+- Prefer `conda run -n medicine-agent <command>` for reproducible execution.
 - `uvicorn app.main:app --reload` runs the API locally with hot reload.
 - `python -m pytest` runs the test suite (currently minimal; add tests as you implement features).
 - No build step is required; this is a pure Python service.
@@ -60,8 +60,6 @@
 - LLM thinking switch semantics: `think=true` enables provider-specific deep thinking payload;
   default is `false`. For `volcengine`, framework explicitly sends `thinking.type=disabled`
   when `think=false` to avoid provider default reasoning output.
-- 管理助手对话接口（`POST /admin/assistant/chat`）支持请求参数 `enable_thinking`（默认 `false`），
-  仅在显式传 `true` 时透传深度思考流式事件（`type=thinking`）。
 - 管理助手记忆配置（optional）：
   `ASSISTANT_MEMORY_MODE`（`window|summary`，默认 `window`），
   `ASSISTANT_MEMORY_WINDOW_LIMIT`（默认 `50`，仅 `window` 模式生效），
@@ -74,6 +72,14 @@
 - Embedding provider configuration:
   `OPENAI_EMBEDDING_MODEL` / `DASHSCOPE_EMBEDDING_MODEL` / `VOLCENGINE_LLM_EMBEDDING_MODEL`
   （根据 provider 选择，向量模型名称必填；可由函数参数或环境变量提供）。
+- Agent Config Cache V3 / 知识库查询本地兜底配置（optional，仅在 Redis `agent:config:all` 缺失或非法时生效）：
+  `AGENT_KNOWLEDGE_NAMES`（逗号分隔的 knowledgeNames 列表），
+  `AGENT_KNOWLEDGE_EMBEDDING_DIM`（知识库统一向量维度，未配置时本地兜底默认 `1024`），
+  `AGENT_KNOWLEDGE_EMBEDDING_MODEL`（知识库统一向量模型名，未配置时回退当前 provider 的 embedding 环境变量），
+  `AGENT_KNOWLEDGE_TOP_K`（知识库默认最终返回条数，支持 `1..100`，空或 `0` 时回退代码默认 `10`），
+  `AGENT_KNOWLEDGE_RANKING_ENABLED`（是否启用普通聊天模型排序，支持 `true|false`），
+  `AGENT_KNOWLEDGE_RANKING_MODEL`（排序模型名；当 `AGENT_KNOWLEDGE_RANKING_ENABLED=true` 且未显式设置时，
+  回退当前 provider 的 chat 模型环境变量）。
 - Milvus configuration (optional): `MILVUS_URI`, `MILVUS_USER`, `MILVUS_PASSWORD`, `MILVUS_TOKEN`, `MILVUS_DB_NAME`,
   `MILVUS_TIMEOUT`.
 - MongoDB configuration (optional): `MONGODB_URI` (defaults to `mongodb://localhost:27017`),
@@ -145,8 +151,8 @@
 - Volcengine shared speech auth configuration: `VOLCENGINE_APP_ID` (required),
   `VOLCENGINE_ACCESS_TOKEN` (required) for both STT and TTS.
 - Volcengine bidirectional TTS configuration: `VOLCENGINE_TTS_ENDPOINT` (defaults to
-  `wss://openspeech.bytedance.com/api/v3/tts/bidirection`), `VOLCENGINE_TTS_RESOURCE_ID` (optional override),
-  `VOLCENGINE_TTS_VOICE_TYPE` (optional default voice), `VOLCENGINE_TTS_ENCODING` (defaults to `mp3`),
+  `wss://openspeech.bytedance.com/api/v3/tts/bidirection`), `VOLCENGINE_TTS_RESOURCE_ID` (required),
+  `VOLCENGINE_TTS_VOICE_TYPE` (required), `VOLCENGINE_TTS_ENCODING` (defaults to `mp3`),
   `VOLCENGINE_TTS_SAMPLE_RATE` (defaults to `24000`), `VOLCENGINE_TTS_MAX_TEXT_CHARS` (defaults to `300`,
   max chars after sanitizer), `VOLCENGINE_TTS_STARTUP_CONNECT_ENABLED`
   (default true, run startup pre-connect check), `VOLCENGINE_TTS_STARTUP_FAIL_FAST` (default false,

@@ -6,6 +6,7 @@ from langchain.agents import create_agent
 from langchain.agents.middleware import ToolCallLimitMiddleware
 from langchain_core.messages import AIMessage, SystemMessage
 
+from app.agent.assistant.model_switch import model_switch
 from app.agent.assistant.state import AgentState, ExecutionTraceState
 from app.agent.assistant.domain.user.tools import (
     get_admin_user_consume_info,
@@ -14,13 +15,13 @@ from app.agent.assistant.domain.user.tools import (
     get_admin_user_wallet,
     get_admin_user_wallet_flow,
 )
-from app.core.agent.agent_event_bus import emit_answer_delta
+from app.core.agent.agent_event_bus import emit_answer_delta, emit_thinking_delta
+from app.core.config_sync import create_agent_chat_llm
 from app.core.agent.agent_runtime import agent_stream
 from app.core.agent.agent_tool_events import build_tool_status_middleware
 from app.core.agent.agent_tool_trace import record_agent_trace
 from app.core.agent.base_prompt_middleware import BasePromptMiddleware
 from app.core.langsmith import traceable
-from app.core.llms import create_chat_model
 from app.services.token_usage_service import append_trace_and_refresh_token_usage
 from app.utils.prompt_utils import load_prompt
 
@@ -49,7 +50,8 @@ def user_agent(state: AgentState) -> dict[str, Any]:
     """
 
     history_messages = list(state.get("history_messages") or [])
-    llm = create_chat_model(
+    llm = create_agent_chat_llm(
+        slot=model_switch(state),
         temperature=1.0,
         think=False,
     )
@@ -74,6 +76,7 @@ def user_agent(state: AgentState) -> dict[str, Any]:
         agent,
         history_messages,
         on_model_delta=emit_answer_delta,
+        on_thinking_delta=emit_thinking_delta,
     )
     trace = record_agent_trace(
         payload=stream_result,
