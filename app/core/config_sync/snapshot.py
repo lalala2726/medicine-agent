@@ -293,6 +293,7 @@ def _resolve_local_fallback_knowledge_base_config() -> KnowledgeBaseAgentConfig 
 
     try:
         return KnowledgeBaseAgentConfig(
+            enabled=True,
             knowledgeNames=knowledge_names,
             embeddingDim=(
                     _normalize_optional_positive_int(
@@ -397,12 +398,20 @@ class KnowledgeBaseAgentConfig(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
+    enabled: bool | None = None
     knowledge_names: list[str] | None = Field(default=None, alias="knowledgeNames")
     embedding_dim: int | None = Field(default=None, alias="embeddingDim")
     embedding_model: str | None = Field(default=None, alias="embeddingModel")
     ranking_enabled: bool = Field(default=False, alias="rankingEnabled")
     ranking_model: str | None = Field(default=None, alias="rankingModel")
     top_k: int | None = Field(default=None, alias="topK")
+
+    @field_validator("enabled", mode="before")
+    @classmethod
+    def _normalize_enabled(cls, value: Any) -> bool | None:
+        """归一化知识库总开关。"""
+
+        return _normalize_optional_bool(value)
 
     @field_validator("knowledge_names", mode="before")
     @classmethod
@@ -435,11 +444,27 @@ class KnowledgeBaseAgentConfig(BaseModel):
 
         if self.top_k is not None and self.top_k > 100:
             raise ValueError("knowledgeBase.topK must be between 1 and 100")
+        if self.enabled is False:
+            return self
         if not self.ranking_enabled and self.ranking_model is not None:
             raise ValueError("knowledgeBase.rankingModel must be null when rankingEnabled is false")
         if self.ranking_enabled and self.ranking_model is None:
             raise ValueError("knowledgeBase.rankingModel is required when rankingEnabled is true")
         return self
+
+    def has_legacy_enabled_content(self) -> bool:
+        """判断历史配置是否可视为已启用知识库。"""
+
+        return any(
+            (
+                bool(self.knowledge_names),
+                self.embedding_model is not None,
+                self.embedding_dim is not None,
+                self.top_k is not None,
+                bool(self.ranking_enabled),
+                self.ranking_model is not None,
+            )
+        )
 
 
 class AdminAssistantAgentConfig(BaseModel):
@@ -652,6 +677,21 @@ class AgentConfigSnapshot(BaseModel):
         if model_name is None:
             return None
         return AgentModelSlotConfig(modelName=model_name)
+
+    def is_knowledge_enabled(self) -> bool:
+        """判断当前知识库能力是否启用。
+
+        Returns:
+            当 Redis 显式配置 `enabled` 时以其为准；否则按历史字段兼容推断。
+        """
+
+        agent_configs = self.agent_configs
+        if agent_configs is None or agent_configs.knowledge_base is None:
+            return False
+        knowledge_base = agent_configs.knowledge_base
+        if knowledge_base.enabled is not None:
+            return knowledge_base.enabled
+        return knowledge_base.has_legacy_enabled_content()
 
     def get_knowledge_names(self) -> list[str]:
         """读取当前允许访问的知识库名称列表。

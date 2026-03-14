@@ -13,6 +13,7 @@ from app.core.agent.agent_tool_events import build_tool_status_middleware
 from app.core.config_sync import AgentChatModelSlot
 from app.core.agent.agent_event_bus import emit_answer_delta, emit_thinking_delta
 from app.core.config_sync import create_agent_chat_llm
+from app.core.config_sync import get_current_agent_config_snapshot
 from app.core.agent.agent_runtime import agent_stream
 from app.core.agent.agent_tool_trace import record_agent_trace
 from app.core.agent.base_prompt_middleware import BasePromptMiddleware
@@ -22,6 +23,29 @@ from app.services.token_usage_service import append_trace_and_refresh_token_usag
 from app.utils.prompt_utils import load_prompt
 
 _CHAT_SYSTEM_PROMPT = load_prompt("assistant/chat_system_prompt.md")
+_CHAT_SYSTEM_PROMPT_WITHOUT_KNOWLEDGE = load_prompt(
+    "assistant/chat_system_prompt_without_knowledge.md"
+)
+
+
+def _build_chat_tools(*, knowledge_enabled: bool) -> list[Any]:
+    """按知识库启用状态构造聊天节点工具列表。"""
+
+    tools = [
+        get_current_time,
+        get_safe_user_info,
+    ]
+    if knowledge_enabled:
+        return [search_knowledge_context, *tools]
+    return tools
+
+
+def _resolve_chat_system_prompt(*, knowledge_enabled: bool) -> str:
+    """按知识库启用状态选择聊天节点系统提示词。"""
+
+    if knowledge_enabled:
+        return _CHAT_SYSTEM_PROMPT
+    return _CHAT_SYSTEM_PROMPT_WITHOUT_KNOWLEDGE
 
 
 @traceable(name="Assistant Chat Agent Node", run_type="chain")
@@ -37,11 +61,8 @@ def chat_agent(state: AgentState) -> dict[str, Any]:
     """
 
     history_messages = list(state.get("history_messages") or [])
-    tools = [
-        search_knowledge_context,
-        get_current_time,
-        get_safe_user_info,
-    ]
+    knowledge_enabled = get_current_agent_config_snapshot().is_knowledge_enabled()
+    tools = _build_chat_tools(knowledge_enabled=knowledge_enabled)
     llm = create_agent_chat_llm(
         slot=AgentChatModelSlot.CHAT,
         temperature=1.3,
@@ -50,7 +71,9 @@ def chat_agent(state: AgentState) -> dict[str, Any]:
     agent = create_agent(
         model=llm,
         tools=tools,
-        system_prompt=SystemMessage(content=_CHAT_SYSTEM_PROMPT),
+        system_prompt=SystemMessage(
+            content=_resolve_chat_system_prompt(knowledge_enabled=knowledge_enabled)
+        ),
         middleware=[
             BasePromptMiddleware(),
             build_tool_status_middleware(),

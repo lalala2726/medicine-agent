@@ -104,6 +104,12 @@ def resolve_runtime_config() -> KnowledgeSearchRuntimeConfig:
     """
 
     snapshot = get_current_agent_config_snapshot()
+    if not snapshot.is_knowledge_enabled():
+        raise ServiceException(
+            code=ResponseCode.SERVICE_UNAVAILABLE,
+            message="知识库检索未启用",
+        )
+
     runtime_config = snapshot.get_llm_runtime_config()
     if runtime_config is None:
         raise ServiceException(
