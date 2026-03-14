@@ -107,8 +107,8 @@ def resolve_volcengine_tts_config() -> VolcengineTtsConfig:
             )
         if redis_max_text_chars is None:
             raise ServiceException(
-                code=ResponseCode.BAD_REQUEST,
-                message="speech.textToSpeech.maxTextChars 不能为空",
+                code=ResponseCode.INTERNAL_ERROR,
+                message="Redis 中 TTS 配置不完整: speech.textToSpeech.maxTextChars 缺失",
             )
         resolved_max_text_chars = redis_max_text_chars
     else:
