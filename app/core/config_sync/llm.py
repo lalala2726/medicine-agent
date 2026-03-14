@@ -19,6 +19,17 @@ from app.core.llms.providers.aliyun import DEFAULT_DASHSCOPE_BASE_URL
 from app.core.llms.providers.openai import DEFAULT_OPENAI_BASE_URL
 from app.core.llms.providers.volcengine import DEFAULT_VOLCENGINE_BASE_URL
 
+_IMAGE_MODEL_ENV_NAMES = {
+    LlmProvider.OPENAI: "OPENAI_IMAGE_MODEL",
+    LlmProvider.ALIYUN: "DASHSCOPE_IMAGE_MODEL",
+    LlmProvider.VOLCENGINE: "VOLCENGINE_LLM_IMAGE_MODEL",
+}
+_IMAGE_API_KEY_ENV_NAMES = {
+    LlmProvider.OPENAI: "OPENAI_API_KEY",
+    LlmProvider.ALIYUN: "DASHSCOPE_API_KEY",
+    LlmProvider.VOLCENGINE: "VOLCENGINE_LLM_API_KEY",
+}
+
 
 @dataclass(frozen=True)
 class _ResolvedSlotOverrides:
@@ -102,6 +113,19 @@ def _resolve_summary_fallback_model_name() -> str | None:
     else:
         provider_key = "OPENAI_SUMMARY_MODEL"
     return resolve_llm_value(name=provider_key) or resolve_llm_value(name="ASSISTANT_SUMMARY_MODEL")
+
+
+def _require_runtime_value(
+        value: str | None,
+        *,
+        provider: LlmProvider,
+        env_names: dict[LlmProvider, str],
+) -> str:
+    """要求运行时关键字段必须存在，否则抛出带环境变量名的错误。"""
+
+    if value:
+        return value
+    raise RuntimeError(f"{env_names[provider]} is not set")
 
 
 def _resolve_runtime_provider(runtime_config: AgentModelRuntimeConfig | None) -> LlmProvider:
@@ -348,29 +372,24 @@ def resolve_agent_image_runtime() -> ResolvedAgentImageRuntime:
     runtime_config = snapshot.get_llm_runtime_config()
 
     resolved_provider = _resolve_runtime_provider(runtime_config)
-    resolved_model = _resolve_slot_runtime_model_name(
-        slot_config,
-        fallback_model=_resolve_image_fallback_model_name(resolved_provider),
+    resolved_model = _require_runtime_value(
+        _resolve_slot_runtime_model_name(
+            slot_config,
+            fallback_model=_resolve_image_fallback_model_name(resolved_provider),
+        ),
+        provider=resolved_provider,
+        env_names=_IMAGE_MODEL_ENV_NAMES,
     )
-    if not resolved_model:
-        env_name = {
-            LlmProvider.OPENAI: "OPENAI_IMAGE_MODEL",
-            LlmProvider.ALIYUN: "DASHSCOPE_IMAGE_MODEL",
-            LlmProvider.VOLCENGINE: "VOLCENGINE_LLM_IMAGE_MODEL",
-        }[resolved_provider]
-        raise RuntimeError(f"{env_name} is not set")
 
     resolved_api_key, resolved_base_url = _resolve_runtime_connection(
         resolved_provider,
         runtime_config,
     )
-    if not resolved_api_key:
-        env_name = {
-            LlmProvider.OPENAI: "OPENAI_API_KEY",
-            LlmProvider.ALIYUN: "DASHSCOPE_API_KEY",
-            LlmProvider.VOLCENGINE: "VOLCENGINE_LLM_API_KEY",
-        }[resolved_provider]
-        raise RuntimeError(f"{env_name} is not set")
+    resolved_api_key = _require_runtime_value(
+        resolved_api_key,
+        provider=resolved_provider,
+        env_names=_IMAGE_API_KEY_ENV_NAMES,
+    )
     if not resolved_base_url:
         raise RuntimeError("LLM base URL is not set")
 

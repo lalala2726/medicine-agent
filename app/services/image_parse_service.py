@@ -11,6 +11,7 @@ from app.utils.file_utils import FileUtils
 from app.utils.prompt_utils import load_prompt
 
 _DRUG_PARSER_PROMPT = load_prompt("image_parser/drug_prompt.md")
+_JSON_OBJECT_RESPONSE_FORMAT = {"response_format": {"type": "json_object"}}
 
 
 class DrugImageSchema(BaseModel):
@@ -181,6 +182,7 @@ def parse_drug_images(images: List[str]) -> dict:
     try:
         llm = create_agent_image_llm(
             think=False,
+            extra_body=_JSON_OBJECT_RESPONSE_FORMAT,
         )
         completion = llm.invoke(
             [

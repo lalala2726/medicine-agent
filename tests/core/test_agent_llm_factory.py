@@ -205,6 +205,59 @@ def test_resolve_agent_image_runtime_uses_provider_specific_env_fallback_when_sl
     assert runtime.base_url == "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
 
+def test_resolve_agent_image_runtime_raises_provider_specific_model_error_when_missing(
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """测试目的：图片模型名缺失时应提示当前 provider 对应的环境变量；预期结果：抛出 OPENAI_IMAGE_MODEL 缺失错误。"""
+
+    snapshot = AgentConfigSnapshot.model_validate(
+        {
+            "schemaVersion": 3,
+            "updatedAt": "2026-03-11T14:30:00+08:00",
+            "updatedBy": "admin",
+            "llm": {
+                "providerType": "openai",
+                "baseUrl": "https://api.openai.com/v1",
+                "apiKey": "sk-runtime",
+            },
+        },
+    )
+    monkeypatch.setattr(llm_factory, "get_current_agent_config_snapshot", lambda: snapshot)
+    monkeypatch.setattr(llm_factory, "_resolve_image_fallback_model_name", lambda _provider: None)
+
+    with pytest.raises(RuntimeError, match="OPENAI_IMAGE_MODEL is not set"):
+        llm_factory.resolve_agent_image_runtime()
+
+
+def test_resolve_agent_image_runtime_raises_provider_specific_api_key_error_when_missing(
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """测试目的：图片 API Key 缺失时应提示当前 provider 对应的环境变量；预期结果：抛出 VOLCENGINE_LLM_API_KEY 缺失错误。"""
+
+    snapshot = AgentConfigSnapshot.model_validate(
+        {
+            "schemaVersion": 3,
+            "updatedAt": "2026-03-11T14:30:00+08:00",
+            "updatedBy": "admin",
+            "llm": {
+                "providerType": "volcengine",
+                "baseUrl": "https://ark.cn-beijing.volces.com/api/v3",
+                "apiKey": "placeholder-runtime-key",
+            },
+        },
+    )
+    monkeypatch.setattr(llm_factory, "get_current_agent_config_snapshot", lambda: snapshot)
+    monkeypatch.setattr(llm_factory, "_resolve_image_fallback_model_name", lambda _provider: "doubao-image")
+    monkeypatch.setattr(
+        llm_factory,
+        "_resolve_runtime_connection",
+        lambda _provider, _runtime_config: (None, "https://ark.cn-beijing.volces.com/api/v3"),
+    )
+
+    with pytest.raises(RuntimeError, match="VOLCENGINE_LLM_API_KEY is not set"):
+        llm_factory.resolve_agent_image_runtime()
+
+
 def test_create_agent_summary_llm_prefers_redis_slot_over_local_defaults(
         monkeypatch: pytest.MonkeyPatch,
 ) -> None:
