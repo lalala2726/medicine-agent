@@ -10,8 +10,8 @@ from fastapi.responses import StreamingResponse
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from loguru import logger
 
-from app.agent.assistant.state import ChatHistoryMessage, ExecutionTraceState, TokenUsageState
-from app.agent.assistant.workflow import build_graph
+from app.agent.admin.state import ChatHistoryMessage, ExecutionTraceState, TokenUsageState
+from app.agent.admin.workflow import build_graph
 from app.core.config_sync import create_agent_title_llm
 from app.core.agent.agent_orchestrator import (
     AssistantStreamConfig,

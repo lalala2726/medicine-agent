@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 
-from app.agent.assistant.model_switch import model_switch
+from app.agent.admin.model_switch import model_switch
 from app.core.config_sync import AgentChatModelSlot, AgentConfigSnapshot
 from app.core.config_sync import llm as llm_factory
 

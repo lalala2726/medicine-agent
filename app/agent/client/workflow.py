@@ -5,7 +5,7 @@ from typing import Any
 from langgraph.constants import END, START
 from langgraph.graph import StateGraph
 
-from app.agent.assistant.state import AgentState
+from app.agent.admin.state import AgentState
 from app.agent.client.after_sale_node import after_sale_agent
 from app.agent.client.chat_node import chat_agent
 from app.agent.client.gateway_node import gateway_router

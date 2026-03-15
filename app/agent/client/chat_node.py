@@ -5,7 +5,7 @@ from typing import Any
 from langchain.agents import create_agent
 from langchain_core.messages import AIMessage, SystemMessage
 
-from app.agent.assistant.state import AgentState, ExecutionTraceState
+from app.agent.admin.state import AgentState, ExecutionTraceState
 from app.agent.client.tools import open_user_order_list
 from app.core.agent.agent_event_bus import emit_answer_delta, emit_thinking_delta
 from app.core.agent.agent_runtime import agent_stream
