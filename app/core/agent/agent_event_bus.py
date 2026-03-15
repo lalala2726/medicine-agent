@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from contextvars import ContextVar, Token
 from typing import Any, Callable
 
@@ -11,12 +12,30 @@ EventPayload = dict[str, Any]
 EventContent = dict[str, Any]
 EventEmitter = Callable[[EventPayload], None]
 
+
+@dataclass
+class FinalResponseQueueItem:
+    priority: int
+    sequence: int
+    response: AssistantResponse
+
+
+@dataclass
+class FinalResponseQueue:
+    next_sequence: int = 1
+    items: list[FinalResponseQueueItem] = field(default_factory=list)
+
+
 _status_emitter: ContextVar[EventEmitter | None] = ContextVar(
     "sse_event_emitter",
     default=None,
 )
 _current_status_node: ContextVar[str | None] = ContextVar(
     "sse_current_status_node",
+    default=None,
+)
+_final_response_queue: ContextVar[FinalResponseQueue | None] = ContextVar(
+    "sse_final_response_queue",
     default=None,
 )
 
@@ -50,6 +69,32 @@ def reset_status_emitter(token: Token) -> None:
     _status_emitter.reset(token)
 
 
+def set_final_response_queue(queue: FinalResponseQueue | None = None) -> Token:
+    """
+    在当前请求上下文中设置最终 SSE 响应队列。
+
+    Args:
+        queue: 最终响应队列。传入 `None` 时会自动创建空队列。
+
+    Returns:
+        Token: ContextVar token，用于后续恢复上下文。
+    """
+
+    resolved_queue = queue if queue is not None else FinalResponseQueue()
+    return _final_response_queue.set(resolved_queue)
+
+
+def reset_final_response_queue(token: Token) -> None:
+    """
+    根据 token 还原最终 SSE 响应队列上下文。
+
+    Args:
+        token: 由 `set_final_response_queue` 返回的 token。
+    """
+
+    _final_response_queue.reset(token)
+
+
 def has_status_emitter() -> bool:
     """
     判断当前请求上下文是否已设置 SSE 事件发射器。
@@ -62,6 +107,57 @@ def has_status_emitter() -> bool:
     """
 
     return _status_emitter.get() is not None
+
+
+def enqueue_final_sse_response(response: AssistantResponse) -> None:
+    """
+    将 SSE 响应加入“流尾最终发送”队列。
+
+    队列中的响应不会立即发送，而是由 orchestrator 在答案流结束后统一按优先级输出。
+
+    Args:
+        response: 待加入队列的 SSE 响应。
+    """
+
+    queue = _final_response_queue.get()
+    if queue is None:
+        logger.warning("Final SSE response ignored because queue is missing")
+        return
+
+    normalized_response = response.model_copy(update={"is_end": False})
+    priority = 0
+    if normalized_response.action is not None:
+        priority = int(normalized_response.action.priority)
+
+    queue.items.append(
+        FinalResponseQueueItem(
+            priority=priority,
+            sequence=queue.next_sequence,
+            response=normalized_response,
+        )
+    )
+    queue.next_sequence += 1
+
+
+def drain_final_sse_responses() -> list[AssistantResponse]:
+    """
+    取出当前请求上下文中所有最终 SSE 响应，并按优先级排序。
+
+    排序规则：
+    1. `priority` 降序；
+    2. 同优先级按入队顺序升序。
+    """
+
+    queue = _final_response_queue.get()
+    if queue is None:
+        return []
+
+    sorted_items = sorted(
+        queue.items,
+        key=lambda item: (-item.priority, item.sequence),
+    )
+    queue.items.clear()
+    return [item.response for item in sorted_items]
 
 
 def get_current_status_node() -> str | None:

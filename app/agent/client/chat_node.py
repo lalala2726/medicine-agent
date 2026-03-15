@@ -6,6 +6,7 @@ from langchain.agents import create_agent
 from langchain_core.messages import AIMessage, SystemMessage
 
 from app.agent.assistant.state import AgentState, ExecutionTraceState
+from app.agent.client.tools import open_user_order_list
 from app.core.agent.agent_event_bus import emit_answer_delta, emit_thinking_delta
 from app.core.agent.agent_runtime import agent_stream
 from app.core.agent.agent_tool_trace import record_agent_trace
@@ -33,7 +34,8 @@ def chat_agent(state: AgentState) -> dict[str, Any]:
         system_prompt=SystemMessage(
             content=append_current_time_to_prompt(_CHAT_SYSTEM_PROMPT)
         ),
-        middleware=[BasePromptMiddleware()],
+        tools=[open_user_order_list],
+        middleware=[BasePromptMiddleware(base_prompt_file="client/_client_base_prompt.md")],
     )
     stream_result = agent_stream(
         agent,
@@ -57,7 +59,7 @@ def chat_agent(state: AgentState) -> dict[str, Any]:
         output_text=text,
         llm_usage_complete=bool(trace.get("is_usage_complete", False)),
         llm_token_usage=trace.get("usage"),
-        tool_calls=[],
+        tool_calls=list(trace.get("tool_calls") or []),
         node_context=None,
     )
     execution_traces, token_usage = append_trace_and_refresh_token_usage(

@@ -27,8 +27,14 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
 from loguru import logger
 
-from app.core.agent.agent_event_bus import reset_status_emitter, set_status_emitter
-from app.schemas.sse_response import AssistantResponse, Content, MessageType
+from app.core.agent.agent_event_bus import (
+    drain_final_sse_responses,
+    reset_final_response_queue,
+    reset_status_emitter,
+    set_final_response_queue,
+    set_status_emitter,
+)
+from app.schemas.sse_response import Action, AssistantResponse, Content, MessageType
 from app.utils.streaming_utils import extract_text
 
 StreamEvent = tuple[str, Any]
@@ -207,6 +213,19 @@ def _resolve_meta(raw_meta: Any) -> dict[str, Any] | None:
     return None
 
 
+def _resolve_action(raw_action: Any) -> Action | None:
+    """解析输入的 action 字段，仅接受合法动作对象。"""
+
+    if isinstance(raw_action, Action):
+        return raw_action
+    if isinstance(raw_action, dict):
+        try:
+            return Action.model_validate(raw_action)
+        except Exception:
+            return None
+    return None
+
+
 def _to_non_negative_int(value: Any) -> int | None:
     """将值解析为非负整数。"""
 
@@ -267,6 +286,9 @@ def build_emitted_response(
     resolved_meta = _resolve_meta(raw_meta)
     if resolved_meta is not None:
         payload_kwargs["meta"] = resolved_meta
+    resolved_action = _resolve_action(event_payload.get("action"))
+    if resolved_action is not None:
+        payload_kwargs["action"] = resolved_action
 
     return AssistantResponse(
         content=Content(
@@ -782,6 +804,20 @@ async def _finalize_stream(emitter_token: Any, producer_task: asyncio.Task[Any])
     return build_answer_sse("", True)
 
 
+def _render_final_sse_responses() -> list[str]:
+    """
+    取出并序列化所有最终 SSE 响应。
+
+    Returns:
+        list[str]: 按优先级排序后的 SSE 文本列表。
+    """
+
+    return [
+        serialize_sse(response)
+        for response in drain_final_sse_responses()
+    ]
+
+
 async def _invoke_answer_completed_callback(
         callback: OnAnswerCompletedCallback | None,
         answer_text: str,
@@ -861,6 +897,7 @@ async def _event_stream(
         loop.call_soon_threadsafe(queue.put_nowait, (EVENT_EMITTED, event))
 
     emitter_token = set_status_emitter(_event_emitter)
+    final_response_queue_token = set_final_response_queue()
 
     # 先把前置事件写入队列，确保“会话创建成功”等通知优先于图执行事件输出。
     for initial_event in config.initial_emitted_events:
@@ -914,6 +951,9 @@ async def _event_stream(
                 delta_text = _append_answer_text(runtime_state, fallback_text)
                 if delta_text:
                     yield build_answer_sse(delta_text, False)
+
+        for final_response in _render_final_sse_responses():
+            yield final_response
     finally:
         try:
             execution_trace = _build_execution_trace_summary(runtime_state.latest_state)
@@ -928,6 +968,7 @@ async def _event_stream(
             )
         except Exception as exc:  # pragma: no cover - 防御性兜底
             logger.opt(exception=exc).warning("Assistant stream finalize callback failed")
+        reset_final_response_queue(final_response_queue_token)
         end_event = await _finalize_stream(emitter_token, producer_task)
         yield end_event
 

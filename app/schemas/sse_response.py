@@ -1,6 +1,6 @@
 import time
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import AliasChoices, BaseModel, Field
 
@@ -16,6 +16,32 @@ class Content(BaseModel):
     arguments: str | None = Field(default=None, description="参数")
 
 
+OrderStatusValue = Literal[
+    "PENDING_PAYMENT",
+    "PENDING_SHIPMENT",
+    "PENDING_RECEIPT",
+    "COMPLETED",
+    "CANCELLED",
+]
+
+
+class UserOrderListPayload(BaseModel):
+    orderStatus: OrderStatusValue | None = Field(
+        default=None,
+        description="订单状态过滤",
+    )
+
+
+class Action(BaseModel):
+    type: Literal["navigate"] = Field(default="navigate", description="动作类型")
+    target: Literal["user_order_list"] = Field(
+        default="user_order_list",
+        description="动作目标",
+    )
+    payload: UserOrderListPayload = Field(default_factory=UserOrderListPayload, description="动作参数")
+    priority: int = Field(default=0, description="优先级，数值越大越先发送")
+
+
 class MessageType(str, Enum):
     ANSWER = "answer"
     THINKING = "thinking"
@@ -23,6 +49,7 @@ class MessageType(str, Enum):
     TOOL_RESPONSE = "tool_response"
     STATUS = "status"
     NOTICE = "notice"
+    ACTION = "action"
 
 
 class AssistantResponse(BaseModel):
@@ -30,6 +57,7 @@ class AssistantResponse(BaseModel):
 
     content: Content = Field(default_factory=Content, description="内容")
     type: MessageType = Field(default=MessageType.ANSWER, description="类型")
+    action: Action | None = Field(default=None, description="前端动作")
     meta: dict[str, Any] | None = Field(
         default=None,
         validation_alias=AliasChoices("meta", "extra"),
