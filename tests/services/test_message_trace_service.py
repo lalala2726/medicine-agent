@@ -97,6 +97,28 @@ def test_add_message_trace_uses_env_provider_when_provider_missing(monkeypatch):
     assert collection.last_inserted["provider"] == MessageTraceProvider.ALIYUN
 
 
+def test_add_message_trace_allows_custom_workflow_name(monkeypatch):
+    collection = _DummyCollection()
+    monkeypatch.setattr(
+        service_module,
+        "get_mongo_database",
+        lambda: {"message_traces": collection},
+    )
+    monkeypatch.setattr(service_module, "_resolve_collection_name", lambda: "message_traces")
+    monkeypatch.setattr(service_module, "resolve_provider", lambda _provider=None: LlmProvider.OPENAI)
+
+    result = service_module.add_message_trace(
+        message_uuid="msg-client",
+        conversation_id="507f1f77bcf86cd799439011",
+        workflow_name="client_assistant_graph",
+        execution_trace=[{"node_name": "chat_agent", "model_name": "gpt"}],
+    )
+
+    assert result == "507f1f77bcf86cd799439021"
+    assert collection.last_inserted is not None
+    assert collection.last_inserted["workflow"]["workflow_name"] == "client_assistant_graph"
+
+
 def test_add_message_trace_explicit_provider_overrides_env(monkeypatch):
     """验证 add_message_trace：显式 provider 覆盖环境默认厂家。"""
 

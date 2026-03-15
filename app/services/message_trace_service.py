@@ -217,6 +217,7 @@ def _build_workflow_summary(
         *,
         execution_trace: list[ExecutionTraceItem],
         has_error: bool,
+        workflow_name: str,
 ) -> WorkflowTraceSummary:
     """
     功能描述：
@@ -225,6 +226,7 @@ def _build_workflow_summary(
     参数说明：
         execution_trace (list[ExecutionTraceItem]): 归一化后的节点轨迹列表。
         has_error (bool): 流式执行是否发生错误，用于计算工作流状态。
+        workflow_name (str): 工作流名称。
 
     返回值：
         WorkflowTraceSummary:
@@ -250,7 +252,7 @@ def _build_workflow_summary(
     task_difficulty = _resolve_task_difficulty(gateway_context.get("task_difficulty"))
 
     return WorkflowTraceSummary(
-        workflow_name=_WORKFLOW_NAME,
+        workflow_name=workflow_name,
         workflow_status="error" if has_error else "success",
         execution_path=execution_path,
         final_node=final_node,
@@ -289,6 +291,7 @@ def add_message_trace(
         message_uuid: Annotated[str, Field(min_length=1)],
         conversation_id: Annotated[str, Field(min_length=1)],
         provider: MessageTraceProvider | LlmProvider | str | None = None,
+        workflow_name: str = _WORKFLOW_NAME,
         execution_trace: list[ExecutionTraceItem | dict[str, Any]] | None = None,
         token_usage: TraceTokenUsage | dict[str, Any] | None = None,
         has_error: bool = False,
@@ -302,6 +305,7 @@ def add_message_trace(
         conversation_id (str): 会话 ObjectId 字符串。
         provider (MessageTraceProvider | LlmProvider | str | None):
             模型厂家；未传时按环境默认解析。
+        workflow_name (str): 工作流名称，默认 `admin_assistant_graph`。
         execution_trace (list[ExecutionTraceItem | dict[str, Any]] | None):
             节点轨迹列表；为空时按空列表落库。
         token_usage (TraceTokenUsage | dict[str, Any] | None):
@@ -325,6 +329,7 @@ def add_message_trace(
     workflow_summary = _build_workflow_summary(
         execution_trace=normalized_execution_trace,
         has_error=has_error,
+        workflow_name=workflow_name,
     )
 
     payload = MessageTraceCreate(

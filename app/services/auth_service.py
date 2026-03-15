@@ -26,6 +26,12 @@ def _is_auth_failure_code(code: int) -> bool:
     return code_text.startswith("4011") or code_text.startswith("4012")
 
 
+def _is_standard_auth_failure_code(code: int) -> bool:
+    """标准 HTTP 认证失败码判定。"""
+
+    return code in {ResponseCode.UNAUTHORIZED.code, ResponseCode.FORBIDDEN.code}
+
+
 def _build_auth_user(payload: Any) -> AuthUser:
     try:
         context = AuthorizationContext.model_validate(payload)
@@ -44,17 +50,25 @@ async def verify_authorization() -> AuthUser:
 
     处理规则：
     - 通过 `/agent/authorization` 获取响应并解析 data。
-    - `payload = HttpResponse.parse_data(response)` 的异常直接透传。
+    - 标准认证失败码（401/403）统一映射为 HTTP 401。
+    - 扩展认证失败码（如 4011/4012）保持原业务码透出。
+    - 认证服务其他异常（5xx、非 JSON、网络错误、协议不符合约定）统一映射为 HTTP 503。
     - data 需满足 `{user, roles, permissions}` 结构（user 必填；roles/permissions 可空）。
-    - 网络错误/超时仍映射为 HTTP 503。
     """
     try:
         async with HttpClient(timeout=5.0) as client:
             response = await client.get("/agent/authorization")
+        payload = HttpResponse.parse_data(response)
     except ServiceException as exc:
-        if _is_auth_failure_code(exc.code):
+        if _is_standard_auth_failure_code(exc.code):
             raise ServiceException(
                 code=ResponseCode.UNAUTHORIZED,
+                message=exc.message,
+                data=exc.data,
+            ) from exc
+        if _is_auth_failure_code(exc.code):
+            raise ServiceException(
+                code=exc.code,
                 message=exc.message,
                 data=exc.data,
             ) from exc
@@ -67,7 +81,5 @@ async def verify_authorization() -> AuthUser:
             code=503,
             message=AUTH_SERVICE_UNAVAILABLE_MESSAGE,
         ) from exc
-
-    payload = HttpResponse.parse_data(response)
 
     return _build_auth_user(payload)

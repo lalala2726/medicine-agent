@@ -299,11 +299,59 @@ def list_admin_conversations(
         数据库异常会由全局异常处理器统一拦截。
     """
 
+    return _list_conversations(
+        conversation_type=_ADMIN_MARK,
+        user_id=user_id,
+        page_num=page_num,
+        page_size=page_size,
+    )
+
+
+def list_client_conversations(
+        *,
+        user_id: Annotated[int, Field(ge=1)],
+        page_num: Annotated[int, Field(ge=1)] = 1,
+        page_size: Annotated[int, Field(ge=1, le=100)] = 20,
+) -> tuple[list[ConversationListItem], int]:
+    """
+    分页查询客户端会话列表（仅返回会话 UUID 与标题）。
+
+    Args:
+        user_id: 用户 ID，用于筛选当前用户的会话。
+        page_num: 页码（从 1 开始）。
+        page_size: 每页大小（1-100）。
+
+    Returns:
+        tuple[list[ConversationListItem], int]:
+            - rows: 会话列表项模型列表。
+            - total: 总记录数。
+
+    Note:
+        数据库异常会由全局异常处理器统一拦截。
+    """
+
+    return _list_conversations(
+        conversation_type=_CLIENT_MARK,
+        user_id=user_id,
+        page_num=page_num,
+        page_size=page_size,
+    )
+
+
+def _list_conversations(
+        *,
+        conversation_type: str,
+        user_id: int,
+        page_num: int,
+        page_size: int,
+) -> tuple[list[ConversationListItem], int]:
+    """按会话类型分页查询会话列表。"""
+
     db = get_mongo_database()
     collection = db[_TABLE_NAME]
 
     query = {
-        "conversation_type": _ADMIN_MARK,
+        "conversation_type": conversation_type,
         "user_id": _to_mongo_long(user_id),
         "is_deleted": _NOT_DELETED_FILTER,
     }

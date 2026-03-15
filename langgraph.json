@@ -3,7 +3,8 @@
     "."
   ],
   "graphs": {
-    "admin_assistant": "./app/agent/assistant/langgraph_app.py:graph"
+    "admin_assistant": "./app/agent/assistant/langgraph_app.py:graph",
+    "client_assistant": "./app/agent/client/langgraph_app.py:graph"
   },
   "env": "./.env"
 }

@@ -298,6 +298,37 @@ def test_list_admin_conversations_returns_uuid_and_title(monkeypatch):
     ]
 
 
+def test_list_client_conversations_returns_uuid_and_title(monkeypatch):
+    collection = _DummyCollection()
+    collection.find_result = [
+        {"uuid": "client-conv-1", "title": "客户端会话"},
+        {"uuid": "client-conv-2", "title": ""},
+    ]
+    monkeypatch.setattr(service_module, "get_mongo_database", lambda: {"conversations": collection})
+
+    rows, total = service_module.list_client_conversations(
+        user_id=8,
+        page_num=1,
+        page_size=20,
+    )
+
+    assert collection.last_count_query == {
+        "conversation_type": "client",
+        "user_id": Int64(8),
+        "is_deleted": {"$ne": 1},
+    }
+    assert collection.last_find_query == {
+        "conversation_type": "client",
+        "user_id": Int64(8),
+        "is_deleted": {"$ne": 1},
+    }
+    assert total == 2
+    assert [item.model_dump() for item in rows] == [
+        {"conversation_uuid": "client-conv-1", "title": "客户端会话"},
+        {"conversation_uuid": "client-conv-2", "title": "新聊天"},
+    ]
+
+
 def test_delete_admin_conversation_returns_false_when_not_matched(monkeypatch):
     collection = _DummyCollection()
     collection.update_matched_count = 0

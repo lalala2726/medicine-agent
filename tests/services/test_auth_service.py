@@ -160,7 +160,7 @@ def test_verify_authorization_keeps_401x_code(monkeypatch):
     assert exc_info.value.message == "访问令牌已过期"
 
 
-def test_verify_authorization_keeps_500_code(monkeypatch):
+def test_verify_authorization_maps_upstream_500_to_503(monkeypatch):
     fake_response = _build_ajax_response(
         {
             "code": 500,
@@ -187,7 +187,8 @@ def test_verify_authorization_keeps_500_code(monkeypatch):
     with pytest.raises(ServiceException) as exc_info:
         asyncio.run(auth_service.verify_authorization())
 
-    assert exc_info.value.code == 500
+    assert exc_info.value.code == 503
+    assert exc_info.value.message == auth_service.AUTH_SERVICE_UNAVAILABLE_MESSAGE
 
 
 def test_verify_authorization_maps_network_error_to_503(monkeypatch):
@@ -212,13 +213,13 @@ def test_verify_authorization_maps_network_error_to_503(monkeypatch):
     assert exc_info.value.code == 503
 
 
-def test_verify_authorization_keeps_non_json_parse_error(monkeypatch):
+def test_verify_authorization_maps_non_json_response_to_503(monkeypatch):
     request = httpx.Request("GET", "http://test/agent/authorization")
     fake_response = httpx.Response(
-        status_code=200,
+        status_code=500,
         request=request,
-        text="not json",
-        headers={"content-type": "text/plain"},
+        text="<!doctype html><html><body><h1>HTTP Status 500</h1></body></html>",
+        headers={"content-type": "text/html"},
     )
 
     class FakeHttpClient:
@@ -239,7 +240,8 @@ def test_verify_authorization_keeps_non_json_parse_error(monkeypatch):
     with pytest.raises(ServiceException) as exc_info:
         asyncio.run(auth_service.verify_authorization())
 
-    assert exc_info.value.code == ResponseCode.OPERATION_FAILED.code
+    assert exc_info.value.code == ResponseCode.SERVICE_UNAVAILABLE.code
+    assert exc_info.value.message == auth_service.AUTH_SERVICE_UNAVAILABLE_MESSAGE
 
 
 def test_verify_authorization_maps_invalid_roles_to_503(monkeypatch):
