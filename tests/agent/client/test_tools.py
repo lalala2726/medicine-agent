@@ -4,7 +4,7 @@ from uuid import UUID
 import pytest
 from pydantic import ValidationError
 
-from app.agent.client.domain.common.frontend_message_tools import (
+from app.agent.client.domain.common.frontend_card_tools import (
     SendProductCardRequest,
     send_product_card,
 )
