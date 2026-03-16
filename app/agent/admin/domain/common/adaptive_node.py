@@ -6,8 +6,6 @@ from langchain.agents import create_agent
 from langchain.agents.middleware import ToolCallLimitMiddleware
 from langchain_core.messages import AIMessage, SystemMessage
 
-from app.agent.admin.model_switch import model_switch
-from app.agent.admin.state import AgentState, ExecutionTraceState
 from app.agent.admin.domain.after_sale.tools import (
     get_admin_after_sale_detail,
     get_admin_after_sale_list,
@@ -44,14 +42,16 @@ from app.agent.admin.domain.user.tools import (
     get_admin_user_wallet,
     get_admin_user_wallet_flow,
 )
+from app.agent.admin.model_switch import model_switch
+from app.agent.admin.state import AgentState, ExecutionTraceState
 from app.core.agent.agent_event_bus import emit_answer_delta, emit_thinking_delta
-from app.core.config_sync import create_agent_chat_llm
 from app.core.agent.agent_runtime import agent_stream
 from app.core.agent.agent_tool_events import build_tool_status_middleware
 from app.core.agent.agent_tool_trace import record_agent_trace
 from app.core.agent.base_prompt_middleware import BasePromptMiddleware
-from app.core.langsmith import traceable
 from app.core.agent.skill import SkillMiddleware
+from app.core.config_sync import create_agent_chat_llm
+from app.core.langsmith import traceable
 from app.services.token_usage_service import append_trace_and_refresh_token_usage
 from app.utils.prompt_utils import append_current_time_to_prompt, load_prompt
 

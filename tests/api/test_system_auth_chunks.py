@@ -5,7 +5,6 @@ from fastapi.testclient import TestClient
 
 import app.main as main_module
 from app.api.routes import knowledge_base as knowledge_base_route
-from app.main import app
 from app.core.security.system_auth.canonical import build_canonical_string
 from app.core.security.system_auth.config import clear_system_auth_settings_cache
 from app.core.security.system_auth.constants import (
@@ -16,6 +15,7 @@ from app.core.security.system_auth.constants import (
     HEADER_X_AGENT_TIMESTAMP,
 )
 from app.core.security.system_auth.signer import sign_hmac_sha256_base64url
+from app.main import app
 
 
 def _mock_route_data(monkeypatch, rows: list[dict[str, Any]] | None = None, total: int = 1) -> None:
@@ -215,4 +215,3 @@ def test_chunks_route_rejects_replayed_nonce(monkeypatch) -> None:
     assert response.status_code == 401
     body = response.json()
     assert body["code"] == 401
-

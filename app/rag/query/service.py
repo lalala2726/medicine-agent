@@ -6,15 +6,14 @@ from loguru import logger
 from pymilvus import MilvusClient
 
 from app.core.codes import ResponseCode
+from app.core.database.milvus import get_milvus_connection_args
 from app.core.exception.exceptions import ServiceException
 from app.core.llms import create_chat_model, create_embedding_model
-from app.core.database.milvus import get_milvus_connection_args
 from app.rag.query import ranking as ranking_module
 from app.rag.query import retriever as retriever_module
 from app.rag.query import rewrite as rewrite_module
 from app.rag.query import runtime as runtime_module
 from app.rag.query.constants import (
-    RAG_DEFAULT_FINAL_TOP_K,
     RAG_MAX_CONTEXT_CHARS,
     RAG_RANKING_MAX_TOKENS,
     RAG_RANKING_RESPONSE_FORMAT,

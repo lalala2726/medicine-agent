@@ -3,8 +3,8 @@ from typing import Any
 
 import pytest
 
-from app.core.config_sync import snapshot as agent_config_module
 from app.core.codes import ResponseCode
+from app.core.config_sync import snapshot as agent_config_module
 from app.core.exception.exceptions import ServiceException
 from app.core.speech import env_utils as speech_env_utils
 from app.core.speech.stt import config as stt_config_module

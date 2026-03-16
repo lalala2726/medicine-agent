@@ -2,10 +2,10 @@ from types import SimpleNamespace
 
 from langchain_core.messages import HumanMessage
 
-from app.agent.client import chat_node as chat_node_module
+from app.agent.client.domain.common import chat_node as chat_node_module
 
 
-def test_chat_agent_registers_order_list_tool_and_keeps_tool_traces(monkeypatch):
+def test_chat_agent_does_not_register_order_list_tool(monkeypatch):
     captured: dict = {}
 
     monkeypatch.setattr(
@@ -31,12 +31,7 @@ def test_chat_agent_registers_order_list_tool_and_keeps_tool_traces(monkeypatch)
             "model_name": "trace-model",
             "is_usage_complete": True,
             "usage": None,
-            "tool_calls": [
-                {
-                    "tool_name": "open_user_order_list",
-                    "tool_input": {"orderStatus": "PENDING_PAYMENT"},
-                }
-            ],
+            "tool_calls": [],
         },
     )
     monkeypatch.setattr(
@@ -52,10 +47,5 @@ def test_chat_agent_registers_order_list_tool_and_keeps_tool_traces(monkeypatch)
         }
     )
 
-    assert captured["tools"] == [chat_node_module.open_user_order_list]
-    assert result["execution_traces"][0]["tool_calls"] == [
-        {
-            "tool_name": "open_user_order_list",
-            "tool_input": {"orderStatus": "PENDING_PAYMENT"},
-        }
-    ]
+    assert "tools" not in captured
+    assert result["execution_traces"][0]["tool_calls"] == []

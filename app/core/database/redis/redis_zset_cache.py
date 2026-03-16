@@ -259,10 +259,10 @@ class RedisZSetCache:
             raise _raise_redis_operation_error(operation="scan", exc=exc) from exc
 
     def scan_keys_with_values(
-        self,
-        key_pattern: str,
-        *,
-        count: int = DEFAULT_SCAN_COUNT,
+            self,
+            key_pattern: str,
+            *,
+            count: int = DEFAULT_SCAN_COUNT,
     ) -> dict[str, list[tuple[Any, float]]]:
         """按模式扫描 ZSet 键并读取成员及分值。
 

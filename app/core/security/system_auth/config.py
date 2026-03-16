@@ -194,13 +194,13 @@ def get_system_auth_settings() -> SystemAuthSettings:
         default=DEFAULT_SYSTEM_AUTH_NONCE_TTL_SECONDS,
     )
     nonce_key_prefix = (
-        os.getenv("SYSTEM_AUTH_NONCE_KEY_PREFIX")
-        or DEFAULT_SYSTEM_AUTH_NONCE_KEY_PREFIX
-    ).strip() or DEFAULT_SYSTEM_AUTH_NONCE_KEY_PREFIX
+                               os.getenv("SYSTEM_AUTH_NONCE_KEY_PREFIX")
+                               or DEFAULT_SYSTEM_AUTH_NONCE_KEY_PREFIX
+                       ).strip() or DEFAULT_SYSTEM_AUTH_NONCE_KEY_PREFIX
     default_sign_version = (
-        os.getenv("SYSTEM_AUTH_DEFAULT_SIGN_VERSION")
-        or DEFAULT_SIGN_VERSION
-    ).strip() or DEFAULT_SIGN_VERSION
+                                   os.getenv("SYSTEM_AUTH_DEFAULT_SIGN_VERSION")
+                                   or DEFAULT_SIGN_VERSION
+                           ).strip() or DEFAULT_SIGN_VERSION
     local_secret = (os.getenv("SYSTEM_AUTH_LOCAL_SECRET") or "").strip()
     clients = _parse_clients(os.getenv("SYSTEM_AUTH_CLIENTS_JSON"))
     return SystemAuthSettings(

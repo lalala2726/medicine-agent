@@ -23,6 +23,14 @@ OrderStatusValue = Literal[
     "COMPLETED",
     "CANCELLED",
 ]
+AfterSaleStatusValue = Literal[
+    "PENDING",
+    "APPROVED",
+    "REJECTED",
+    "PROCESSING",
+    "COMPLETED",
+    "CANCELLED",
+]
 
 
 class UserOrderListPayload(BaseModel):
@@ -32,13 +40,23 @@ class UserOrderListPayload(BaseModel):
     )
 
 
+class UserAfterSaleListPayload(BaseModel):
+    afterSaleStatus: AfterSaleStatusValue | None = Field(
+        default=None,
+        description="售后状态过滤",
+    )
+
+
 class Action(BaseModel):
     type: Literal["navigate"] = Field(default="navigate", description="动作类型")
-    target: Literal["user_order_list"] = Field(
+    target: Literal["user_order_list", "user_after_sale_list"] = Field(
         default="user_order_list",
         description="动作目标",
     )
-    payload: UserOrderListPayload = Field(default_factory=UserOrderListPayload, description="动作参数")
+    payload: UserOrderListPayload | UserAfterSaleListPayload = Field(
+        default_factory=UserOrderListPayload,
+        description="动作参数",
+    )
     priority: int = Field(default=0, description="优先级，数值越大越先发送")
 
 

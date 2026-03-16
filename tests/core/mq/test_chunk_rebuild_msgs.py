@@ -8,7 +8,6 @@ import pytest
 from pydantic import ValidationError
 
 from app.core.mq.models.chunk_rebuild_msgs import (
-    KNOWLEDGE_NAME_PATTERN,
     KnowledgeChunkRebuildCommandMessage,
     KnowledgeChunkRebuildResultMessage,
 )

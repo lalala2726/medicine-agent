@@ -54,4 +54,3 @@ def test_is_system_request_matches_marked_route() -> None:
     assert client.get("/normal").status_code == 200
     assert observed["/system"] is True
     assert observed["/normal"] is False
-

@@ -18,4 +18,3 @@ class SystemAuthPrincipal:
     sign_version: str
     timestamp: int
     nonce: str
-

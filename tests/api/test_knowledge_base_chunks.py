@@ -2,8 +2,8 @@ from fastapi.testclient import TestClient
 
 import app.main as main_module
 from app.api.routes import knowledge_base as knowledge_base_route
-from app.main import app
 from app.core.security.system_auth.models import SystemAuthPrincipal
+from app.main import app
 
 
 def _mock_system_auth(monkeypatch) -> None:
@@ -20,6 +20,7 @@ def _mock_system_auth(monkeypatch) -> None:
     异常说明:
         无。
     """
+
     async def _fake_verify_system_request(_request) -> SystemAuthPrincipal:
         return SystemAuthPrincipal(
             app_id="biz-server",

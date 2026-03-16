@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-import pytest
-
 
 class TestIsMqConfigured:
     """is_mq_configured 函数测试。"""

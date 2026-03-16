@@ -39,6 +39,7 @@ TTS_RATE_LIMIT_RULES = (
     RateLimitRule.preset(RateLimitPreset.HOUR_24, limit=200),
 )
 
+
 class AssistantRequest(BaseModel):
     """AI助手请求参数。"""
 

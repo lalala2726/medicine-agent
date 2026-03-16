@@ -4,8 +4,8 @@ import app.main as main_module
 from app.api.routes import knowledge_base as knowledge_base_route
 from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException
-from app.main import app
 from app.core.security.system_auth.models import SystemAuthPrincipal
+from app.main import app
 
 
 def _mock_system_auth(monkeypatch) -> None:

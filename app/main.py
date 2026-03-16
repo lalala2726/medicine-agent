@@ -16,7 +16,6 @@ from app.core.exception.exception_handlers import ExceptionHandlers
 from app.core.exception.exceptions import ServiceException
 from app.core.mq.broker import get_broker, is_mq_configured
 from app.core.security.anonymous_access import is_anonymous_request
-from app.core.security.system_auth import is_system_request, verify_system_request
 from app.core.security.auth_context import (
     reset_authorization_header,
     reset_current_user,
@@ -24,6 +23,7 @@ from app.core.security.auth_context import (
     set_current_user,
 )
 from app.core.security.cors import load_cors_config
+from app.core.security.system_auth import is_system_request, verify_system_request
 from app.core.speech import (
     verify_volcengine_stt_connection_on_startup,
     verify_volcengine_tts_connection_on_startup,

@@ -15,4 +15,3 @@ HEADER_X_AGENT_SIGN_VERSION = "X-Agent-Sign-Version"
 DEFAULT_SIGN_VERSION = "v1"
 # 系统鉴权路由标记属性
 SYSTEM_ENDPOINT_ATTR = "__allow_system__"
-

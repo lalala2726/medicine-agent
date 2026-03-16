@@ -8,11 +8,11 @@ from langchain.agents import create_agent
 from langchain_core.messages import SystemMessage
 from pydantic import BaseModel, Field, ValidationError
 
-from app.agent.admin.state import AgentState, ExecutionTraceState
-from app.core.config_sync import AgentChatModelSlot, create_agent_chat_llm
+from app.agent.client.state import AgentState, ExecutionTraceState
 from app.core.agent.agent_runtime import agent_invoke
 from app.core.agent.agent_tool_trace import record_agent_trace
 from app.core.agent.base_prompt_middleware import BasePromptMiddleware
+from app.core.config_sync import AgentChatModelSlot, create_agent_chat_llm
 from app.core.langsmith import traceable
 from app.services.token_usage_service import append_trace_and_refresh_token_usage
 from app.utils.prompt_utils import load_prompt
@@ -24,6 +24,8 @@ _GATEWAY_ROUTE_FALLBACK: dict[str, Any] = {
 }
 _ALLOWED_GATEWAY_TARGETS: tuple[str, ...] = (
     "chat_agent",
+    "order_agent",
+    "product_agent",
     "after_sale_agent",
 )
 
@@ -31,9 +33,14 @@ _ALLOWED_GATEWAY_TARGETS: tuple[str, ...] = (
 class GatewayRoutingSchema(BaseModel):
     """Client gateway 路由结构化输出。"""
 
-    route_targets: list[Literal["chat_agent", "after_sale_agent"]] = Field(
+    route_targets: list[
+        Literal["chat_agent", "order_agent", "product_agent", "after_sale_agent"]
+    ] = Field(
         min_length=1,
-        description="路由目标数组，仅允许 chat_agent 或 after_sale_agent",
+        description=(
+            "路由目标数组，仅允许 "
+            "chat_agent/order_agent/product_agent/after_sale_agent"
+        ),
     )
     task_difficulty: Literal["normal", "high"] = Field(
         description="任务难度，仅允许 normal 或 high",

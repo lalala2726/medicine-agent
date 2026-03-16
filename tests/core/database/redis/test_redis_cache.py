@@ -5,8 +5,8 @@ from fnmatch import fnmatch
 import pytest
 from redis.exceptions import RedisError
 
-from app.core.exception.exceptions import ServiceException
 from app.core.database.redis.redis_cache import RedisCache
+from app.core.exception.exceptions import ServiceException
 
 
 class _FakeRedis:

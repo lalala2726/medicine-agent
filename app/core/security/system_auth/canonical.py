@@ -110,4 +110,3 @@ def build_request_canonical_string(
         nonce=nonce,
         body_bytes=body_bytes,
     )
-

@@ -7,8 +7,6 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-import pytest
-
 from app.core.mq.models.import_msgs import KnowledgeImportCommandMessage
 from app.core.mq.models.stages import ImportResultStage
 

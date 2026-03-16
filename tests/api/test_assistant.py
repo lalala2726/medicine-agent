@@ -1004,8 +1004,6 @@ def test_assistant_message_tts_stream_route_rejects_extra_fields(monkeypatch):
     assert called["value"] is False
 
 
-
-
 def test_non_anonymous_route_still_requires_authentication(monkeypatch):
     async def _fake_verify_authorization() -> AuthUser:
         raise ServiceException(code=ResponseCode.UNAUTHORIZED, message="未认证")

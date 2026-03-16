@@ -59,4 +59,3 @@ def reserve_nonce(
             message="系统鉴权防重放服务不可用",
         ) from exc
     return bool(reserved)
-

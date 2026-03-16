@@ -10,10 +10,10 @@ from langchain_core.messages import SystemMessage
 from pydantic import BaseModel, Field, ValidationError
 
 from app.agent.admin.state import AgentState, ExecutionTraceState
-from app.core.config_sync import AgentChatModelSlot, create_agent_chat_llm
 from app.core.agent.agent_runtime import agent_invoke
 from app.core.agent.agent_tool_trace import record_agent_trace
 from app.core.agent.base_prompt_middleware import BasePromptMiddleware
+from app.core.config_sync import AgentChatModelSlot, create_agent_chat_llm
 from app.core.langsmith import traceable
 from app.services.token_usage_service import append_trace_and_refresh_token_usage
 from app.utils.prompt_utils import load_prompt

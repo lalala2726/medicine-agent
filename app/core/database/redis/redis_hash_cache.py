@@ -229,10 +229,10 @@ class RedisHashCache:
             raise _raise_redis_operation_error(operation="scan", exc=exc) from exc
 
     def scan_keys_with_values(
-        self,
-        key_pattern: str,
-        *,
-        count: int = DEFAULT_SCAN_COUNT,
+            self,
+            key_pattern: str,
+            *,
+            count: int = DEFAULT_SCAN_COUNT,
     ) -> dict[str, dict[Any, Any]]:
         """按模式扫描 Hash 键并读取每个 Hash 全量字段。
 

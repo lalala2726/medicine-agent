@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from contextvars import ContextVar, Token
+from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from loguru import logger
