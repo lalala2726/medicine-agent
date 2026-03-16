@@ -34,7 +34,7 @@ from app.core.agent.agent_event_bus import (
     set_final_response_queue,
     set_status_emitter,
 )
-from app.schemas.sse_response import Action, AssistantResponse, Content, MessageType
+from app.schemas.sse_response import Action, AssistantResponse, Content, MessageType, ProductCard
 from app.utils.streaming_utils import extract_text
 
 StreamEvent = tuple[str, Any]
@@ -226,6 +226,19 @@ def _resolve_action(raw_action: Any) -> Action | None:
     return None
 
 
+def _resolve_card(raw_card: Any) -> ProductCard | None:
+    """解析输入的 card 字段，仅接受合法卡片对象。"""
+
+    if isinstance(raw_card, ProductCard):
+        return raw_card
+    if isinstance(raw_card, dict):
+        try:
+            return ProductCard.model_validate(raw_card)
+        except Exception:
+            return None
+    return None
+
+
 def _to_non_negative_int(value: Any) -> int | None:
     """将值解析为非负整数。"""
 
@@ -289,6 +302,9 @@ def build_emitted_response(
     resolved_action = _resolve_action(event_payload.get("action"))
     if resolved_action is not None:
         payload_kwargs["action"] = resolved_action
+    resolved_card = _resolve_card(event_payload.get("card"))
+    if resolved_card is not None:
+        payload_kwargs["card"] = resolved_card
 
     return AssistantResponse(
         content=Content(

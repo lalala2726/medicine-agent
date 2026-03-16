@@ -5,7 +5,7 @@ from langchain_core.messages import HumanMessage
 from app.agent.client.domain.common import chat_node as chat_node_module
 
 
-def test_chat_agent_does_not_register_order_list_tool(monkeypatch):
+def test_chat_agent_registers_product_search_and_card_tools(monkeypatch):
     captured: dict = {}
 
     monkeypatch.setattr(
@@ -42,10 +42,13 @@ def test_chat_agent_does_not_register_order_list_tool(monkeypatch):
 
     result = chat_node_module.chat_agent(
         {
-            "history_messages": [HumanMessage(content="打开我的待支付订单")],
+            "history_messages": [HumanMessage(content="帮我推荐一点维生素")],
             "execution_traces": [],
         }
     )
 
-    assert "tools" not in captured
+    assert [tool.name for tool in captured["tools"]] == [
+        "search_products",
+        "send_product_card",
+    ]
     assert result["execution_traces"][0]["tool_calls"] == []

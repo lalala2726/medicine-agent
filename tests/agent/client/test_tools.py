@@ -1,8 +1,13 @@
 import asyncio
+from uuid import UUID
 
 import pytest
 from pydantic import ValidationError
 
+from app.agent.client.domain.common.frontend_message_tools import (
+    SendProductCardRequest,
+    send_product_card,
+)
 from app.agent.client.domain.common.user_action_tools import (
     OpenUserAfterSaleListRequest,
     OpenUserOrderListRequest,
@@ -86,6 +91,38 @@ def test_open_user_after_sale_list_enqueues_action_with_status():
 def test_open_user_after_sale_list_request_rejects_invalid_status():
     with pytest.raises(ValidationError):
         OpenUserAfterSaleListRequest.model_validate({"afterSaleStatus": "INVALID"})
+
+
+def test_send_product_card_enqueues_card_response():
+    queue_token = set_final_response_queue()
+    try:
+        result = asyncio.run(send_product_card.ainvoke({"productIds": [1001, 1002]}))
+        queued_responses = drain_final_sse_responses()
+    finally:
+        reset_final_response_queue(queue_token)
+
+    assert result == "已准备商品卡片"
+    assert len(queued_responses) == 1
+    response = queued_responses[0]
+    assert response.type == MessageType.CARD
+    assert response.card is not None
+    assert response.card.type == "product-card"
+    assert response.card.version == 1
+    assert response.card.data.productIds == [1001, 1002]
+    assert response.content.model_dump(exclude_none=True) == {}
+    assert response.meta is not None
+    assert "card_uuid" in response.meta
+    assert str(UUID(response.meta["card_uuid"])) == response.meta["card_uuid"]
+
+
+def test_send_product_card_request_rejects_empty_product_ids():
+    with pytest.raises(ValidationError):
+        SendProductCardRequest.model_validate({"productIds": []})
+
+
+def test_send_product_card_request_rejects_non_positive_product_id():
+    with pytest.raises(ValidationError):
+        SendProductCardRequest.model_validate({"productIds": [0]})
 
 
 def test_product_search_request_requires_query():
