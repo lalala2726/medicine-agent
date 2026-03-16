@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field
 from langchain_core.tools import tool
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.agent.agent_event_bus import enqueue_final_sse_response
 from app.schemas.sse_response import (

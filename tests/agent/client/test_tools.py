@@ -4,6 +4,8 @@ from uuid import UUID
 import pytest
 from pydantic import ValidationError
 
+from app.agent.client.domain.after_sale import tools as after_sale_tools_module
+from app.agent.client.domain.after_sale.schema import AfterSaleEligibilityRequest
 from app.agent.client.domain.common.frontend_card_tools import (
     SendProductCardRequest,
     send_product_card,
@@ -14,8 +16,6 @@ from app.agent.client.domain.common.user_action_tools import (
     open_user_after_sale_list,
     open_user_order_list,
 )
-from app.agent.client.domain.after_sale import tools as after_sale_tools_module
-from app.agent.client.domain.after_sale.schema import AfterSaleEligibilityRequest
 from app.agent.client.domain.order import tools as order_tools_module
 from app.agent.client.domain.product import tools as product_tools_module
 from app.agent.client.domain.product.schema import ProductSearchRequest
