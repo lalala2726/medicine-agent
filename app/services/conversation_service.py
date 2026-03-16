@@ -453,6 +453,44 @@ def update_admin_conversation_title(
     return int(getattr(result, "matched_count", 0)) > 0
 
 
+def update_client_conversation_title(
+        *,
+        conversation_uuid: Annotated[str, Field(min_length=1)],
+        user_id: Annotated[int, Field(ge=1)],
+        title: Annotated[str, Field(min_length=1)],
+) -> bool:
+    """
+    更新当前用户的客户端会话标题。
+
+    Args:
+        conversation_uuid: 会话 UUID。
+        user_id: 当前用户 ID。
+        title: 新标题。
+
+    Returns:
+        bool: True 表示命中并更新成功；False 表示会话不存在或无权限。
+
+    Note:
+        数据库异常会由全局异常处理器统一拦截。
+    """
+
+    db = get_mongo_database()
+    collection = db[_TABLE_NAME]
+
+    now = datetime.datetime.now()
+    query = {
+        "uuid": conversation_uuid,
+        "conversation_type": _CLIENT_MARK,
+        "user_id": _to_mongo_long(user_id),
+        "is_deleted": _NOT_DELETED_FILTER,
+    }
+    update_set = ConversationUpdateSet(title=title, update_time=now)
+    update_doc = {"$set": update_set.model_dump(mode="python", exclude_none=True)}
+
+    result = collection.update_one(query, update_doc)
+    return int(getattr(result, "matched_count", 0)) > 0
+
+
 def delete_admin_conversation(
         *,
         conversation_uuid: Annotated[str, Field(min_length=1)],
@@ -479,6 +517,42 @@ def delete_admin_conversation(
     query = {
         "uuid": conversation_uuid,
         "conversation_type": _ADMIN_MARK,
+        "user_id": _to_mongo_long(user_id),
+        "is_deleted": _NOT_DELETED_FILTER,
+    }
+    update_set = ConversationUpdateSet(is_deleted=1, update_time=now)
+    update_doc = {"$set": update_set.model_dump(mode="python", exclude_none=True)}
+
+    result = collection.update_one(query, update_doc)
+    return int(getattr(result, "matched_count", 0)) > 0
+
+
+def delete_client_conversation(
+        *,
+        conversation_uuid: Annotated[str, Field(min_length=1)],
+        user_id: Annotated[int, Field(ge=1)],
+) -> bool:
+    """
+    逻辑删除当前用户的客户端会话。
+
+    Args:
+        conversation_uuid: 会话 UUID。
+        user_id: 当前用户 ID。
+
+    Returns:
+        bool: True 表示删除成功；False 表示会话不存在、无权限或已删除。
+
+    Note:
+        数据库异常会由全局异常处理器统一拦截。
+    """
+
+    db = get_mongo_database()
+    collection = db[_TABLE_NAME]
+
+    now = datetime.datetime.now()
+    query = {
+        "uuid": conversation_uuid,
+        "conversation_type": _CLIENT_MARK,
         "user_id": _to_mongo_long(user_id),
         "is_deleted": _NOT_DELETED_FILTER,
     }

@@ -280,3 +280,89 @@ def test_conversation_messages_reads_client_conversation_history(monkeypatch):
             "status": "success",
         },
     ]
+
+
+def test_delete_conversation_calls_repository_with_current_user(monkeypatch):
+    captured: dict = {}
+    monkeypatch.setattr(service_module, "get_user_id", lambda: 101)
+    monkeypatch.setattr(
+        service_module,
+        "delete_client_conversation",
+        lambda *, conversation_uuid, user_id: (
+            captured.update({"conversation_uuid": conversation_uuid, "user_id": user_id}),
+            True,
+        )[-1],
+    )
+
+    service_module.delete_conversation(conversation_uuid="client-conv-1")
+
+    assert captured == {"conversation_uuid": "client-conv-1", "user_id": 101}
+
+
+def test_delete_conversation_raises_not_found_when_missing(monkeypatch):
+    monkeypatch.setattr(service_module, "get_user_id", lambda: 101)
+    monkeypatch.setattr(
+        service_module,
+        "delete_client_conversation",
+        lambda **_kwargs: False,
+    )
+
+    with pytest.raises(ServiceException) as exc_info:
+        service_module.delete_conversation(conversation_uuid="missing-client-conv")
+    assert exc_info.value.code == ResponseCode.NOT_FOUND.code
+
+
+def test_update_conversation_title_returns_normalized_title(monkeypatch):
+    captured: dict = {}
+    monkeypatch.setattr(service_module, "get_user_id", lambda: 101)
+    monkeypatch.setattr(
+        service_module,
+        "update_client_conversation_title",
+        lambda *, conversation_uuid, user_id, title: (
+            captured.update(
+                {
+                    "conversation_uuid": conversation_uuid,
+                    "user_id": user_id,
+                    "title": title,
+                }
+            ),
+            True,
+        )[-1],
+    )
+
+    title = service_module.update_conversation_title(
+        conversation_uuid="client-conv-1",
+        title="  新标题  ",
+    )
+
+    assert title == "新标题"
+    assert captured == {
+        "conversation_uuid": "client-conv-1",
+        "user_id": 101,
+        "title": "新标题",
+    }
+
+
+def test_update_conversation_title_rejects_blank_title(monkeypatch):
+    with pytest.raises(ServiceException) as exc_info:
+        service_module.update_conversation_title(
+            conversation_uuid="client-conv-1",
+            title="   ",
+        )
+    assert exc_info.value.code == ResponseCode.BAD_REQUEST.code
+
+
+def test_update_conversation_title_raises_not_found_when_missing(monkeypatch):
+    monkeypatch.setattr(service_module, "get_user_id", lambda: 101)
+    monkeypatch.setattr(
+        service_module,
+        "update_client_conversation_title",
+        lambda **_kwargs: False,
+    )
+
+    with pytest.raises(ServiceException) as exc_info:
+        service_module.update_conversation_title(
+            conversation_uuid="missing-client-conv",
+            title="新标题",
+        )
+    assert exc_info.value.code == ResponseCode.NOT_FOUND.code

@@ -30,8 +30,10 @@ from app.services.admin_assistant_service import (
 )
 from app.services.conversation_service import (
     add_client_conversation,
+    delete_client_conversation,
     get_client_conversation,
     list_client_conversations,
+    update_client_conversation_title,
 )
 from app.services.memory_service import load_memory, resolve_assistant_memory_mode
 from app.services.message_service import count_messages, list_messages
@@ -275,3 +277,75 @@ def conversation_messages(
                 payload["thinking"] = raw_thinking
         result.append(ConversationMessageResponse.model_validate(payload))
     return result, total
+
+
+def delete_conversation(
+        *,
+        conversation_uuid: str,
+) -> None:
+    """
+    删除当前用户的客户端助手会话。
+
+    Args:
+        conversation_uuid: 会话 UUID。
+
+    Raises:
+        ServiceException:
+            - BAD_REQUEST: 会话 UUID 为空；
+            - NOT_FOUND: 会话不存在或无权限；
+            - DATABASE_ERROR: 数据库异常。
+    """
+
+    normalized_uuid = conversation_uuid.strip()
+    if not normalized_uuid:
+        raise ServiceException(code=ResponseCode.BAD_REQUEST, message="会话UUID不能为空")
+
+    current_user_id = get_user_id()
+    deleted = delete_client_conversation(
+        conversation_uuid=normalized_uuid,
+        user_id=current_user_id,
+    )
+    if not deleted:
+        raise ServiceException(code=ResponseCode.NOT_FOUND, message="会话不存在")
+
+
+def update_conversation_title(
+        *,
+        conversation_uuid: str,
+        title: str,
+) -> str:
+    """
+    更新当前用户客户端助手会话标题。
+
+    Args:
+        conversation_uuid: 会话 UUID。
+        title: 新标题。
+
+    Returns:
+        str: 归一化后的标题（strip 后）。
+
+    Raises:
+        ServiceException:
+            - BAD_REQUEST: 会话 UUID 或标题为空；
+            - NOT_FOUND: 会话不存在或无权限；
+            - DATABASE_ERROR: 数据库异常。
+    """
+
+    normalized_uuid = conversation_uuid.strip()
+    if not normalized_uuid:
+        raise ServiceException(code=ResponseCode.BAD_REQUEST, message="会话UUID不能为空")
+
+    normalized_title = title.strip()
+    if not normalized_title:
+        raise ServiceException(code=ResponseCode.BAD_REQUEST, message="会话标题不能为空")
+
+    current_user_id = get_user_id()
+    updated = update_client_conversation_title(
+        conversation_uuid=normalized_uuid,
+        user_id=current_user_id,
+        title=normalized_title,
+    )
+    if not updated:
+        raise ServiceException(code=ResponseCode.NOT_FOUND, message="会话不存在")
+
+    return normalized_title

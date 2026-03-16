@@ -189,3 +189,109 @@ def test_client_history_route_returns_serialized_messages(monkeypatch):
         {"id": "msg-1", "role": "user", "content": "你好"}
     ]
     assert body["data"]["total"] == 1
+
+
+def test_delete_client_conversation_route_delegates_to_service(monkeypatch):
+    captured: dict = {}
+    _mock_auth(monkeypatch)
+
+    def _fake_delete_conversation(*, conversation_uuid: str):
+        captured["conversation_uuid"] = conversation_uuid
+
+    monkeypatch.setattr(
+        assistant_module,
+        "delete_conversation_service",
+        _fake_delete_conversation,
+    )
+    client = TestClient(app)
+
+    response = client.delete(
+        "/client/assistant/conversation/client-conv-1",
+        headers=_auth_headers(),
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["code"] == 200
+    assert body["message"] == "删除成功"
+    assert body["data"] == {"conversation_uuid": "client-conv-1"}
+    assert captured == {"conversation_uuid": "client-conv-1"}
+
+
+def test_update_client_conversation_title_route_delegates_to_service(monkeypatch):
+    captured: dict = {}
+    _mock_auth(monkeypatch)
+
+    def _fake_update_title(*, conversation_uuid: str, title: str) -> str:
+        captured["conversation_uuid"] = conversation_uuid
+        captured["title"] = title
+        return "新标题"
+
+    monkeypatch.setattr(
+        assistant_module,
+        "update_conversation_title_service",
+        _fake_update_title,
+    )
+    client = TestClient(app)
+
+    response = client.put(
+        "/client/assistant/conversation/client-conv-1",
+        headers=_auth_headers(),
+        json={"title": "  新标题  "},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["code"] == 200
+    assert body["message"] == "修改成功"
+    assert body["data"] == {
+        "conversation_uuid": "client-conv-1",
+        "title": "新标题",
+    }
+    assert captured == {"conversation_uuid": "client-conv-1", "title": "  新标题  "}
+
+
+def test_delete_client_conversation_requires_auth(monkeypatch):
+    called = {"value": False}
+
+    def _fake_delete_conversation(*, conversation_uuid: str):
+        called["value"] = True
+
+    monkeypatch.setattr(
+        assistant_module,
+        "delete_conversation_service",
+        _fake_delete_conversation,
+    )
+    client = TestClient(app)
+
+    response = client.delete("/client/assistant/conversation/client-conv-1")
+
+    assert response.status_code == 401
+    body = response.json()
+    assert body["code"] == 401
+    assert called["value"] is False
+
+
+def test_update_client_conversation_title_requires_auth(monkeypatch):
+    called = {"value": False}
+
+    def _fake_update_title(*, conversation_uuid: str, title: str) -> str:
+        called["value"] = True
+        return "不会执行"
+
+    monkeypatch.setattr(
+        assistant_module,
+        "update_conversation_title_service",
+        _fake_update_title,
+    )
+    client = TestClient(app)
+
+    response = client.put(
+        "/client/assistant/conversation/client-conv-1",
+        json={"title": "新标题"},
+    )
+
+    assert response.status_code == 401
+    body = response.json()
+    assert body["code"] == 401
+    assert called["value"] is False

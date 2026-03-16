@@ -13,6 +13,8 @@ from app.services.client_assistant_service import (
     assistant_chat,
     conversation_list as conversation_list_service,
     conversation_messages as conversation_messages_service,
+    delete_conversation as delete_conversation_service,
+    update_conversation_title as update_conversation_title_service,
 )
 
 router = APIRouter(prefix="/client/assistant", tags=["客户端助手"])
@@ -77,6 +79,21 @@ class ConversationListRequest(BaseModel):
 
     page_num: int = Field(default=1, ge=1, description="页号")
     page_size: int = Field(default=20, ge=1, le=100, description="每页大小")
+
+
+class UpdateConversationTitleRequest(BaseModel):
+    """修改客户端助手会话标题请求参数。"""
+
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={
+            "example": {
+                "title": "退款进度咨询",
+            }
+        },
+    )
+
+    title: str = Field(..., min_length=1, max_length=100, description="会话标题")
 
 
 @router.post(
@@ -167,4 +184,48 @@ async def conversation_messages(
         total=total,
         page_num=request.page_num,
         page_size=request.page_size,
+    )
+
+
+@router.delete(
+    "/conversation/{conversation_uuid}",
+    summary="删除客户端助手会话",
+    description="逻辑删除当前登录用户的客户端助手会话；需要携带 `Authorization: Bearer <token>`。",
+)
+async def delete_conversation(
+        conversation_uuid: str = Path(..., min_length=1, description="会话UUID"),
+) -> ApiResponse[dict[str, str]]:
+    """删除客户端助手会话。"""
+
+    delete_conversation_service(conversation_uuid=conversation_uuid)
+    return ApiResponse.success(
+        data={"conversation_uuid": conversation_uuid},
+        message="删除成功",
+    )
+
+
+@router.put(
+    "/conversation/{conversation_uuid}",
+    summary="修改客户端助手会话标题",
+    description=(
+            "修改当前登录用户的客户端助手会话标题；"
+            "请求体需传入 `title`，最大长度 100，接口需要 `Authorization: Bearer <token>`。"
+    ),
+)
+async def update_conversation_title(
+        request: UpdateConversationTitleRequest,
+        conversation_uuid: str = Path(..., min_length=1, description="会话UUID"),
+) -> ApiResponse[dict[str, str]]:
+    """修改客户端助手会话标题。"""
+
+    normalized_title = update_conversation_title_service(
+        conversation_uuid=conversation_uuid,
+        title=request.title,
+    )
+    return ApiResponse.success(
+        data={
+            "conversation_uuid": conversation_uuid,
+            "title": normalized_title,
+        },
+        message="修改成功",
     )
