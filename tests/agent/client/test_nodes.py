@@ -4,10 +4,10 @@ from langchain_core.messages import HumanMessage
 
 from app.agent.client import workflow as workflow_module
 from app.agent.client.domain.after_sale import node as after_sale_module
-from app.agent.client.domain.common import chat_node as chat_module
-from app.agent.client.domain.common import gateway_node as gateway_module
+from app.agent.client.domain.chat import chat_node as chat_module
 from app.agent.client.domain.order import node as order_module
 from app.agent.client.domain.product import node as product_module
+from app.agent.client.domain.router import gateway_node as gateway_module
 
 
 def test_route_from_gateway_returns_order_for_valid_target():

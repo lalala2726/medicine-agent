@@ -6,11 +6,12 @@ from pydantic import ValidationError
 
 from app.agent.client.domain.after_sale import tools as after_sale_tools_module
 from app.agent.client.domain.after_sale.schema import AfterSaleEligibilityRequest
-from app.agent.client.domain.common.frontend_card_tools import (
+from app.agent.client.domain.tools import card_render_tools as card_render_tools_module
+from app.agent.client.domain.tools.card_render_tools import (
     SendProductCardRequest,
     send_product_card,
 )
-from app.agent.client.domain.common.user_action_tools import (
+from app.agent.client.domain.tools.user_action_tools import (
     OpenUserAfterSaleListRequest,
     OpenUserOrderListRequest,
     open_user_after_sale_list,
@@ -24,7 +25,7 @@ from app.core.agent.agent_event_bus import (
     reset_final_response_queue,
     set_final_response_queue,
 )
-from app.schemas.sse_response import MessageType
+from app.schemas.sse_response import Card, MessageType
 
 
 def test_open_user_order_list_enqueues_action_with_order_status():
@@ -93,7 +94,31 @@ def test_open_user_after_sale_list_request_rejects_invalid_status():
         OpenUserAfterSaleListRequest.model_validate({"afterSaleStatus": "INVALID"})
 
 
-def test_send_product_card_enqueues_card_response():
+def test_send_product_card_enqueues_card_response(monkeypatch):
+    async def _fake_render_product_card(_product_ids: list[int]) -> Card:
+        return Card(
+            type="product-card",
+            version=1,
+            data={
+                "title": "为您推荐以下商品",
+                "products": [
+                    {
+                        "id": "1001",
+                        "name": "感冒灵颗粒",
+                        "image": "https://example.com/1001.png",
+                        "price": "29.90",
+                    },
+                    {
+                        "id": "1002",
+                        "name": "板蓝根颗粒",
+                        "image": "https://example.com/1002.png",
+                        "price": "19.80",
+                    },
+                ],
+            },
+        )
+
+    monkeypatch.setattr(card_render_tools_module, "render_product_card", _fake_render_product_card)
     queue_token = set_final_response_queue()
     try:
         result = asyncio.run(send_product_card.ainvoke({"productIds": [1001, 1002]}))
@@ -108,11 +133,41 @@ def test_send_product_card_enqueues_card_response():
     assert response.card is not None
     assert response.card.type == "product-card"
     assert response.card.version == 1
-    assert response.card.data.productIds == [1001, 1002]
+    assert response.card.data["title"] == "为您推荐以下商品"
+    assert response.card.data["products"] == [
+        {
+            "id": "1001",
+            "name": "感冒灵颗粒",
+            "image": "https://example.com/1001.png",
+            "price": "29.90",
+        },
+        {
+            "id": "1002",
+            "name": "板蓝根颗粒",
+            "image": "https://example.com/1002.png",
+            "price": "19.80",
+        },
+    ]
     assert response.content.model_dump(exclude_none=True) == {}
     assert response.meta is not None
     assert "card_uuid" in response.meta
     assert str(UUID(response.meta["card_uuid"])) == response.meta["card_uuid"]
+
+
+def test_send_product_card_skips_empty_card(monkeypatch):
+    async def _fake_render_product_card(_product_ids: list[int]) -> None:
+        return None
+
+    monkeypatch.setattr(card_render_tools_module, "render_product_card", _fake_render_product_card)
+    queue_token = set_final_response_queue()
+    try:
+        result = asyncio.run(send_product_card.ainvoke({"productIds": [1001, 1002]}))
+        queued_responses = drain_final_sse_responses()
+    finally:
+        reset_final_response_queue(queue_token)
+
+    assert result == "商品卡为空，未发送"
+    assert queued_responses == []
 
 
 def test_send_product_card_request_rejects_empty_product_ids():

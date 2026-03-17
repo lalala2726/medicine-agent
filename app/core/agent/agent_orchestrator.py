@@ -34,7 +34,7 @@ from app.core.agent.agent_event_bus import (
     set_final_response_queue,
     set_status_emitter,
 )
-from app.schemas.sse_response import Action, AssistantResponse, Content, MessageType, ProductCard
+from app.schemas.sse_response import Action, AssistantResponse, Card, Content, MessageType
 from app.utils.streaming_utils import extract_text
 
 StreamEvent = tuple[str, Any]
@@ -226,14 +226,14 @@ def _resolve_action(raw_action: Any) -> Action | None:
     return None
 
 
-def _resolve_card(raw_card: Any) -> ProductCard | None:
+def _resolve_card(raw_card: Any) -> Card | None:
     """解析输入的 card 字段，仅接受合法卡片对象。"""
 
-    if isinstance(raw_card, ProductCard):
+    if isinstance(raw_card, Card):
         return raw_card
     if isinstance(raw_card, dict):
         try:
-            return ProductCard.model_validate(raw_card)
+            return Card.model_validate(raw_card)
         except Exception:
             return None
     return None

@@ -3,15 +3,15 @@ import json
 from types import SimpleNamespace
 from uuid import UUID
 
+from app.agent.services.card_render_service import ProductCardData, ProductCardProduct
 from app.core.agent import agent_orchestrator as orchestrator_module
 from app.core.agent.agent_event_bus import enqueue_final_sse_response
 from app.schemas.sse_response import (
     Action,
     AssistantResponse,
+    Card,
     Content,
     MessageType,
-    ProductCard,
-    ProductCardData,
     UserOrderListPayload,
 )
 
@@ -36,11 +36,25 @@ def _build_action_response(*, message: str, order_status: str | None, priority: 
 
 
 def _build_card_response(*product_ids: int) -> AssistantResponse:
+    products = [
+        ProductCardProduct(
+            id=str(product_id),
+            name=f"商品{product_id}",
+            image=f"https://example.com/{product_id}.png",
+            price=f"{index + 1}.00",
+        )
+        for index, product_id in enumerate(product_ids)
+    ]
     return AssistantResponse(
         type=MessageType.CARD,
         content=Content(),
-        card=ProductCard(
-            data=ProductCardData(productIds=list(product_ids)),
+        card=Card(
+            type="product-card",
+            version=1,
+            data=ProductCardData(
+                title="为您推荐以下商品",
+                products=products,
+            ).model_dump(mode="json"),
         ),
         meta={
             "card_uuid": "123e4567-e89b-12d3-a456-426614174000",
@@ -139,7 +153,21 @@ def test_serialize_sse_includes_product_card_payload():
         "type": "product-card",
         "version": 1,
         "data": {
-            "productIds": [1001, 1002],
+            "title": "为您推荐以下商品",
+            "products": [
+                {
+                    "id": "1001",
+                    "name": "商品1001",
+                    "image": "https://example.com/1001.png",
+                    "price": "1.00",
+                },
+                {
+                    "id": "1002",
+                    "name": "商品1002",
+                    "image": "https://example.com/1002.png",
+                    "price": "2.00",
+                },
+            ],
         },
     }
     assert parsed["meta"] == {
@@ -177,7 +205,11 @@ def test_event_stream_flushes_final_card_before_end():
         "card",
         "answer",
     ]
-    assert payloads[1]["card"]["data"]["productIds"] == [1001, 1002]
+    assert payloads[1]["card"]["data"]["title"] == "为您推荐以下商品"
+    assert [item["id"] for item in payloads[1]["card"]["data"]["products"]] == [
+        "1001",
+        "1002",
+    ]
     assert str(UUID(payloads[1]["meta"]["card_uuid"])) == payloads[1]["meta"]["card_uuid"]
     assert payloads[2]["is_end"] is True
 
@@ -230,5 +262,9 @@ def test_event_stream_keeps_action_priority_ahead_of_card():
     ]
     assert payloads[1]["action"]["payload"]["orderStatus"] == "PENDING_PAYMENT"
     assert payloads[2]["action"]["payload"]["orderStatus"] == "COMPLETED"
-    assert payloads[3]["card"]["data"]["productIds"] == [1001, 1002]
+    assert payloads[3]["card"]["data"]["title"] == "为您推荐以下商品"
+    assert [item["id"] for item in payloads[3]["card"]["data"]["products"]] == [
+        "1001",
+        "1002",
+    ]
     assert str(UUID(payloads[3]["meta"]["card_uuid"])) == payloads[3]["meta"]["card_uuid"]

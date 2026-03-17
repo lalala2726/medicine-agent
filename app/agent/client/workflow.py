@@ -6,9 +6,10 @@ from langgraph.constants import END, START
 from langgraph.graph import StateGraph
 
 from app.agent.client.domain.after_sale import after_sale_agent
-from app.agent.client.domain.common import chat_agent, gateway_router
+from app.agent.client.domain.chat import chat_agent
 from app.agent.client.domain.order import order_agent
 from app.agent.client.domain.product import product_agent
+from app.agent.client.domain.router import gateway_router
 from app.agent.client.state import AgentState
 
 

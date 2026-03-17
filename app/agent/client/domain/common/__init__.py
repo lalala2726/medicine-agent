@@ -1,11 +1,11 @@
-"""Client 通用节点包。"""
+"""Client 通用包兼容导出。"""
 
-from app.agent.client.domain.common.chat_node import chat_agent
-from app.agent.client.domain.common.frontend_card_tools import send_product_card
-from app.agent.client.domain.common.gateway_node import gateway_router
-from app.agent.client.domain.common.user_action_tools import (
+from app.agent.client.domain.chat import chat_agent
+from app.agent.client.domain.router import gateway_router
+from app.agent.client.domain.tools import (
     open_user_after_sale_list,
     open_user_order_list,
+    send_product_card,
 )
 
 __all__ = [

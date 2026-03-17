@@ -6,13 +6,13 @@ from langchain.agents import create_agent
 from langchain.agents.middleware import ToolCallLimitMiddleware
 from langchain_core.messages import AIMessage, SystemMessage
 
-from app.agent.client.domain.common.user_action_tools import open_user_order_list
 from app.agent.client.domain.order.tools import (
     check_order_cancelable,
     get_order_detail,
     get_order_shipping,
     get_order_timeline,
 )
+from app.agent.client.domain.tools.user_action_tools import open_user_order_list
 from app.agent.client.model_switch import model_switch
 from app.agent.client.state import AgentState, ExecutionTraceState
 from app.core.agent.agent_event_bus import emit_answer_delta, emit_thinking_delta

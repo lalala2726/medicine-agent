@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 from langchain_core.messages import HumanMessage
 
-from app.agent.client.domain.common import chat_node as chat_node_module
+from app.agent.client.domain.chat import chat_node as chat_node_module
 
 
 def test_chat_agent_registers_product_search_and_card_tools(monkeypatch):
