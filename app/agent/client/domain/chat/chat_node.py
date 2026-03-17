@@ -5,7 +5,10 @@ from typing import Any
 from langchain.agents import create_agent
 from langchain_core.messages import AIMessage, SystemMessage
 
-from app.agent.client.domain.tools.card_render_tools import send_product_card
+from app.agent.client.domain.tools.card_render_tools import (
+    send_product_card,
+    send_product_purchase_card,
+)
 from app.agent.client.domain.product.tools import search_products
 from app.agent.client.state import AgentState, ExecutionTraceState
 from app.core.agent.agent_event_bus import emit_answer_delta, emit_thinking_delta
@@ -35,6 +38,7 @@ def chat_agent(state: AgentState) -> dict[str, Any]:
         tools=[
             search_products,
             send_product_card,
+            send_product_purchase_card,
         ],
         system_prompt=SystemMessage(
             content=append_current_time_to_prompt(_CHAT_SYSTEM_PROMPT)

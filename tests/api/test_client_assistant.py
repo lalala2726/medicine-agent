@@ -185,6 +185,22 @@ def test_client_history_route_returns_serialized_messages(monkeypatch):
                                 "title": "为您推荐以下商品",
                                 "products": [{"id": "1001", "name": "商品1001"}],
                             },
+                        },
+                        {
+                            "id": "card-2",
+                            "type": "product-purchase-card",
+                            "data": {
+                                "title": "请确认要购买的商品",
+                                "products": [
+                                    {
+                                        "id": "1002",
+                                        "name": "商品1002",
+                                        "price": "19.90",
+                                        "quantity": 2,
+                                    }
+                                ],
+                                "total_price": "39.80",
+                            },
                         }
                     ],
                 )
@@ -215,6 +231,22 @@ def test_client_history_route_returns_serialized_messages(monkeypatch):
                     "data": {
                         "title": "为您推荐以下商品",
                         "products": [{"id": "1001", "name": "商品1001"}],
+                    },
+                },
+                {
+                    "id": "card-2",
+                    "type": "product-purchase-card",
+                    "data": {
+                        "title": "请确认要购买的商品",
+                        "products": [
+                            {
+                                "id": "1002",
+                                "name": "商品1002",
+                                "price": "19.90",
+                                "quantity": 2,
+                            }
+                        ],
+                        "total_price": "39.80",
                     },
                 }
             ],

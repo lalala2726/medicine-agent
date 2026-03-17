@@ -50,5 +50,6 @@ def test_chat_agent_registers_product_search_and_card_tools(monkeypatch):
     assert [tool.name for tool in captured["tools"]] == [
         "search_products",
         "send_product_card",
+        "send_product_purchase_card",
     ]
     assert result["execution_traces"][0]["tool_calls"] == []

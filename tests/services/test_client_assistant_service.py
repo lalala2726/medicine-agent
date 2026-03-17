@@ -262,6 +262,22 @@ def test_conversation_messages_reads_client_conversation_history(monkeypatch):
                             "title": "为您推荐以下商品",
                             "products": [{"id": "1001", "name": "商品1001"}],
                         },
+                    },
+                    {
+                        "id": "card-2",
+                        "type": "product-purchase-card",
+                        "data": {
+                            "title": "请确认要购买的商品",
+                            "products": [
+                                {
+                                    "id": "1002",
+                                    "name": "商品1002",
+                                    "price": "19.90",
+                                    "quantity": 2,
+                                }
+                            ],
+                            "total_price": "39.80",
+                        },
                     }
                 ],
             ),
@@ -296,6 +312,22 @@ def test_conversation_messages_reads_client_conversation_history(monkeypatch):
                     "data": {
                         "title": "为您推荐以下商品",
                         "products": [{"id": "1001", "name": "商品1001"}],
+                    },
+                },
+                {
+                    "id": "card-2",
+                    "type": "product-purchase-card",
+                    "data": {
+                        "title": "请确认要购买的商品",
+                        "products": [
+                            {
+                                "id": "1002",
+                                "name": "商品1002",
+                                "price": "19.90",
+                                "quantity": 2,
+                            }
+                        ],
+                        "total_price": "39.80",
                     },
                 }
             ],

@@ -9,7 +9,10 @@ from app.agent.client.domain.after_sale.schema import AfterSaleEligibilityReques
 from app.agent.client.domain.tools import card_render_tools as card_render_tools_module
 from app.agent.client.domain.tools.card_render_tools import (
     SendProductCardRequest,
+    SendProductPurchaseCardItem,
+    SendProductPurchaseCardRequest,
     send_product_card,
+    send_product_purchase_card,
 )
 from app.agent.client.domain.tools.user_action_tools import (
     OpenUserAfterSaleListRequest,
@@ -176,6 +179,146 @@ def test_send_product_card_request_rejects_empty_product_ids():
 def test_send_product_card_request_rejects_non_positive_product_id():
     with pytest.raises(ValidationError):
         SendProductCardRequest.model_validate({"productIds": [0]})
+
+
+def test_send_product_purchase_card_enqueues_card_response(monkeypatch):
+    async def _fake_render_product_purchase_card(_items: list[dict]) -> Card:
+        return Card(
+            type="product-purchase-card",
+            data={
+                "title": "请确认要购买的商品",
+                "products": [
+                    {
+                        "id": "1001",
+                        "name": "感冒灵颗粒",
+                        "image": "https://example.com/1001.png",
+                        "price": "29.90",
+                        "quantity": 2,
+                    },
+                    {
+                        "id": "1002",
+                        "name": "板蓝根颗粒",
+                        "image": "https://example.com/1002.png",
+                        "price": "19.80",
+                        "quantity": 1,
+                    },
+                ],
+                "total_price": "79.60",
+            },
+        )
+
+    monkeypatch.setattr(
+        card_render_tools_module,
+        "render_product_purchase_card",
+        _fake_render_product_purchase_card,
+    )
+    queue_token = set_final_response_queue()
+    try:
+        result = asyncio.run(
+            send_product_purchase_card.ainvoke(
+                {
+                    "items": [
+                        {"productId": 1001, "quantity": 2},
+                        {"productId": 1002, "quantity": 1},
+                    ]
+                }
+            )
+        )
+        queued_responses = drain_final_sse_responses()
+    finally:
+        reset_final_response_queue(queue_token)
+
+    assert result == "__SUCCESS__"
+    assert len(queued_responses) == 1
+    response = queued_responses[0]
+    assert response.type == MessageType.CARD
+    assert response.card is not None
+    assert response.card.type == "product-purchase-card"
+    assert response.card.data == {
+        "title": "请确认要购买的商品",
+        "products": [
+            {
+                "id": "1001",
+                "name": "感冒灵颗粒",
+                "image": "https://example.com/1001.png",
+                "price": "29.90",
+                "quantity": 2,
+            },
+            {
+                "id": "1002",
+                "name": "板蓝根颗粒",
+                "image": "https://example.com/1002.png",
+                "price": "19.80",
+                "quantity": 1,
+            },
+        ],
+        "total_price": "79.60",
+    }
+    assert response.content.model_dump(exclude_none=True) == {}
+    assert response.meta is not None
+    assert "card_uuid" in response.meta
+    assert str(UUID(response.meta["card_uuid"])) == response.meta["card_uuid"]
+
+
+def test_send_product_purchase_card_skips_empty_card(monkeypatch):
+    async def _fake_render_product_purchase_card(_items: list[dict]) -> None:
+        return None
+
+    monkeypatch.setattr(
+        card_render_tools_module,
+        "render_product_purchase_card",
+        _fake_render_product_purchase_card,
+    )
+    queue_token = set_final_response_queue()
+    try:
+        result = asyncio.run(
+            send_product_purchase_card.ainvoke(
+                {"items": [{"productId": 1001, "quantity": 2}]}
+            )
+        )
+        queued_responses = drain_final_sse_responses()
+    finally:
+        reset_final_response_queue(queue_token)
+
+    assert result == "__ERROR__:未从业务端获取到商品购买信息无法发送商品购买卡片"
+    assert queued_responses == []
+
+
+def test_send_product_purchase_card_request_rejects_empty_items():
+    with pytest.raises(ValidationError):
+        SendProductPurchaseCardRequest.model_validate({"items": []})
+
+
+def test_send_product_purchase_card_request_rejects_non_positive_product_id():
+    with pytest.raises(ValidationError):
+        SendProductPurchaseCardRequest.model_validate(
+            {"items": [{"productId": 0, "quantity": 1}]}
+        )
+
+
+def test_send_product_purchase_card_request_rejects_non_positive_quantity():
+    with pytest.raises(ValidationError):
+        SendProductPurchaseCardRequest.model_validate(
+            {"items": [{"productId": 1001, "quantity": 0}]}
+        )
+
+
+def test_send_product_purchase_card_request_schema_contains_field_descriptions():
+    schema = SendProductPurchaseCardRequest.model_json_schema()
+
+    assert schema["example"] == {
+        "items": [
+            {"productId": 101, "quantity": 2},
+            {"productId": 205, "quantity": 1},
+        ]
+    }
+    assert (
+            schema["properties"]["items"]["description"]
+            == "商品购买项列表。请求业务端时会按 JSON 结构 `{\"items\": [{\"productId\": 101, \"quantity\": 2}]}` 发送。"
+    )
+    item_schema = schema["$defs"][SendProductPurchaseCardItem.__name__]
+    assert item_schema["properties"]["productId"]["description"] == "商品 ID，必填，且必须大于 0。"
+    assert item_schema["properties"]["quantity"]["description"] == "购买数量，必填，且必须大于 0。"
 
 
 def test_product_search_request_requires_query():
