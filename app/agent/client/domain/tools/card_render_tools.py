@@ -25,7 +25,7 @@ class SendProductCardRequest(BaseModel):
 
     productIds: list[ProductIdValue] = Field(
         min_length=1,
-        description="商品 ID 列表，仅传需要前端渲染的商品 ID。",
+        description="需要展示为推荐商品卡片的商品 ID 列表。",
     )
 
 
@@ -45,12 +45,12 @@ class SendProductPurchaseCardItem(ProductPurchaseCardRequestItem):
     productId: int = Field(
         ...,
         gt=0,
-        description="商品 ID，必填，且必须大于 0。",
+        description="待购买商品的商品 ID，必填，且必须大于 0。",
     )
     quantity: int = Field(
         ...,
         gt=0,
-        description="购买数量，必填，且必须大于 0。",
+        description="该商品的购买数量，必填，且必须大于 0。",
     )
 
 
@@ -77,10 +77,7 @@ class SendProductPurchaseCardRequest(BaseModel):
 
     items: list[SendProductPurchaseCardItem] = Field(
         min_length=1,
-        description=(
-            "商品购买项列表。"
-            "请求业务端时会按 JSON 结构 `{\"items\": [{\"productId\": 101, \"quantity\": 2}]}` 发送。"
-        ),
+        description="商品购买项列表，每个元素表示一个待确认购买的商品及其数量。",
     )
 
 
@@ -101,7 +98,6 @@ def _build_card_response(card: Card) -> AssistantResponse:
     description=(
             "向前端发送商品卡片。"
             "调用时机：已经筛出要推荐的商品后，希望在本轮回答文本结束后展示商品卡片时。"
-            "这边仅需传递商品 ID 列表，工具会自动请求业务端获取商品信息并渲染成卡片。"
     ),
 )
 async def send_product_card(productIds: list[int]) -> str:
@@ -137,7 +133,6 @@ async def send_product_card(productIds: list[int]) -> str:
     description=(
             "向前端发送商品购买卡片。"
             "调用时机：已经明确用户准备购买哪些商品以及对应数量后，希望在本轮回答文本结束后展示购买确认卡片时。"
-            "这边传递商品 ID 和购买数量，工具会自动请求业务端获取商品信息并渲染成购买卡片。"
     ),
 )
 async def send_product_purchase_card(
