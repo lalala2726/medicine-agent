@@ -7,8 +7,8 @@ from langchain_core.tools import tool
 from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.agent.services.card_render_schema import ProductPurchaseCardRequestItem
 from app.agent.services.card_render_service import (
-    ProductPurchaseCardRequestItem,
     render_product_card,
     render_product_purchase_card,
 )

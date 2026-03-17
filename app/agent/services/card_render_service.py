@@ -3,159 +3,38 @@ from __future__ import annotations
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
-
+from app.agent.services.card_render_schema import (
+    ProductCardData,
+    ProductCardItem,
+    ProductCardProduct,
+    ProductCardResponseData,
+    ProductPurchaseCardData,
+    ProductPurchaseCardItem,
+    ProductPurchaseCardProduct,
+    ProductPurchaseCardRequestItem,
+    ProductPurchaseCardResponseData,
+)
 from app.schemas.sse_response import Card
 from app.utils.http_client import HttpClient
 
+# 统一金额展示精度，所有卡片价格最终都会量化为两位小数字符串。
 _MONEY_PRECISION = Decimal("0.00")
-_DEFAULT_PRODUCT_CARD_TITLE = "为您推荐以下商品"
-_DEFAULT_PRODUCT_PURCHASE_CARD_TITLE = "请确认要购买的商品"
-
-
-class PurchaseCardFieldMeta(BaseModel):
-    """商品卡片接口返回的字段说明元数据。"""
-
-    model_config = ConfigDict(extra="ignore")
-
-    entityDescription: str | None = Field(default=None, description="实体说明")
-    fieldDescriptions: dict[str, str] = Field(
-        default_factory=dict,
-        description="字段语义说明",
-    )
-
-
-class BaseProductCardItem(BaseModel):
-    """商品卡片上游接口中的公共商品字段。"""
-
-    model_config = ConfigDict(extra="ignore")
-
-    id: str = Field(..., description="商品 ID")
-    name: str = Field(..., description="商品名称")
-    image: str = Field(..., description="商品主图")
-    price: Decimal = Field(default=Decimal("0.00"), description="商品销售价")
-
-
-class ProductCardItem(BaseProductCardItem):
-    """推荐商品卡接口中的单个商品项。"""
-
-    model_config = ConfigDict(extra="ignore")
-
-    spec: str | None = Field(default=None, description="商品规格")
-    efficacy: str | None = Field(default=None, description="功效/适应症")
-    prescription: bool | None = Field(default=None, description="是否处方药")
-    stock: int | None = Field(default=None, description="库存")
-
-
-class ProductCardResponseData(BaseModel):
-    """推荐商品卡接口业务数据。"""
-
-    model_config = ConfigDict(extra="ignore")
-
-    totalPrice: Decimal = Field(default=Decimal("0.00"), description="商品总价")
-    items: list[ProductCardItem] = Field(
-        default_factory=list,
-        description="商品卡片列表",
-    )
-    meta: PurchaseCardFieldMeta | None = Field(
-        default=None,
-        description="字段语义元数据",
-    )
-
-
-class ProductCardProduct(BaseModel):
-    """前端推荐商品卡片中的单个商品项。"""
-
-    model_config = ConfigDict(extra="forbid")
-
-    id: str = Field(..., description="商品 ID")
-    name: str = Field(..., description="商品名称")
-    image: str = Field(..., description="商品主图")
-    price: str = Field(..., description="商品销售价")
-
-
-class ProductCardData(BaseModel):
-    """前端推荐商品卡片数据。"""
-
-    model_config = ConfigDict(extra="forbid")
-
-    title: str = Field(
-        default=_DEFAULT_PRODUCT_CARD_TITLE,
-        description="商品卡片标题",
-    )
-    products: list[ProductCardProduct] = Field(
-        default_factory=list,
-        description="商品展示列表",
-    )
-
-
-class ProductPurchaseCardRequestItem(BaseModel):
-    """商品购买卡片请求中的单个购买项。"""
-
-    model_config = ConfigDict(extra="forbid")
-
-    productId: int = Field(..., gt=0, description="商品 ID，必须大于 0")
-    quantity: int = Field(..., gt=0, description="购买数量，必须大于 0")
-
-
-class ProductPurchaseCardItem(BaseProductCardItem):
-    """商品购买卡片接口中的单个商品项。"""
-
-    model_config = ConfigDict(extra="ignore")
-
-    quantity: int = Field(..., gt=0, description="购买数量")
-    spec: str | None = Field(default=None, description="商品规格")
-    efficacy: str | None = Field(default=None, description="功效/适应症")
-    prescription: bool | None = Field(default=None, description="是否处方药")
-    stock: int | None = Field(default=None, description="库存")
-
-
-class ProductPurchaseCardResponseData(BaseModel):
-    """商品购买卡片接口业务数据。"""
-
-    model_config = ConfigDict(extra="ignore")
-
-    totalPrice: Decimal = Field(default=Decimal("0.00"), description="商品总价")
-    items: list[ProductPurchaseCardItem] = Field(
-        default_factory=list,
-        description="商品购买卡片列表",
-    )
-    meta: PurchaseCardFieldMeta | None = Field(
-        default=None,
-        description="字段语义元数据",
-    )
-
-
-class ProductPurchaseCardProduct(BaseModel):
-    """前端商品购买卡片中的单个商品项。"""
-
-    model_config = ConfigDict(extra="forbid")
-
-    id: str = Field(..., description="商品 ID")
-    name: str = Field(..., description="商品名称")
-    image: str = Field(..., description="商品主图")
-    price: str = Field(..., description="商品销售价")
-    quantity: int = Field(..., gt=0, description="购买数量")
-
-
-class ProductPurchaseCardData(BaseModel):
-    """前端商品购买卡片数据。"""
-
-    model_config = ConfigDict(extra="forbid")
-
-    title: str = Field(
-        default=_DEFAULT_PRODUCT_PURCHASE_CARD_TITLE,
-        description="商品购买卡片标题",
-    )
-    products: list[ProductPurchaseCardProduct] = Field(
-        default_factory=list,
-        description="商品购买展示列表",
-    )
-    total_price: str = Field(default="0.00", description="当前展示商品总价")
 
 
 def _format_money(value: Decimal | int | float | str) -> str:
-    """将业务端价格统一格式化为两位小数字符串。"""
+    """
+    功能描述：
+        将不同来源的价格值统一格式化为两位小数字符串，供前端卡片展示使用。
+
+    参数说明：
+        value (Decimal | int | float | str): 原始价格值，支持 Decimal、整数、浮点数或字符串。
+
+    返回值：
+        str: 两位小数的金额字符串；当输入无法转换为数字时，返回 `"0.00"`。
+
+    异常说明：
+        无。非法数值会被内部兜底为 0，不向外抛出异常。
+    """
 
     try:
         normalized_value = Decimal(str(value))
@@ -165,7 +44,20 @@ def _format_money(value: Decimal | int | float | str) -> str:
 
 
 def _build_product_card_url(product_ids: list[int]) -> str:
-    """构建推荐商品卡片补全接口地址。"""
+    """
+    功能描述：
+        根据商品 ID 列表拼接推荐商品卡片补全接口地址。
+
+    参数说明：
+        product_ids (list[int]): 需要查询的商品 ID 列表，顺序与调用方传入顺序保持一致。
+
+    返回值：
+        str: 业务端推荐商品卡片接口相对路径，例如
+        `"/agent/client/card/product/101,205,309"`。
+
+    异常说明：
+        无。
+    """
 
     normalized_ids = ",".join(str(product_id) for product_id in product_ids)
     return f"/agent/client/card/product/{normalized_ids}"
@@ -176,7 +68,21 @@ def _map_product_items(
         product_ids: list[int],
         items: list[ProductCardItem],
 ) -> list[ProductCardProduct]:
-    """按传入商品 ID 顺序映射前端推荐商品卡片。"""
+    """
+    功能描述：
+        将业务端返回的推荐商品明细映射为前端商品卡片结构，并按请求商品 ID 顺序输出。
+
+    参数说明：
+        product_ids (list[int]): 原始请求的商品 ID 列表，用于控制前端卡片商品排序。
+        items (list[ProductCardItem]): 业务端返回的商品明细列表。
+
+    返回值：
+        list[ProductCardProduct]: 可直接写入前端商品卡片的商品列表。
+        若某个商品 ID 在业务端返回中缺失，则该商品会被跳过。
+
+    异常说明：
+        无。
+    """
 
     items_by_id: dict[str, ProductCardItem] = {}
     for item in items:
@@ -203,7 +109,21 @@ def _map_product_items(
 def _normalize_purchase_card_request_items(
         items: list[ProductPurchaseCardRequestItem | dict[str, Any]],
 ) -> list[ProductPurchaseCardRequestItem]:
-    """统一校验并规范化商品购买卡片请求项。"""
+    """
+    功能描述：
+        统一规范商品购买卡片请求项，兼容已经构造好的模型对象和原始字典输入。
+
+    参数说明：
+        items (list[ProductPurchaseCardRequestItem | dict[str, Any]]):
+            商品购买项列表；元素可以是 `ProductPurchaseCardRequestItem`
+            或待校验的原始字典。
+
+    返回值：
+        list[ProductPurchaseCardRequestItem]: 经过 Pydantic 校验后的标准购买项列表。
+
+    异常说明：
+        pydantic.ValidationError: 当字典结构缺字段、字段类型错误或数值不满足约束时抛出。
+    """
 
     return [
         item
@@ -218,7 +138,24 @@ def _map_product_purchase_items(
         request_items: list[ProductPurchaseCardRequestItem],
         items: list[ProductPurchaseCardItem],
 ) -> tuple[list[ProductPurchaseCardProduct], str]:
-    """按请求顺序映射前端商品购买卡片，并计算展示总价。"""
+    """
+    功能描述：
+        将业务端返回的购买商品明细映射为前端购买确认卡片结构，并计算展示总价。
+
+    参数说明：
+        request_items (list[ProductPurchaseCardRequestItem]): 原始购买请求项列表，
+            用于保留前端展示顺序和购买数量。
+        items (list[ProductPurchaseCardItem]): 业务端返回的商品明细列表。
+
+    返回值：
+        tuple[list[ProductPurchaseCardProduct], str]:
+            第一个元素为前端购买卡片商品列表，
+            第二个元素为基于成功匹配商品计算出的两位小数字符串总价。
+            对于业务端未返回的商品，将跳过且不计入总价。
+
+    异常说明：
+        无。
+    """
 
     items_by_id: dict[str, ProductPurchaseCardItem] = {}
     for item in items:
@@ -247,7 +184,22 @@ def _map_product_purchase_items(
 
 
 async def render_product_card(product_ids: list[int]) -> Card | None:
-    """请求业务端补全推荐商品卡片；无有效商品时返回 `None`。"""
+    """
+    功能描述：
+        请求业务端补全推荐商品信息，并渲染为前端可直接消费的推荐商品卡片。
+
+    参数说明：
+        product_ids (list[int]): 需要展示的商品 ID 列表。
+
+    返回值：
+        Card | None:
+            当成功获取到至少一个有效商品时，返回 `type="product-card"` 的卡片对象；
+            当入参为空或业务端未返回任何可展示商品时，返回 `None`。
+
+    异常说明：
+        pydantic.ValidationError: 当业务端返回结构不符合 `ProductCardResponseData` 约束时抛出。
+        Exception: `HttpClient` 请求异常等底层错误会继续向上抛出，由调用方处理。
+    """
 
     if not product_ids:
         return None
@@ -276,7 +228,25 @@ async def render_product_card(product_ids: list[int]) -> Card | None:
 async def render_product_purchase_card(
         items: list[ProductPurchaseCardRequestItem | dict[str, Any]],
 ) -> Card | None:
-    """请求业务端补全商品购买卡片；无有效商品时返回 `None`。"""
+    """
+    功能描述：
+        请求业务端补全购买商品信息，并渲染为前端可直接消费的购买确认卡片。
+
+    参数说明：
+        items (list[ProductPurchaseCardRequestItem | dict[str, Any]]):
+            商品购买项列表，包含商品 ID 与购买数量；支持传入模型对象或原始字典。
+
+    返回值：
+        Card | None:
+            当成功获取到至少一个可展示商品时，返回 `type="product-purchase-card"` 的卡片对象；
+            当入参为空或业务端未返回任何可展示商品时，返回 `None`。
+
+    异常说明：
+        pydantic.ValidationError:
+            当请求项校验失败，或业务端返回结构不符合 `ProductPurchaseCardResponseData`
+            约束时抛出。
+        Exception: `HttpClient` 请求异常等底层错误会继续向上抛出，由调用方处理。
+    """
 
     request_items = _normalize_purchase_card_request_items(items)
     if not request_items:
@@ -313,16 +283,6 @@ async def render_product_purchase_card(
 
 
 __all__ = [
-    "ProductCardData",
-    "ProductCardItem",
-    "ProductCardProduct",
-    "ProductCardResponseData",
-    "ProductPurchaseCardData",
-    "ProductPurchaseCardItem",
-    "ProductPurchaseCardProduct",
-    "ProductPurchaseCardRequestItem",
-    "ProductPurchaseCardResponseData",
-    "PurchaseCardFieldMeta",
     "render_product_card",
     "render_product_purchase_card",
 ]
