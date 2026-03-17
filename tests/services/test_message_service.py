@@ -2,6 +2,7 @@ import datetime
 
 import pytest
 from bson import ObjectId
+from pydantic import ValidationError
 
 from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException
@@ -237,6 +238,94 @@ def test_add_message_user_ignores_thinking(monkeypatch):
     assert "thinking" not in collection.last_inserted
 
 
+def test_add_message_persists_cards_for_assistant_with_empty_content(monkeypatch):
+    """验证 assistant 消息可在纯卡片场景下落库。"""
+
+    collection = _DummyCollection()
+    monkeypatch.setattr(
+        service_module,
+        "get_mongo_database",
+        lambda: {"messages": collection},
+    )
+    monkeypatch.setattr(service_module, "_resolve_collection_name", lambda: "messages")
+
+    service_module.add_message(
+        conversation_id="507f1f77bcf86cd799439011",
+        role=MessageRole.AI,
+        content="   ",
+        cards=[
+            {
+                "id": "card-1",
+                "type": "product-card",
+                "data": {
+                    "title": "为您推荐以下商品",
+                    "products": [],
+                },
+            }
+        ],
+    )
+
+    assert collection.last_inserted is not None
+    assert collection.last_inserted["content"] == ""
+    assert collection.last_inserted["cards"] == [
+        {
+            "id": "card-1",
+            "type": "product-card",
+            "data": {
+                "title": "为您推荐以下商品",
+                "products": [],
+            },
+        }
+    ]
+
+
+def test_add_message_rejects_empty_assistant_content_without_cards(monkeypatch):
+    """验证 assistant 消息内容和卡片不能同时为空。"""
+
+    collection = _DummyCollection()
+    monkeypatch.setattr(
+        service_module,
+        "get_mongo_database",
+        lambda: {"messages": collection},
+    )
+    monkeypatch.setattr(service_module, "_resolve_collection_name", lambda: "messages")
+
+    with pytest.raises(ValidationError):
+        service_module.add_message(
+            conversation_id="507f1f77bcf86cd799439011",
+            role=MessageRole.AI,
+            content="   ",
+        )
+
+
+def test_add_message_user_ignores_cards(monkeypatch):
+    """验证 user 消息不会保存 cards 字段。"""
+
+    collection = _DummyCollection()
+    monkeypatch.setattr(
+        service_module,
+        "get_mongo_database",
+        lambda: {"messages": collection},
+    )
+    monkeypatch.setattr(service_module, "_resolve_collection_name", lambda: "messages")
+
+    service_module.add_message(
+        conversation_id="507f1f77bcf86cd799439011",
+        role=MessageRole.USER,
+        content="用户提问",
+        cards=[
+            {
+                "id": "card-1",
+                "type": "product-card",
+                "data": {"title": "ignored"},
+            }
+        ],
+    )
+
+    assert collection.last_inserted is not None
+    assert "cards" not in collection.last_inserted
+
+
 def test_add_message_rejects_invalid_conversation_id(monkeypatch):
     """验证 add_message：非法 conversation_id 会返回 BAD_REQUEST。"""
 
@@ -274,6 +363,16 @@ def test_get_message_by_uuid_returns_typed_model(monkeypatch):
             "completion_tokens": 1,
             "total_tokens": 3,
         },
+        "cards": [
+            {
+                "id": "card-1",
+                "type": "product-card",
+                "data": {
+                    "title": "为您推荐以下商品",
+                    "products": [],
+                },
+            }
+        ],
         "created_at": datetime.datetime(2026, 1, 1, 10, 0, 0),
         "updated_at": datetime.datetime(2026, 1, 1, 10, 0, 0),
     }
@@ -298,6 +397,15 @@ def test_get_message_by_uuid_returns_typed_model(monkeypatch):
         "completion_tokens": 1,
         "total_tokens": 3,
     }
+    assert result.cards is not None
+    assert result.cards[0].model_dump() == {
+        "id": "card-1",
+        "type": "product-card",
+        "data": {
+            "title": "为您推荐以下商品",
+            "products": [],
+        },
+    }
 
 
 def test_list_messages_returns_typed_models(monkeypatch):
@@ -312,6 +420,16 @@ def test_list_messages_returns_typed_models(monkeypatch):
             "role": "ai",
             "content": "b",
             "thinking": "AI思考",
+            "cards": [
+                {
+                    "id": "card-2",
+                    "type": "product-card",
+                    "data": {
+                        "title": "为您推荐以下商品",
+                        "products": [{"id": "1001"}],
+                    },
+                }
+            ],
             "created_at": datetime.datetime(2026, 1, 1, 10, 0, 2),
             "updated_at": datetime.datetime(2026, 1, 1, 10, 0, 2),
         },
@@ -348,6 +466,8 @@ def test_list_messages_returns_typed_models(monkeypatch):
     assert result[0].thinking is None
     assert result[1].content == "b"
     assert result[1].thinking == "AI思考"
+    assert result[1].cards is not None
+    assert result[1].cards[0].id == "card-2"
 
 
 def test_list_messages_supports_skip_with_descending_order(monkeypatch):

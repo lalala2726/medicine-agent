@@ -35,7 +35,10 @@ def _build_action_response(*, message: str, order_status: str | None, priority: 
     )
 
 
-def _build_card_response(*product_ids: int) -> AssistantResponse:
+def _build_card_response(
+        *product_ids: int,
+        card_uuid: str = "123e4567-e89b-12d3-a456-426614174000",
+) -> AssistantResponse:
     products = [
         ProductCardProduct(
             id=str(product_id),
@@ -50,14 +53,13 @@ def _build_card_response(*product_ids: int) -> AssistantResponse:
         content=Content(),
         card=Card(
             type="product-card",
-            version=1,
             data=ProductCardData(
                 title="为您推荐以下商品",
                 products=products,
             ).model_dump(mode="json"),
         ),
         meta={
-            "card_uuid": "123e4567-e89b-12d3-a456-426614174000",
+            "card_uuid": card_uuid,
         },
     )
 
@@ -151,7 +153,6 @@ def test_serialize_sse_includes_product_card_payload():
     assert parsed["content"] == {}
     assert parsed["card"] == {
         "type": "product-card",
-        "version": 1,
         "data": {
             "title": "为您推荐以下商品",
             "products": [
@@ -268,3 +269,100 @@ def test_event_stream_keeps_action_priority_ahead_of_card():
         "1002",
     ]
     assert str(UUID(payloads[3]["meta"]["card_uuid"])) == payloads[3]["meta"]["card_uuid"]
+
+
+def test_event_stream_passes_final_cards_to_answer_completed_callback():
+    captured: dict = {}
+
+    class _FakeWorkflow:
+        async def astream(self, _state: dict, **_kwargs):
+            yield ("messages", (SimpleNamespace(content="你好"), {"langgraph_node": "chat_agent"}))
+            enqueue_final_sse_response(
+                _build_card_response(
+                    1001,
+                    card_uuid="123e4567-e89b-12d3-a456-426614174001",
+                )
+            )
+            enqueue_final_sse_response(
+                _build_action_response(
+                    message="已为你打开待支付订单列表",
+                    order_status="PENDING_PAYMENT",
+                    priority=100,
+                )
+            )
+            enqueue_final_sse_response(
+                _build_card_response(
+                    1002,
+                    card_uuid="123e4567-e89b-12d3-a456-426614174002",
+                )
+            )
+
+    async def _on_answer_completed(
+            answer_text: str,
+            execution_trace,
+            token_usage,
+            has_error: bool,
+            thinking_text: str,
+            cards,
+    ) -> None:
+        captured["answer_text"] = answer_text
+        captured["execution_trace"] = execution_trace
+        captured["token_usage"] = token_usage
+        captured["has_error"] = has_error
+        captured["thinking_text"] = thinking_text
+        captured["cards"] = cards
+
+    config = orchestrator_module.AssistantStreamConfig(
+        workflow=_FakeWorkflow(),
+        build_initial_state=lambda _question: {},
+        extract_final_content=lambda _state: "",
+        should_stream_token=lambda _node, _state: True,
+        build_stream_config=None,
+        invoke_sync=lambda state: state,
+        map_exception=lambda exc: str(exc),
+        on_answer_completed=_on_answer_completed,
+    )
+
+    async def _collect() -> list[str]:
+        events: list[str] = []
+        async for event in orchestrator_module._event_stream(question="你好", config=config):
+            events.append(event)
+        return events
+
+    asyncio.run(_collect())
+
+    assert captured["answer_text"] == "你好"
+    assert captured["has_error"] is False
+    assert captured["thinking_text"] == ""
+    assert captured["cards"] == [
+        {
+            "id": "123e4567-e89b-12d3-a456-426614174001",
+            "type": "product-card",
+            "data": {
+                "title": "为您推荐以下商品",
+                "products": [
+                    {
+                        "id": "1001",
+                        "name": "商品1001",
+                        "image": "https://example.com/1001.png",
+                        "price": "1.00",
+                    }
+                ],
+            },
+        },
+        {
+            "id": "123e4567-e89b-12d3-a456-426614174002",
+            "type": "product-card",
+            "data": {
+                "title": "为您推荐以下商品",
+                "products": [
+                    {
+                        "id": "1002",
+                        "name": "商品1002",
+                        "image": "https://example.com/1002.png",
+                        "price": "1.00",
+                    }
+                ],
+            },
+        },
+    ]

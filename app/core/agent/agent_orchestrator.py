@@ -89,10 +89,11 @@ class AssistantStreamConfig:
     invoke_sync: Callable[[dict[str, Any]], dict[str, Any]]
     # 异常映射器：把内部异常转成统一错误文案。
     map_exception: Callable[[Exception], str]
-    # 可选收尾回调：在流结束时回调完整 answer/thinking 文本、执行追踪与 token 汇总。
-    # 回调兼容 2/3/4/5 参：2参(answer,trace)、3参(answer,trace,has_error)、
+    # 可选收尾回调：在流结束时回调完整 answer/thinking 文本、执行追踪、token 汇总与最终卡片。
+    # 回调兼容 2/3/4/5/6 参：2参(answer,trace)、3参(answer,trace,has_error)、
     # 4参(answer,trace,token_usage,has_error)、
-    # 5参(answer,trace,token_usage,has_error,thinking_text)。
+    # 5参(answer,trace,token_usage,has_error,thinking_text)、
+    # 6参(answer,trace,token_usage,has_error,thinking_text,cards)。
     on_answer_completed: OnAnswerCompletedCallback | None = None
     # 流开始前注入的事件列表（例如会话创建成功事件），会按给定顺序输出。
     initial_emitted_events: tuple[InitialEmittedEvent, ...] = field(
@@ -820,18 +821,59 @@ async def _finalize_stream(emitter_token: Any, producer_task: asyncio.Task[Any])
     return build_answer_sse("", True)
 
 
-def _render_final_sse_responses() -> list[str]:
+def _drain_final_sse_responses() -> list[AssistantResponse]:
     """
-    取出并序列化所有最终 SSE 响应。
+    取出所有最终 SSE 响应对象。
+
+    用途：
+    - 在流式主体输出完成后，统一获取“流尾响应队列”中的内容；
+    - 保留事件总线已经排好的最终发送顺序；
+    - 为后续 SSE 序列化和历史卡片持久化提供同一份源数据。
 
     Returns:
-        list[str]: 按优先级排序后的 SSE 文本列表。
+        list[AssistantResponse]: 按最终发送顺序返回的响应对象列表。
     """
 
-    return [
-        serialize_sse(response)
-        for response in drain_final_sse_responses()
-    ]
+    return drain_final_sse_responses()
+
+
+def _extract_persistable_cards(
+        final_responses: list[AssistantResponse],
+) -> list[dict[str, Any]] | None:
+    """
+    从最终 SSE 响应中提取可落库的卡片。
+
+    仅提取 `type=card` 的响应，且要求存在合法 `card_uuid`。
+    action 等其他最终响应不会进入消息持久化结构。
+
+    Args:
+        final_responses: 流尾阶段准备发送给前端的最终 SSE 响应列表。
+
+    Returns:
+        list[dict[str, Any]] | None:
+            可持久化的卡片列表，结构固定为 `id + type + data`；
+            若不存在合法卡片则返回 `None`。
+    """
+
+    cards: list[dict[str, Any]] = []
+    for response in final_responses:
+        if response.type != MessageType.CARD or response.card is None:
+            continue
+
+        meta = response.meta if isinstance(response.meta, dict) else {}
+        card_id = str(meta.get("card_uuid") or "").strip()
+        if not card_id:
+            continue
+
+        cards.append(
+            {
+                "id": card_id,
+                "type": response.card.type,
+                "data": dict(response.card.data),
+            }
+        )
+
+    return cards or None
 
 
 async def _invoke_answer_completed_callback(
@@ -841,6 +883,7 @@ async def _invoke_answer_completed_callback(
         token_usage: dict[str, Any] | None,
         has_error: bool,
         thinking_text: str,
+        final_cards: list[dict[str, Any]] | None,
 ) -> None:
     """
     执行“回答完成”回调。
@@ -854,6 +897,7 @@ async def _invoke_answer_completed_callback(
         token_usage: 汇总后的消息级 token 使用信息。
         has_error: 本次流式执行是否出现错误。
         thinking_text: 聚合后的完整思考文本。
+        final_cards: 最终发给前端且需要随消息持久化的卡片列表。
     """
 
     if callback is None:
@@ -875,9 +919,19 @@ async def _invoke_answer_completed_callback(
     )
     supports_four_args = accepts_variadic or len(positional_parameters) >= 4
     supports_five_args = accepts_variadic or len(positional_parameters) >= 5
+    supports_six_args = accepts_variadic or len(positional_parameters) >= 6
     supports_three_args = accepts_variadic or len(positional_parameters) >= 3
 
-    if supports_five_args:
+    if supports_six_args:
+        callback_result = callback(
+            answer_text,
+            execution_trace,
+            token_usage,
+            has_error,
+            thinking_text,
+            final_cards,
+        )
+    elif supports_five_args:
         callback_result = callback(answer_text, execution_trace, token_usage, has_error, thinking_text)
     elif supports_four_args:
         callback_result = callback(answer_text, execution_trace, token_usage, has_error)
@@ -905,6 +959,7 @@ async def _event_stream(
 
     state = config.build_initial_state(question)
     runtime_state = StreamRuntimeState(latest_state=state)
+    final_responses: list[AssistantResponse] = []
 
     queue: asyncio.Queue[StreamEvent] = asyncio.Queue()
     loop = asyncio.get_running_loop()
@@ -968,8 +1023,9 @@ async def _event_stream(
                 if delta_text:
                     yield build_answer_sse(delta_text, False)
 
-        for final_response in _render_final_sse_responses():
-            yield final_response
+        final_responses = _drain_final_sse_responses()
+        for final_response in final_responses:
+            yield serialize_sse(final_response)
     finally:
         try:
             execution_trace = _build_execution_trace_summary(runtime_state.latest_state)
@@ -981,6 +1037,7 @@ async def _event_stream(
                 token_usage,
                 runtime_state.has_emitted_error,
                 runtime_state.aggregated_thinking_text,
+                _extract_persistable_cards(final_responses),
             )
         except Exception as exc:  # pragma: no cover - 防御性兜底
             logger.opt(exception=exc).warning("Assistant stream finalize callback failed")

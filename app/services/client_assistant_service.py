@@ -24,6 +24,7 @@ from app.services.admin_assistant_service import (
     _build_message_prepared_event,
     _map_exception,
     _persist_user_message,
+    _serialize_cards_for_history,
     _schedule_background_task,
     _schedule_title_generation,
     _should_stream_token,
@@ -216,6 +217,7 @@ def assistant_chat(
             conversation_id=context.conversation_id,
             assistant_message_uuid=context.assistant_message_uuid,
             workflow_name=CLIENT_WORKFLOW_NAME,
+            persist_cards=True,
         ),
         initial_emitted_events=context.initial_emitted_events,
     )
@@ -275,6 +277,11 @@ def conversation_messages(
             raw_thinking = getattr(document, "thinking", None)
             if isinstance(raw_thinking, str) and raw_thinking.strip():
                 payload["thinking"] = raw_thinking
+            serialized_cards = _serialize_cards_for_history(
+                getattr(document, "cards", None)
+            )
+            if serialized_cards is not None:
+                payload["cards"] = serialized_cards
         result.append(ConversationMessageResponse.model_validate(payload))
     return result, total
 

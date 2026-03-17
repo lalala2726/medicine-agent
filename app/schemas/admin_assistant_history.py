@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -38,6 +38,23 @@ class ThoughtNodeResponse(BaseModel):
     children: list[ThoughtStepResponse] = Field(default_factory=list, description="子步骤列表")
 
 
+class ConversationCardResponse(BaseModel):
+    """
+    历史消息中的结构化卡片。
+
+    用途：
+    - 作为历史消息接口中 `cards[]` 的统一元素结构；
+    - 与消息文档中的 `MessageCard` 保持一致；
+    - 直接承载前端恢复渲染所需的卡片数据。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(..., min_length=1, description="卡片唯一ID")
+    type: str = Field(..., min_length=1, description="卡片类型")
+    data: dict[str, Any] = Field(default_factory=dict, description="卡片数据")
+
+
 class ConversationMessageResponse(BaseModel):
     """管理助手历史消息响应项。"""
 
@@ -48,6 +65,10 @@ class ConversationMessageResponse(BaseModel):
     content: str = Field(..., description="消息内容")
     thinking: str | None = Field(default=None, description="AI深度思考完整文本")
     status: Literal["success", "error"] | None = Field(default=None, description="消息状态")
+    cards: list[ConversationCardResponse] | None = Field(
+        default=None,
+        description="结构化卡片列表",
+    )
     thought_chain: list[ThoughtNodeResponse] | None = Field(
         default=None,
         serialization_alias="thoughtChain",

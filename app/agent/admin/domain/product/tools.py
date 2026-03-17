@@ -4,7 +4,7 @@ from typing import Optional
 
 from langchain_core.tools import tool
 
-from app.agent.admin.domain.common.tools import _normalize_id_list, format_ids_to_string
+from app.agent.admin.domain.tools import _normalize_id_list, format_ids_to_string
 from app.agent.admin.domain.product.schema import (
     DrugDetailRequest,
     MallProductListQueryRequest,

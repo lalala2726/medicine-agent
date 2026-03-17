@@ -23,7 +23,7 @@ from app.agent.admin.domain.analytics.tools import (
     get_analytics_sales_trend,
     get_analytics_top_selling_products,
 )
-from app.agent.admin.domain.common.tools import get_safe_user_info
+from app.agent.admin.domain.tools import get_safe_user_info
 from app.agent.admin.domain.order.tools import (
     get_order_list,
     get_order_shipping,

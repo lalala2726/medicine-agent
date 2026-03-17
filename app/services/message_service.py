@@ -14,6 +14,7 @@ from app.core.codes import ResponseCode
 from app.core.database.mongodb import DEFAULT_MESSAGES_COLLECTION, get_mongo_database
 from app.core.exception.exceptions import ServiceException
 from app.schemas.document.message import (
+    MessageCard,
     MessageRole,
     MessageCreate,
     MessageDocument,
@@ -118,14 +119,62 @@ def _normalize_thinking(thinking: Any) -> str | None:
     return normalized or None
 
 
+def _normalize_content(content: Any) -> str:
+    """
+    归一化消息内容。
+
+    用途：
+    - 统一处理数据库落库前的 content；
+    - 将 `None`、非字符串和纯空白内容统一收敛为空字符串；
+    - 让上层由 schema 继续判断“该空字符串是否允许落库”。
+
+    Args:
+        content: 原始消息内容，允许为任意类型。
+
+    Returns:
+        str: 归一化后的消息内容；无有效文本时返回空字符串。
+    """
+
+    if not isinstance(content, str):
+        return ""
+    if not content.strip():
+        return ""
+    return content
+
+
+def _normalize_cards(
+        cards: list[MessageCard | dict[str, Any]] | None,
+) -> list[MessageCard | dict[str, Any]] | None:
+    """
+    归一化卡片列表。
+
+    用途：
+    - 统一处理落库前的 `cards` 字段；
+    - 将空列表与 `None` 统一视为“未传卡片”；
+    - 保持非空卡片列表的原始顺序不变。
+
+    Args:
+        cards: 原始卡片列表，元素可以是 `MessageCard` 或普通字典。
+
+    Returns:
+        list[MessageCard | dict[str, Any]] | None:
+            非空时返回原列表；为空时返回 `None`。
+    """
+
+    if not cards:
+        return None
+    return cards
+
+
 def add_message(
         *,
         conversation_id: Annotated[str, Field(min_length=1)],
         role: MessageRole | str,
         status: MessageStatus | str = MessageStatus.SUCCESS,
-        content: Annotated[str, Field(min_length=1)],
+        content: str,
         thinking: str | None = None,
         token_usage: TokenUsage | dict[str, Any] | None = None,
+        cards: list[MessageCard | dict[str, Any]] | None = None,
         message_uuid: str | None = None,
 ) -> str:
     """
@@ -140,6 +189,7 @@ def add_message(
         token_usage: 可选 token 使用总量，仅支持
             prompt_tokens/completion_tokens/total_tokens 三个字段。
             且仅 ai 消息会保存，user 消息会被忽略。
+        cards: 可选 AI 卡片列表，仅 ai 消息会保存，user 消息会被忽略。
         message_uuid: 可选消息 UUID，不传时自动生成。
 
     Returns:
@@ -158,7 +208,7 @@ def add_message(
         conversation_id=conversation_id,
         role=normalized_role,
         status=status,
-        content=content,
+        content=_normalize_content(content),
         thinking=(
             _normalize_thinking(thinking)
             if normalized_role == MessageRole.AI
@@ -166,6 +216,11 @@ def add_message(
         ),
         token_usage=(
             _normalize_token_usage(token_usage)
+            if normalized_role == MessageRole.AI
+            else None
+        ),
+        cards=(
+            _normalize_cards(cards)
             if normalized_role == MessageRole.AI
             else None
         ),
@@ -178,6 +233,8 @@ def add_message(
         document.pop("thinking", None)
     if document.get("token_usage") is None:
         document.pop("token_usage", None)
+    if document.get("cards") is None:
+        document.pop("cards", None)
     document["conversation_id"] = _to_object_id(payload.conversation_id)
     document["created_at"] = now
     document["updated_at"] = now

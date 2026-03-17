@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 from langchain_core.messages import AIMessage
 
-from app.agent.admin.domain.common import gateway_node as node_module
+from app.agent.admin.domain.router import gateway_node as node_module
 
 
 def test_gateway_router_prompt_routes_knowledge_questions_to_chat_agent(

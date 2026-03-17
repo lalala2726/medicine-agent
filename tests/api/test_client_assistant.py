@@ -171,9 +171,25 @@ def test_client_history_route_returns_serialized_messages(monkeypatch):
                     id="msg-1",
                     role="user",
                     content="你好",
+                ),
+                ConversationMessageResponse(
+                    id="msg-2",
+                    role="ai",
+                    content="",
+                    status="success",
+                    cards=[
+                        {
+                            "id": "card-1",
+                            "type": "product-card",
+                            "data": {
+                                "title": "为您推荐以下商品",
+                                "products": [{"id": "1001", "name": "商品1001"}],
+                            },
+                        }
+                    ],
                 )
             ],
-            1,
+            2,
         ),
     )
     client = TestClient(app)
@@ -186,9 +202,25 @@ def test_client_history_route_returns_serialized_messages(monkeypatch):
     assert response.status_code == 200
     body = response.json()
     assert body["data"]["rows"] == [
-        {"id": "msg-1", "role": "user", "content": "你好"}
+        {"id": "msg-1", "role": "user", "content": "你好"},
+        {
+            "id": "msg-2",
+            "role": "ai",
+            "content": "",
+            "status": "success",
+            "cards": [
+                {
+                    "id": "card-1",
+                    "type": "product-card",
+                    "data": {
+                        "title": "为您推荐以下商品",
+                        "products": [{"id": "1001", "name": "商品1001"}],
+                    },
+                }
+            ],
+        },
     ]
-    assert body["data"]["total"] == 1
+    assert body["data"]["total"] == 2
 
 
 def test_delete_client_conversation_route_delegates_to_service(monkeypatch):

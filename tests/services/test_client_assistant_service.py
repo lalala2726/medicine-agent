@@ -195,6 +195,7 @@ def test_assistant_chat_builds_stream_config_with_client_workflow_name(monkeypat
     assert isinstance(response, StreamingResponse)
     assert captured["question"] == "代理测试"
     assert captured["callback_kwargs"]["workflow_name"] == service_module.CLIENT_WORKFLOW_NAME
+    assert captured["callback_kwargs"]["persist_cards"] is True
     assert background_calls == [
         {
             "task_name": "persist_user_message",
@@ -251,8 +252,18 @@ def test_conversation_messages_reads_client_conversation_history(monkeypatch):
                 uuid="ai-1",
                 role=MessageRole.AI,
                 status=MessageStatus.SUCCESS,
-                content="您好",
+                content="",
                 thinking="思考文本",
+                cards=[
+                    {
+                        "id": "card-1",
+                        "type": "product-card",
+                        "data": {
+                            "title": "为您推荐以下商品",
+                            "products": [{"id": "1001", "name": "商品1001"}],
+                        },
+                    }
+                ],
             ),
             SimpleNamespace(
                 uuid="user-1",
@@ -275,9 +286,19 @@ def test_conversation_messages_reads_client_conversation_history(monkeypatch):
         {
             "id": "ai-1",
             "role": "ai",
-            "content": "您好",
+            "content": "",
             "thinking": "思考文本",
             "status": "success",
+            "cards": [
+                {
+                    "id": "card-1",
+                    "type": "product-card",
+                    "data": {
+                        "title": "为您推荐以下商品",
+                        "products": [{"id": "1001", "name": "商品1001"}],
+                    },
+                }
+            ],
         },
     ]
 

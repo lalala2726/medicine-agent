@@ -98,7 +98,6 @@ def test_send_product_card_enqueues_card_response(monkeypatch):
     async def _fake_render_product_card(_product_ids: list[int]) -> Card:
         return Card(
             type="product-card",
-            version=1,
             data={
                 "title": "为您推荐以下商品",
                 "products": [
@@ -126,13 +125,12 @@ def test_send_product_card_enqueues_card_response(monkeypatch):
     finally:
         reset_final_response_queue(queue_token)
 
-    assert result == "已准备商品卡片"
+    assert result == "__SUCCESS__"
     assert len(queued_responses) == 1
     response = queued_responses[0]
     assert response.type == MessageType.CARD
     assert response.card is not None
     assert response.card.type == "product-card"
-    assert response.card.version == 1
     assert response.card.data["title"] == "为您推荐以下商品"
     assert response.card.data["products"] == [
         {
@@ -166,7 +164,7 @@ def test_send_product_card_skips_empty_card(monkeypatch):
     finally:
         reset_final_response_queue(queue_token)
 
-    assert result == "商品卡为空，未发送"
+    assert result == "__ERROR__:未从业务端获取到商品信息无法发送商品卡片"
     assert queued_responses == []
 
 

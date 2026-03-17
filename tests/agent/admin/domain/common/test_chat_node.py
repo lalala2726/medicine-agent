@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.agent.admin.domain.common import chat_node as node_module
+from app.agent.admin.domain.chat import chat_node as node_module
 
 
 def _patch_chat_agent_dependencies(

@@ -81,6 +81,61 @@ class ConversationContext:
     is_new_conversation: bool
 
 
+def _serialize_cards_for_history(raw_cards: Any) -> list[dict[str, Any]] | None:
+    """
+    将消息文档中的 cards 归一化为历史接口可直接返回的结构。
+
+    用途：
+    - 兼容 message 文档中可能出现的多种卡片表示形式；
+    - 统一输出历史接口使用的 `id + type + data` 结构；
+    - 过滤不完整或不合法的卡片数据，避免污染历史响应。
+
+    Args:
+        raw_cards: 原始卡片数据，通常来自消息文档中的 `cards` 字段。
+            支持：
+            - `list[MessageCard]`
+            - `list[dict]`
+            - 具备 `id/type/data` 属性的对象列表
+
+    Returns:
+        list[dict[str, Any]] | None:
+            归一化后的卡片列表；没有合法卡片时返回 `None`。
+    """
+
+    if not isinstance(raw_cards, list) or not raw_cards:
+        return None
+
+    serialized_cards: list[dict[str, Any]] = []
+    for raw_card in raw_cards:
+        if hasattr(raw_card, "model_dump"):
+            payload = raw_card.model_dump(mode="json", exclude_none=True)
+        elif isinstance(raw_card, dict):
+            payload = raw_card
+        else:
+            card_id = str(getattr(raw_card, "id", "") or "").strip()
+            card_type = str(getattr(raw_card, "type", "") or "").strip()
+            card_data = getattr(raw_card, "data", None)
+            if not card_id or not card_type or not isinstance(card_data, dict):
+                continue
+            payload = {
+                "id": card_id,
+                "type": card_type,
+                "data": card_data,
+            }
+
+        if not isinstance(payload, dict):
+            continue
+        if not str(payload.get("id") or "").strip():
+            continue
+        if not str(payload.get("type") or "").strip():
+            continue
+        if not isinstance(payload.get("data"), dict):
+            continue
+        serialized_cards.append(payload)
+
+    return serialized_cards or None
+
+
 def _invoke_admin_workflow(state: dict[str, Any]) -> dict[str, Any]:
     """
     同步执行管理助手 workflow。
@@ -344,6 +399,7 @@ def _persist_assistant_message(
         token_usage: TokenUsageState | dict[str, Any] | None,
         status: MessageStatus | str,
         thinking_text: str | None = None,
+        cards: list[dict[str, Any]] | None = None,
         workflow_name: str = ADMIN_WORKFLOW_NAME,
 ) -> None:
     """
@@ -357,6 +413,7 @@ def _persist_assistant_message(
         token_usage: workflow 消息级 token 汇总。
         status: 消息状态（success/error）。
         thinking_text: 可选深度思考文本。
+        cards: 可选结构化卡片列表。
         workflow_name: 工作流名称。
 
     Returns:
@@ -387,6 +444,7 @@ def _persist_assistant_message(
         content=answer_text,
         thinking=thinking_text,
         token_usage=persistable_token_usage,
+        cards=cards,
         message_uuid=message_uuid,
     )
     _schedule_background_task(
@@ -417,11 +475,29 @@ def _build_assistant_message_callback(
         conversation_id: str,
         assistant_message_uuid: str,
         workflow_name: str = ADMIN_WORKFLOW_NAME,
+        persist_cards: bool = False,
 ):
     """
     构建“流结束后写入 AI 消息”的异步回调。
 
     该回调由流式引擎在输出结束时触发，满足“AI 完整响应后再落库”的时序要求。
+
+    Args:
+        conversation_id: 当前会话 ID（Mongo ObjectId 字符串）。
+        assistant_message_uuid: 本轮 AI 消息 UUID。
+        workflow_name: 产出该消息的工作流名称。
+        persist_cards: 是否允许将最终卡片一并持久化到消息表。
+
+    Returns:
+        Callable[..., Awaitable[None]]:
+            一个可直接交给 orchestrator 的异步回调函数。
+
+    Note:
+        回调内部会统一处理以下场景：
+        1. 普通文本回复落库；
+        2. 当 `persist_cards=True` 时，纯卡片回复允许 `content=""`；
+        3. 空回复且无可持久化卡片时写入兜底错误文案；
+        4. 仅在开启 `persist_cards` 时透传最终 cards 给消息持久化层。
     """
 
     async def _callback(
@@ -430,19 +506,25 @@ def _build_assistant_message_callback(
             token_usage: TokenUsageState | dict[str, Any] | None = None,
             has_error: bool = False,
             thinking_text: str | None = None,
+            cards: list[dict[str, Any]] | None = None,
     ) -> None:
         resolved_token_usage = token_usage
         resolved_has_error = has_error
+        resolved_cards = cards if persist_cards else None
         # 兼容旧回调签名：(answer_text, execution_trace, has_error)
         if isinstance(token_usage, bool):
             resolved_token_usage = None
             resolved_has_error = token_usage
 
         normalized_answer = str(answer_text or "").strip()
+        has_cards = bool(resolved_cards)
         resolved_status = MessageStatus.ERROR if resolved_has_error else MessageStatus.SUCCESS
         if not normalized_answer:
-            normalized_answer = EMPTY_ASSISTANT_ANSWER_FALLBACK
-            resolved_status = MessageStatus.ERROR
+            if has_cards:
+                normalized_answer = ""
+            else:
+                normalized_answer = EMPTY_ASSISTANT_ANSWER_FALLBACK
+                resolved_status = MessageStatus.ERROR
 
         _schedule_background_task(
             task_name="persist_assistant_message",
@@ -454,6 +536,7 @@ def _build_assistant_message_callback(
                 "thinking_text": thinking_text,
                 "execution_trace": execution_trace,
                 "token_usage": resolved_token_usage,
+                "cards": resolved_cards,
                 "status": resolved_status,
                 "workflow_name": workflow_name,
             },
@@ -650,6 +733,7 @@ def assistant_chat(
         on_answer_completed=_build_assistant_message_callback(
             conversation_id=context.conversation_id,
             assistant_message_uuid=context.assistant_message_uuid,
+            persist_cards=False,
         ),
         initial_emitted_events=context.initial_emitted_events,
     )

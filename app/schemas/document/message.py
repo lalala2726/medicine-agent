@@ -5,7 +5,7 @@ from enum import Enum
 from typing import Any
 
 from bson import ObjectId
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class MessageRole(str, Enum):
@@ -32,6 +32,23 @@ class TokenUsage(BaseModel):
     total_tokens: int = Field(default=0, ge=0, description="消息总 Token 数")
 
 
+class MessageCard(BaseModel):
+    """
+    消息内挂载的结构化卡片。
+
+    用途：
+    - 作为 AI 历史消息的结构化附加内容；
+    - 直接承载最终给前端渲染的卡片数据；
+    - 不保存实时 SSE 外壳，仅保留 `id + type + data`。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(..., min_length=1, description="卡片唯一 ID")
+    type: str = Field(..., min_length=1, description="卡片类型")
+    data: dict[str, Any] = Field(default_factory=dict, description="卡片数据")
+
+
 class MessageCreate(BaseModel):
     """新增会话消息入参模型（服务层内部使用）。"""
 
@@ -41,9 +58,44 @@ class MessageCreate(BaseModel):
     conversation_id: str = Field(..., min_length=1, description="所属会话ID")
     role: MessageRole = Field(..., description="消息角色")
     status: MessageStatus = Field(default=MessageStatus.SUCCESS, description="消息状态")
-    content: str = Field(..., min_length=1, description="消息内容")
+    content: str = Field(..., description="消息内容")
     thinking: str | None = Field(default=None, description="AI深度思考完整文本")
     token_usage: TokenUsage | None = Field(default=None, description="消息 token 使用总量")
+    cards: list[MessageCard] | None = Field(default=None, description="AI 消息卡片列表")
+
+    @model_validator(mode="after")
+    def _validate_content_and_cards(self) -> "MessageCreate":
+        """
+        校验消息内容与卡片的组合约束。
+
+        规则：
+        - user 消息必须有非空 content；
+        - ai 消息允许 content 为空字符串，但必须至少有一项 cards；
+        - 当 ai 消息仅包含卡片时，会把 content 统一归一化为空字符串。
+
+        Returns:
+            MessageCreate: 校验并归一化后的消息创建模型自身。
+
+        Raises:
+            ValueError: 当 user 消息内容为空，或 ai 消息内容与 cards 同时为空时抛出。
+        """
+
+        normalized_content = self.content.strip()
+        has_cards = bool(self.cards)
+
+        if self.role == MessageRole.USER:
+            if not normalized_content:
+                raise ValueError("用户消息内容不能为空")
+            return self
+
+        if not normalized_content and has_cards:
+            self.content = ""
+            return self
+
+        if not normalized_content:
+            raise ValueError("AI 消息内容和卡片不能同时为空")
+
+        return self
 
 
 class MessageDocument(BaseModel):
@@ -59,6 +111,7 @@ class MessageDocument(BaseModel):
     content: str = Field(..., description="消息内容")
     thinking: str | None = Field(default=None, description="AI深度思考完整文本")
     token_usage: TokenUsage | None = Field(default=None, description="消息 token 使用总量")
+    cards: list[MessageCard] | None = Field(default=None, description="AI 消息卡片列表")
     created_at: datetime = Field(..., description="创建时间")
     updated_at: datetime = Field(..., description="更新时间")
 
