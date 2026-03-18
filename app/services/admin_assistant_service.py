@@ -24,7 +24,7 @@ from app.core.security.auth_context import get_user_id
 from app.core.speech import build_message_tts_stream
 from app.schemas.admin_assistant_history import ConversationMessageResponse
 from app.schemas.base_request import PageRequest
-from app.schemas.document.conversation import ConversationListItem
+from app.schemas.document.conversation import ConversationListItem, ConversationType
 from app.schemas.document.message import MessageRole, MessageStatus
 from app.schemas.sse_response import AssistantResponse, Content, MessageType
 from app.services.conversation_service import (
@@ -777,6 +777,7 @@ def assistant_message_tts_stream(
     tts_stream = build_message_tts_stream(
         message_uuid=message_uuid,
         user_id=current_user_id,
+        conversation_type=ConversationType.ADMIN,
     )
     return StreamingResponse(
         tts_stream.audio_stream,

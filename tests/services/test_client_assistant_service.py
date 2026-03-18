@@ -8,8 +8,9 @@ from langchain_core.messages import AIMessage, HumanMessage
 from app.core.agent.agent_orchestrator import AssistantStreamConfig
 from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException
+from app.core.speech.tts.client import MessageTtsStream
 from app.schemas.base_request import PageRequest
-from app.schemas.document.conversation import ConversationListItem
+from app.schemas.document.conversation import ConversationListItem, ConversationType
 from app.schemas.document.message import MessageRole, MessageStatus
 from app.services import client_assistant_service as service_module
 
@@ -323,6 +324,38 @@ def test_conversation_list_uses_client_storage(monkeypatch):
     assert captured == {"user_id": 55, "page_num": 2, "page_size": 10}
     assert rows[0].conversation_uuid == "client-conv-1"
     assert total == 1
+
+
+def test_assistant_message_tts_stream_returns_chunked_audio_with_expected_headers(monkeypatch):
+    captured: dict = {}
+    monkeypatch.setattr(service_module, "get_user_id", lambda: 77)
+
+    async def _audio_stream():
+        yield b"chunk-a"
+        yield b"chunk-b"
+
+    monkeypatch.setattr(
+        service_module,
+        "build_message_tts_stream",
+        lambda **kwargs: (
+            captured.update(kwargs),
+            MessageTtsStream(audio_stream=_audio_stream(), media_type="audio/mpeg"),
+        )[-1],
+    )
+
+    response = service_module.assistant_message_tts_stream(
+        message_uuid="client-msg-1",
+    )
+
+    assert isinstance(response, StreamingResponse)
+    assert response.media_type == "audio/mpeg"
+    assert response.headers["cache-control"] == "no-cache"
+    assert response.headers["x-accel-buffering"] == "no"
+    assert captured == {
+        "message_uuid": "client-msg-1",
+        "user_id": 77,
+        "conversation_type": ConversationType.CLIENT,
+    }
 
 
 def test_conversation_messages_reads_client_conversation_history(monkeypatch):

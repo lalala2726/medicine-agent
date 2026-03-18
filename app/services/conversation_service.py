@@ -143,22 +143,11 @@ def get_admin_conversation_by_id(
         ConversationDocument | None: 命中返回会话模型，否则返回 None。
     """
 
-    object_id = _to_object_id(conversation_id)
-    if object_id is None:
-        return None
-
-    db = get_mongo_database()
-    collection = db[_TABLE_NAME]
-    query = {
-        "_id": object_id,
-        "conversation_type": _ADMIN_MARK,
-        "user_id": _to_mongo_long(user_id),
-        "is_deleted": _NOT_DELETED_FILTER,
-    }
-    document = collection.find_one(query)
-    if document is None:
-        return None
-    return _to_conversation_document(document)
+    return _get_conversation_by_id(
+        conversation_id=conversation_id,
+        user_id=user_id,
+        conversation_type=_ADMIN_MARK,
+    )
 
 
 def get_client_conversation(
@@ -185,6 +174,65 @@ def get_client_conversation(
         conversation_uuid=conversation_uuid,
         conversation_type=_CLIENT_MARK,
     )
+
+
+def get_client_conversation_by_id(
+        *,
+        conversation_id: Annotated[str, Field(min_length=1)],
+        user_id: Annotated[int, Field(ge=1)],
+) -> ConversationDocument | None:
+    """
+    按会话主键 `_id` 查询客户端会话，并校验用户归属。
+
+    Args:
+        conversation_id: 会话 Mongo ObjectId（字符串）。
+        user_id: 当前用户 ID。
+
+    Returns:
+        ConversationDocument | None: 命中返回会话模型，否则返回 None。
+    """
+
+    return _get_conversation_by_id(
+        conversation_id=conversation_id,
+        user_id=user_id,
+        conversation_type=_CLIENT_MARK,
+    )
+
+
+def _get_conversation_by_id(
+        *,
+        conversation_id: Annotated[str, Field(min_length=1)],
+        user_id: Annotated[int, Field(ge=1)],
+        conversation_type: Annotated[str, Field(min_length=1)],
+) -> ConversationDocument | None:
+    """
+    按会话主键 `_id` 查询指定类型会话，并校验用户归属。
+
+    Args:
+        conversation_id: 会话 Mongo ObjectId（字符串）。
+        user_id: 当前用户 ID。
+        conversation_type: 会话类型标识（`admin` 或 `client`）。
+
+    Returns:
+        ConversationDocument | None: 命中返回会话模型，否则返回 None。
+    """
+
+    object_id = _to_object_id(conversation_id)
+    if object_id is None:
+        return None
+
+    db = get_mongo_database()
+    collection = db[_TABLE_NAME]
+    query = {
+        "_id": object_id,
+        "conversation_type": conversation_type,
+        "user_id": _to_mongo_long(user_id),
+        "is_deleted": _NOT_DELETED_FILTER,
+    }
+    document = collection.find_one(query)
+    if document is None:
+        return None
+    return _to_conversation_document(document)
 
 
 def _add_conversation(

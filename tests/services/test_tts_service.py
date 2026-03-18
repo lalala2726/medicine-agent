@@ -10,6 +10,7 @@ from app.core.exception.exceptions import ServiceException
 from app.core.speech.runtime import clear_speech_runtime_state
 from app.core.speech.tts.config import VolcengineTtsConfig
 from app.core.speech.volcengine_speech_protocol import EventType, Message, MsgType
+from app.schemas.document.conversation import ConversationType
 from app.schemas.document.message import MessageRole
 
 
@@ -62,6 +63,7 @@ def test_build_message_tts_stream_raises_not_found_when_message_missing(monkeypa
         service_module.build_message_tts_stream(
             message_uuid="msg-1",
             user_id=1,
+            conversation_type=ConversationType.ADMIN,
         )
 
     assert exc_info.value.code == ResponseCode.NOT_FOUND.code
@@ -87,6 +89,7 @@ def test_build_message_tts_stream_raises_not_found_when_message_not_owned(monkey
         service_module.build_message_tts_stream(
             message_uuid="msg-2",
             user_id=2,
+            conversation_type=ConversationType.ADMIN,
         )
 
     assert exc_info.value.code == ResponseCode.NOT_FOUND.code
@@ -112,9 +115,64 @@ def test_build_message_tts_stream_raises_bad_request_when_message_role_not_ai(mo
         service_module.build_message_tts_stream(
             message_uuid="msg-3",
             user_id=3,
+            conversation_type=ConversationType.ADMIN,
         )
 
     assert exc_info.value.code == ResponseCode.BAD_REQUEST.code
+
+
+def test_load_message_context_for_tts_supports_client_conversation(monkeypatch):
+    monkeypatch.setattr(
+        service_module,
+        "get_message_by_uuid",
+        lambda _uuid: SimpleNamespace(
+            conversation_id="507f1f77bcf86cd799439012",
+            role=MessageRole.AI,
+            content="client hello",
+        ),
+    )
+    monkeypatch.setattr(
+        service_module,
+        "get_client_conversation_by_id",
+        lambda **_kwargs: SimpleNamespace(uuid="client-conv-1", user_id=8),
+    )
+
+    context = service_module._load_message_context_for_tts(
+        message_uuid="msg-client-1",
+        user_id=8,
+        conversation_type=ConversationType.CLIENT,
+    )
+
+    assert context.message_uuid == "msg-client-1"
+    assert context.conversation_uuid == "client-conv-1"
+    assert context.user_id == 8
+    assert context.raw_text == "client hello"
+
+
+def test_load_message_context_for_tts_rejects_unowned_client_conversation(monkeypatch):
+    monkeypatch.setattr(
+        service_module,
+        "get_message_by_uuid",
+        lambda _uuid: SimpleNamespace(
+            conversation_id="507f1f77bcf86cd799439013",
+            role=MessageRole.AI,
+            content="client hello",
+        ),
+    )
+    monkeypatch.setattr(
+        service_module,
+        "get_client_conversation_by_id",
+        lambda **_kwargs: None,
+    )
+
+    with pytest.raises(ServiceException) as exc_info:
+        service_module._load_message_context_for_tts(
+            message_uuid="msg-client-2",
+            user_id=9,
+            conversation_type=ConversationType.CLIENT,
+        )
+
+    assert exc_info.value.code == ResponseCode.NOT_FOUND.code
 
 
 def test_prepare_tts_text_truncates_with_prefix():
@@ -301,6 +359,7 @@ def test_stream_message_tts_yields_audio_chunks_in_order(monkeypatch):
     stream = service_module.build_message_tts_stream(
         message_uuid="msg-4",
         user_id=4,
+        conversation_type=ConversationType.ADMIN,
     )
     chunks = asyncio.run(_collect_stream(stream.audio_stream))
 
@@ -376,6 +435,7 @@ def test_stream_message_tts_stops_gracefully_when_upstream_interrupted(monkeypat
     stream = service_module.build_message_tts_stream(
         message_uuid="msg-5",
         user_id=5,
+        conversation_type=ConversationType.ADMIN,
     )
     chunks = asyncio.run(_collect_stream(stream.audio_stream))
 
@@ -456,6 +516,7 @@ def test_stream_message_tts_interrupts_on_config_refresh(monkeypatch):
     stream = service_module.build_message_tts_stream(
         message_uuid="msg-refresh",
         user_id=7,
+        conversation_type=ConversationType.ADMIN,
     )
 
     async def _run_stream_with_refresh() -> list[bytes]:
@@ -549,6 +610,7 @@ def test_stream_message_tts_persists_usage_with_truncated_flag(monkeypatch):
     stream = service_module.build_message_tts_stream(
         message_uuid="msg-6",
         user_id=6,
+        conversation_type=ConversationType.ADMIN,
     )
     chunks = asyncio.run(_collect_stream(stream.audio_stream))
 

@@ -11,6 +11,7 @@ from app.schemas.document.conversation import ConversationListItem
 from app.schemas.response import ApiResponse, PageResponse
 from app.services.client_assistant_service import (
     assistant_chat,
+    assistant_message_tts_stream as assistant_message_tts_stream_service,
     conversation_list as conversation_list_service,
     conversation_messages as conversation_messages_service,
     delete_conversation as delete_conversation_service,
@@ -24,6 +25,13 @@ CHAT_RATE_LIMIT_RULES = (
     RateLimitRule.preset(RateLimitPreset.MINUTE_5, limit=30),
     RateLimitRule.preset(RateLimitPreset.HOUR_1, limit=120),
     RateLimitRule.preset(RateLimitPreset.HOUR_24, limit=600),
+)
+
+TTS_RATE_LIMIT_RULES = (
+    RateLimitRule.preset(RateLimitPreset.MINUTE_1, limit=5),
+    RateLimitRule.preset(RateLimitPreset.HOUR_1, limit=60),
+    RateLimitRule.preset(RateLimitPreset.HOUR_5, limit=100),
+    RateLimitRule.preset(RateLimitPreset.HOUR_24, limit=200),
 )
 
 
@@ -124,6 +132,35 @@ class UpdateConversationTitleRequest(BaseModel):
     title: str = Field(..., min_length=1, max_length=100, description="会话标题")
 
 
+class ClientAssistantMessageTtsRequest(BaseModel):
+    """客户端助手消息转语音请求参数。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    message_uuid: str = Field(..., min_length=1, description="AI 消息 UUID")
+
+    @field_validator("message_uuid")
+    @classmethod
+    def validate_message_uuid(cls, value: str) -> str:
+        """
+        标准化消息 UUID。
+
+        Args:
+            value: 原始消息 UUID。
+
+        Returns:
+            str: 去掉首尾空白后的消息 UUID。
+
+        Raises:
+            ValueError: 归一化后为空时抛出。
+        """
+
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("message_uuid 不能为空")
+        return normalized
+
+
 @router.post(
     "/chat",
     summary="客户端助手对话",
@@ -160,6 +197,41 @@ async def assistant(_request: Request, request: ClientAssistantRequest) -> Strea
             if request.card_action is not None
             else None
         ),
+    )
+
+
+@router.post(
+    "/message/tts/stream",
+    summary="客户端助手消息转语音（流式）",
+    description=(
+            "根据客户端助手 AI 消息 `message_uuid` 生成语音，并以 HTTP chunked 方式持续返回音频字节流。"
+            "该接口不是 SSE，也不是 WebSocket。"
+    ),
+    response_description="音频字节流；前端可直接用 `audio.src` / `Blob` / `MediaSource` 等方式播放。",
+)
+@rate_limit(
+    rules=TTS_RATE_LIMIT_RULES,
+    subjects=("user_id",),
+    scope="client_assistant_tts",
+    fail_open=False,
+)
+async def assistant_message_tts_stream(
+        _request: Request,
+        request: ClientAssistantMessageTtsRequest,
+) -> StreamingResponse:
+    """
+    根据消息 UUID 生成客户端助手语音，并以 HTTP chunked 流式返回音频数据。
+
+    Args:
+        _request: FastAPI 原始请求对象（当前实现仅用于依赖注入与中间件链路）。
+        request: 转语音请求体，仅包含 `message_uuid`。
+
+    Returns:
+        StreamingResponse: 音频流响应对象。
+    """
+
+    return assistant_message_tts_stream_service(
+        message_uuid=request.message_uuid,
     )
 
 

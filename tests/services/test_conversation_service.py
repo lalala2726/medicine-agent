@@ -181,6 +181,36 @@ def test_get_admin_conversation_by_id_returns_none_for_invalid_object_id():
     assert result is None
 
 
+def test_get_client_conversation_by_id_scopes_by_object_id_and_user(monkeypatch):
+    collection = _DummyCollection()
+    collection.find_one_result = {
+        "_id": ObjectId("507f1f77bcf86cd799439032"),
+        "uuid": "client-conv-1",
+        "conversation_type": "client",
+        "user_id": Int64(10),
+        "title": "客户端会话",
+        "create_time": datetime.datetime(2026, 1, 1, 10, 0, 0),
+        "update_time": datetime.datetime(2026, 1, 1, 10, 0, 0),
+        "is_deleted": 0,
+    }
+    monkeypatch.setattr(service_module, "get_mongo_database", lambda: {"conversations": collection})
+
+    result = service_module.get_client_conversation_by_id(
+        conversation_id="507f1f77bcf86cd799439032",
+        user_id=10,
+    )
+
+    assert isinstance(result, ConversationDocument)
+    assert result is not None
+    assert result.id == "507f1f77bcf86cd799439032"
+    assert collection.last_query == {
+        "_id": ObjectId("507f1f77bcf86cd799439032"),
+        "conversation_type": "client",
+        "user_id": Int64(10),
+        "is_deleted": {"$ne": 1},
+    }
+
+
 def test_add_client_conversation_uses_client_type(monkeypatch):
     collection = _DummyCollection()
     monkeypatch.setattr(service_module, "get_mongo_database", lambda: {"conversations": collection})

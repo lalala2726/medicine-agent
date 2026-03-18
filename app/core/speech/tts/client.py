@@ -35,8 +35,12 @@ from app.core.speech.volcengine_speech_protocol import (
     task_request,
     wait_for_event,
 )
+from app.schemas.document.conversation import ConversationDocument, ConversationType
 from app.schemas.document.message import MessageRole
-from app.services.conversation_service import get_admin_conversation_by_id
+from app.services.conversation_service import (
+    get_admin_conversation_by_id,
+    get_client_conversation_by_id,
+)
 from app.services.message_service import get_message_by_uuid
 from app.services.message_tts_usage_service import add_message_tts_usage
 
@@ -312,19 +316,21 @@ def _load_message_context_for_tts(
         *,
         message_uuid: str,
         user_id: int,
+        conversation_type: ConversationType,
 ) -> TtsMessageContext:
     """
     加载并校验待合成消息文本。
 
     校验规则：
     1. 消息存在；
-    2. 消息所属会话属于当前用户，且为管理端会话；
+    2. 消息所属会话属于当前用户，且必须匹配指定会话类型；
     3. 仅允许 `role=ai`；
     4. 文本内容非空。
 
     Args:
         message_uuid: 消息 UUID。
         user_id: 当前用户 ID。
+        conversation_type: 目标会话类型（`admin` 或 `client`）。
 
     Returns:
         TtsMessageContext: 校验通过后的消息上下文。
@@ -340,9 +346,10 @@ def _load_message_context_for_tts(
             message="消息不存在",
         )
 
-    conversation = get_admin_conversation_by_id(
+    conversation = _load_conversation_document_for_tts(
         conversation_id=message.conversation_id,
         user_id=user_id,
+        conversation_type=conversation_type,
     )
     if conversation is None:
         raise ServiceException(
@@ -372,10 +379,45 @@ def _load_message_context_for_tts(
     )
 
 
+def _load_conversation_document_for_tts(
+        *,
+        conversation_id: str,
+        user_id: int,
+        conversation_type: ConversationType,
+) -> ConversationDocument | None:
+    """
+    按会话类型加载 TTS 目标消息所属会话。
+
+    Args:
+        conversation_id: 会话 Mongo ObjectId（字符串）。
+        user_id: 当前用户 ID。
+        conversation_type: 目标会话类型（`admin` 或 `client`）。
+
+    Returns:
+        ConversationDocument | None: 命中返回会话模型，否则返回 `None`。
+
+    Raises:
+        ValueError: 会话类型不受支持时抛出。
+    """
+
+    if conversation_type == ConversationType.ADMIN:
+        return get_admin_conversation_by_id(
+            conversation_id=conversation_id,
+            user_id=user_id,
+        )
+    if conversation_type == ConversationType.CLIENT:
+        return get_client_conversation_by_id(
+            conversation_id=conversation_id,
+            user_id=user_id,
+        )
+    raise ValueError(f"unsupported conversation_type for TTS: {conversation_type!r}")
+
+
 def build_message_tts_stream(
         *,
         message_uuid: str,
         user_id: int,
+        conversation_type: ConversationType,
 ) -> MessageTtsStream:
     """
     按 `message_uuid` 构建双向 TTS 音频流。
@@ -388,6 +430,7 @@ def build_message_tts_stream(
     Args:
         message_uuid: 目标消息 UUID。
         user_id: 当前请求用户 ID。
+        conversation_type: 目标会话类型（`admin` 或 `client`）。
 
     Returns:
         MessageTtsStream: 包含音频流与媒体类型的封装对象。
@@ -397,6 +440,7 @@ def build_message_tts_stream(
     message_context = _load_message_context_for_tts(
         message_uuid=normalized_message_uuid,
         user_id=user_id,
+        conversation_type=conversation_type,
     )
     config = resolve_volcengine_tts_config()
     prepared_text_detail = prepare_tts_text(

@@ -12,9 +12,10 @@ from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException
 from app.core.langsmith import build_langsmith_runnable_config
 from app.core.security.auth_context import get_user_id
+from app.core.speech import build_message_tts_stream
 from app.schemas.admin_assistant_history import ConversationMessageResponse
 from app.schemas.base_request import PageRequest
-from app.schemas.document.conversation import ConversationListItem
+from app.schemas.document.conversation import ConversationListItem, ConversationType
 from app.schemas.document.message import MessageRole
 from app.services.admin_assistant_service import (
     ConversationContext,
@@ -248,6 +249,41 @@ def assistant_chat(
         initial_emitted_events=context.initial_emitted_events,
     )
     return create_streaming_response(question, stream_config)
+
+
+def assistant_message_tts_stream(
+        *,
+        message_uuid: str,
+) -> StreamingResponse:
+    """
+    客户端助手消息转语音（HTTP chunked audio stream）。
+
+    说明：
+    - 先基于 `message_uuid` 校验消息存在性、client 会话归属与消息角色；
+    - 校验通过后建立上游 Volcengine 双向 TTS websocket；
+    - 下游以音频字节流（chunked）持续返回给前端。
+
+    Args:
+        message_uuid: 目标 AI 消息 UUID。
+
+    Returns:
+        StreamingResponse: 下游音频流响应对象。
+    """
+
+    current_user_id = get_user_id()
+    tts_stream = build_message_tts_stream(
+        message_uuid=message_uuid,
+        user_id=current_user_id,
+        conversation_type=ConversationType.CLIENT,
+    )
+    return StreamingResponse(
+        tts_stream.audio_stream,
+        media_type=tts_stream.media_type,
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 def conversation_list(

@@ -57,6 +57,7 @@ def test_assistant_message_tts_stream_returns_chunked_audio_with_expected_header
     assert captured == {
         "message_uuid": "msg-1",
         "user_id": 101,
+        "conversation_type": ConversationType.ADMIN,
     }
 
 
