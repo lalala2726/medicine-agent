@@ -28,7 +28,7 @@ from app.utils.prompt_utils import load_prompt
 _USER_NODE_SYSTEM_PROMPT = load_prompt("admin/user_node_system_prompt.md")
 
 
-@traceable(name="Assistant User Agent Node", run_type="chain")
+@traceable(name="Admin Assistant User Agent Node", run_type="chain")
 def user_agent(state: AgentState) -> dict[str, Any]:
     """
     功能描述：

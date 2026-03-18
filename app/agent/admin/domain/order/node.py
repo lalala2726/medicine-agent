@@ -27,7 +27,7 @@ from app.utils.prompt_utils import load_prompt
 _ORDER_NODE_SYSTEM_PROMPT = load_prompt("admin/order_node_system_prompt.md")
 
 
-@traceable(name="Assistant Order Agent Node", run_type="chain")
+@traceable(name="Admin Assistant Order Agent Node", run_type="chain")
 def order_agent(state: AgentState) -> dict[str, Any]:
     """
     功能描述：
