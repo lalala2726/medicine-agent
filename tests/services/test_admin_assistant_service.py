@@ -775,8 +775,8 @@ def test_answer_completed_persists_fallback_when_answer_empty(monkeypatch):
     assert saved_traces[-1]["message_uuid"] == "msg-uuid-empty"
 
 
-def test_answer_completed_ignores_cards_for_admin(monkeypatch):
-    """测试目标：admin 回调不持久化 cards；成功标准：空文本 + cards 仍回退错误文案且不写 cards。"""
+def test_answer_completed_persists_cards_when_callback_receives_persistable_cards(monkeypatch):
+    """测试目标：回调收到已过滤的可持久化 cards 时会随消息入库。"""
 
     saved_messages: list[dict] = []
     saved_traces: list[dict] = []
@@ -829,9 +829,9 @@ def test_answer_completed_ignores_cards_for_admin(monkeypatch):
         )
     )
 
-    assert saved_messages[-1]["status"] == MessageStatus.ERROR
-    assert saved_messages[-1]["content"] == service_module.EMPTY_ASSISTANT_ANSWER_FALLBACK
-    assert saved_messages[-1]["cards"] is None
+    assert saved_messages[-1]["status"] == MessageStatus.SUCCESS
+    assert saved_messages[-1]["content"] == ""
+    assert saved_messages[-1]["cards"] == cards
     assert saved_messages[-1]["message_uuid"] == "msg-uuid-card-only"
     assert saved_traces[-1]["message_uuid"] == "msg-uuid-card-only"
 

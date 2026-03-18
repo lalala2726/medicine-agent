@@ -1,8 +1,8 @@
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, Path, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.core.security.rate_limit import RateLimitPreset, RateLimitRule, rate_limit
 from app.schemas.admin_assistant_history import ConversationMessagesRequest
@@ -27,6 +27,24 @@ CHAT_RATE_LIMIT_RULES = (
 )
 
 
+class ClientAssistantCardActionRequest(BaseModel):
+    """客户端卡片点击事件请求体。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["click"] = Field(..., description="卡片交互类型，固定为 click")
+    message_id: str = Field(..., min_length=1, description="被点击卡片所属消息 UUID")
+    card_uuid: str = Field(..., min_length=1, description="被点击卡片 UUID")
+
+    @field_validator("message_id", "card_uuid")
+    @classmethod
+    def validate_required_str(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("字段不能为空")
+        return normalized
+
+
 class ClientAssistantRequest(BaseModel):
     """客户端助手请求参数。"""
 
@@ -46,6 +64,10 @@ class ClientAssistantRequest(BaseModel):
         min_length=1,
         description="会话UUID",
     )
+    card_action: ClientAssistantCardActionRequest | None = Field(
+        default=None,
+        description="前端卡片点击事件，仅支持 click",
+    )
 
     @field_validator("question")
     @classmethod
@@ -62,6 +84,12 @@ class ClientAssistantRequest(BaseModel):
             return None
         normalized = value.strip()
         return normalized or None
+
+    @model_validator(mode="after")
+    def validate_card_action_dependencies(self) -> "ClientAssistantRequest":
+        if self.card_action is not None and self.conversation_uuid is None:
+            raise ValueError("携带 card_action 时必须传 conversation_uuid")
+        return self
 
 
 class ConversationListRequest(BaseModel):
@@ -127,6 +155,11 @@ async def assistant(_request: Request, request: ClientAssistantRequest) -> Strea
     return assistant_chat(
         question=request.question,
         conversation_uuid=request.conversation_uuid,
+        card_action=(
+            request.card_action.model_dump(mode="json")
+            if request.card_action is not None
+            else None
+        ),
     )
 
 

@@ -92,11 +92,12 @@ def test_client_assistant_chat_route_delegates_to_service(monkeypatch):
     monkeypatch.setattr(
         assistant_module,
         "assistant_chat",
-        lambda *, question, conversation_uuid=None: (
+        lambda *, question, conversation_uuid=None, card_action=None: (
             captured.update(
                 {
                     "question": question,
                     "conversation_uuid": conversation_uuid,
+                    "card_action": card_action,
                 }
             ),
             _build_streaming_response("客户端回复"),
@@ -115,6 +116,7 @@ def test_client_assistant_chat_route_delegates_to_service(monkeypatch):
     assert captured == {
         "question": "客户端问题",
         "conversation_uuid": "client-conv-1",
+        "card_action": None,
     }
     payloads = _extract_payloads(response.text)
     assert payloads[0]["content"]["text"] == "客户端回复"
@@ -130,6 +132,96 @@ def test_client_assistant_chat_rejects_blank_question(monkeypatch):
         "/client/assistant/chat",
         headers=_auth_headers(),
         json={"question": "   "},
+    )
+
+    assert response.status_code == 400
+
+
+def test_client_assistant_chat_route_accepts_card_action(monkeypatch):
+    captured: dict = {}
+    _mock_auth(monkeypatch)
+    _mock_rate_limit_allow(monkeypatch)
+
+    monkeypatch.setattr(
+        assistant_module,
+        "assistant_chat",
+        lambda *, question, conversation_uuid=None, card_action=None: (
+            captured.update(
+                {
+                    "question": question,
+                    "conversation_uuid": conversation_uuid,
+                    "card_action": card_action,
+                }
+            ),
+            _build_streaming_response("客户端回复"),
+        )[-1],
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/client/assistant/chat",
+        headers=_auth_headers(),
+        json={
+            "question": "继续处理",
+            "conversation_uuid": "client-conv-1",
+            "card_action": {
+                "type": "click",
+                "message_id": "msg-1",
+                "card_uuid": "card-1",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured == {
+        "question": "继续处理",
+        "conversation_uuid": "client-conv-1",
+        "card_action": {
+            "type": "click",
+            "message_id": "msg-1",
+            "card_uuid": "card-1",
+        },
+    }
+
+
+def test_client_assistant_chat_rejects_card_action_without_conversation_uuid(monkeypatch):
+    _mock_auth(monkeypatch)
+    _mock_rate_limit_allow(monkeypatch)
+    client = TestClient(app)
+
+    response = client.post(
+        "/client/assistant/chat",
+        headers=_auth_headers(),
+        json={
+            "question": "继续处理",
+            "card_action": {
+                "type": "click",
+                "message_id": "msg-1",
+                "card_uuid": "card-1",
+            },
+        },
+    )
+
+    assert response.status_code == 400
+
+
+def test_client_assistant_chat_rejects_blank_card_action_fields(monkeypatch):
+    _mock_auth(monkeypatch)
+    _mock_rate_limit_allow(monkeypatch)
+    client = TestClient(app)
+
+    response = client.post(
+        "/client/assistant/chat",
+        headers=_auth_headers(),
+        json={
+            "question": "继续处理",
+            "conversation_uuid": "client-conv-1",
+            "card_action": {
+                "type": "click",
+                "message_id": "   ",
+                "card_uuid": "card-1",
+            },
+        },
     )
 
     assert response.status_code == 400
@@ -179,7 +271,7 @@ def test_client_history_route_returns_serialized_messages(monkeypatch):
                     status="success",
                     cards=[
                         {
-                            "id": "card-1",
+                            "card_uuid": "card-1",
                             "type": "product-card",
                             "data": {
                                 "title": "为您推荐以下商品",
@@ -187,7 +279,7 @@ def test_client_history_route_returns_serialized_messages(monkeypatch):
                             },
                         },
                         {
-                            "id": "card-2",
+                            "card_uuid": "card-2",
                             "type": "product-purchase-card",
                             "data": {
                                 "title": "请确认要购买的商品",
@@ -226,7 +318,7 @@ def test_client_history_route_returns_serialized_messages(monkeypatch):
             "status": "success",
             "cards": [
                 {
-                    "id": "card-1",
+                    "card_uuid": "card-1",
                     "type": "product-card",
                     "data": {
                         "title": "为您推荐以下商品",
@@ -234,7 +326,7 @@ def test_client_history_route_returns_serialized_messages(monkeypatch):
                     },
                 },
                 {
-                    "id": "card-2",
+                    "card_uuid": "card-2",
                     "type": "product-purchase-card",
                     "data": {
                         "title": "请确认要购买的商品",

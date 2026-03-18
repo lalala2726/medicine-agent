@@ -843,7 +843,9 @@ def _extract_persistable_cards(
     """
     从最终 SSE 响应中提取可落库的卡片。
 
-    仅提取 `type=card` 的响应，且要求存在合法 `card_uuid`。
+    仅提取 `type=card` 的响应，且要求：
+    - 存在合法 `card_uuid`；
+    - `meta.persist_card is True`。
     action 等其他最终响应不会进入消息持久化结构。
 
     Args:
@@ -861,6 +863,9 @@ def _extract_persistable_cards(
             continue
 
         meta = response.meta if isinstance(response.meta, dict) else {}
+        if meta.get("persist_card") is not True:
+            continue
+
         card_id = str(meta.get("card_uuid") or "").strip()
         if not card_id:
             continue
@@ -897,7 +902,7 @@ async def _invoke_answer_completed_callback(
         token_usage: 汇总后的消息级 token 使用信息。
         has_error: 本次流式执行是否出现错误。
         thinking_text: 聚合后的完整思考文本。
-        final_cards: 最终发给前端且需要随消息持久化的卡片列表。
+        final_cards: 流尾阶段已过滤出的可持久化卡片列表。
     """
 
     if callback is None:

@@ -51,5 +51,7 @@ def test_chat_agent_registers_product_search_and_card_tools(monkeypatch):
         "search_products",
         "send_product_card",
         "send_product_purchase_card",
+        "send_consent_card",
+        "send_selection_card",
     ]
     assert result["execution_traces"][0]["tool_calls"] == []

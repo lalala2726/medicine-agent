@@ -62,6 +62,9 @@ class MessageCreate(BaseModel):
     thinking: str | None = Field(default=None, description="AI深度思考完整文本")
     token_usage: TokenUsage | None = Field(default=None, description="消息 token 使用总量")
     cards: list[MessageCard] | None = Field(default=None, description="AI 消息卡片列表")
+    card_uuids: list[str] | None = Field(default=None, description="AI 消息卡片 UUID 列表")
+    hidden_card_uuids: list[str] | None = Field(default=None, description="已点击后需隐藏的卡片 UUID 列表")
+    history_hidden: bool = Field(default=False, description="是否从客户端历史与后续上下文中隐藏")
 
     @model_validator(mode="after")
     def _validate_content_and_cards(self) -> "MessageCreate":
@@ -112,6 +115,9 @@ class MessageDocument(BaseModel):
     thinking: str | None = Field(default=None, description="AI深度思考完整文本")
     token_usage: TokenUsage | None = Field(default=None, description="消息 token 使用总量")
     cards: list[MessageCard] | None = Field(default=None, description="AI 消息卡片列表")
+    card_uuids: list[str] | None = Field(default=None, description="AI 消息卡片 UUID 列表")
+    hidden_card_uuids: list[str] | None = Field(default=None, description="已点击后需隐藏的卡片 UUID 列表")
+    history_hidden: bool = Field(default=False, description="是否从客户端历史与后续上下文中隐藏")
     created_at: datetime = Field(..., description="创建时间")
     updated_at: datetime = Field(..., description="更新时间")
 

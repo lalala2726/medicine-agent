@@ -81,13 +81,17 @@ class ConversationContext:
     is_new_conversation: bool
 
 
-def _serialize_cards_for_history(raw_cards: Any) -> list[dict[str, Any]] | None:
+def _serialize_cards_for_history(
+        raw_cards: Any,
+        *,
+        hidden_card_uuids: list[str] | None = None,
+) -> list[dict[str, Any]] | None:
     """
     将消息文档中的 cards 归一化为历史接口可直接返回的结构。
 
     用途：
     - 兼容 message 文档中可能出现的多种卡片表示形式；
-    - 统一输出历史接口使用的 `id + type + data` 结构；
+    - 统一输出历史接口使用的 `card_uuid + type + data` 结构；
     - 过滤不完整或不合法的卡片数据，避免污染历史响应。
 
     Args:
@@ -105,6 +109,11 @@ def _serialize_cards_for_history(raw_cards: Any) -> list[dict[str, Any]] | None:
     if not isinstance(raw_cards, list) or not raw_cards:
         return None
 
+    hidden_card_uuid_set = {
+        str(card_uuid).strip()
+        for card_uuid in (hidden_card_uuids or [])
+        if str(card_uuid).strip()
+    }
     serialized_cards: list[dict[str, Any]] = []
     for raw_card in raw_cards:
         if hasattr(raw_card, "model_dump"):
@@ -112,26 +121,39 @@ def _serialize_cards_for_history(raw_cards: Any) -> list[dict[str, Any]] | None:
         elif isinstance(raw_card, dict):
             payload = raw_card
         else:
-            card_id = str(getattr(raw_card, "id", "") or "").strip()
+            card_id = str(
+                getattr(raw_card, "card_uuid", None)
+                or getattr(raw_card, "id", "")
+                or ""
+            ).strip()
             card_type = str(getattr(raw_card, "type", "") or "").strip()
             card_data = getattr(raw_card, "data", None)
             if not card_id or not card_type or not isinstance(card_data, dict):
                 continue
             payload = {
-                "id": card_id,
+                "card_uuid": card_id,
                 "type": card_type,
                 "data": card_data,
             }
 
         if not isinstance(payload, dict):
             continue
-        if not str(payload.get("id") or "").strip():
+        card_uuid = str(payload.get("card_uuid") or payload.get("id") or "").strip()
+        if not card_uuid:
+            continue
+        if card_uuid in hidden_card_uuid_set:
             continue
         if not str(payload.get("type") or "").strip():
             continue
         if not isinstance(payload.get("data"), dict):
             continue
-        serialized_cards.append(payload)
+        serialized_cards.append(
+            {
+                "card_uuid": card_uuid,
+                "type": payload["type"],
+                "data": payload["data"],
+            }
+        )
 
     return serialized_cards or None
 
@@ -475,7 +497,6 @@ def _build_assistant_message_callback(
         conversation_id: str,
         assistant_message_uuid: str,
         workflow_name: str = ADMIN_WORKFLOW_NAME,
-        persist_cards: bool = False,
 ):
     """
     构建“流结束后写入 AI 消息”的异步回调。
@@ -486,7 +507,6 @@ def _build_assistant_message_callback(
         conversation_id: 当前会话 ID（Mongo ObjectId 字符串）。
         assistant_message_uuid: 本轮 AI 消息 UUID。
         workflow_name: 产出该消息的工作流名称。
-        persist_cards: 是否允许将最终卡片一并持久化到消息表。
 
     Returns:
         Callable[..., Awaitable[None]]:
@@ -495,9 +515,9 @@ def _build_assistant_message_callback(
     Note:
         回调内部会统一处理以下场景：
         1. 普通文本回复落库；
-        2. 当 `persist_cards=True` 时，纯卡片回复允许 `content=""`；
+        2. 当存在可持久化 cards 时，纯卡片回复允许 `content=""`；
         3. 空回复且无可持久化卡片时写入兜底错误文案；
-        4. 仅在开启 `persist_cards` 时透传最终 cards 给消息持久化层。
+        4. 回调假定传入的 cards 已经由上游完成持久化过滤。
     """
 
     async def _callback(
@@ -510,7 +530,8 @@ def _build_assistant_message_callback(
     ) -> None:
         resolved_token_usage = token_usage
         resolved_has_error = has_error
-        resolved_cards = cards if persist_cards else None
+        resolved_cards = cards
+        # todo 取消兼容旧回调签名：(answer_text, execution_trace, has_error)
         # 兼容旧回调签名：(answer_text, execution_trace, has_error)
         if isinstance(token_usage, bool):
             resolved_token_usage = None
@@ -733,7 +754,6 @@ def assistant_chat(
         on_answer_completed=_build_assistant_message_callback(
             conversation_id=context.conversation_id,
             assistant_message_uuid=context.assistant_message_uuid,
-            persist_cards=False,
         ),
         initial_emitted_events=context.initial_emitted_events,
     )

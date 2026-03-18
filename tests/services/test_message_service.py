@@ -15,6 +15,12 @@ class _DummyInsertResult:
         self.inserted_id = inserted_id
 
 
+class _DummyUpdateResult:
+    def __init__(self, matched_count: int = 1, modified_count: int = 1):
+        self.matched_count = matched_count
+        self.modified_count = modified_count
+
+
 class _DummyCursor:
     def __init__(self, rows: list[dict]):
         self._rows = list(rows)
@@ -56,9 +62,12 @@ class _DummyCollection:
         self.last_find_query: dict | None = None
         self.last_find_one_query: dict | None = None
         self.last_count_query: dict | None = None
+        self.last_update_query: dict | None = None
+        self.last_update_document: dict | None = None
         self.find_rows: list[dict] = []
         self.find_one_result: dict | None = None
         self.count_documents_result: int = 0
+        self.created_indexes: list[dict] = []
 
     def insert_one(self, document: dict) -> _DummyInsertResult:
         self.last_inserted = document
@@ -75,6 +84,22 @@ class _DummyCollection:
     def count_documents(self, query: dict) -> int:
         self.last_count_query = query
         return self.count_documents_result
+
+    def update_one(self, query: dict, update: dict) -> _DummyUpdateResult:
+        self.last_update_query = query
+        self.last_update_document = update
+        return _DummyUpdateResult()
+
+    def create_index(self, keys, **kwargs) -> str:
+        self.created_indexes.append({"keys": list(keys), "kwargs": kwargs})
+        return kwargs.get("name", "idx")
+
+
+@pytest.fixture(autouse=True)
+def _clear_message_service_index_cache():
+    service_module._ensure_message_indexes.cache_clear()
+    yield
+    service_module._ensure_message_indexes.cache_clear()
 
 
 def test_add_message_inserts_expected_document(monkeypatch):
@@ -103,8 +128,11 @@ def test_add_message_inserts_expected_document(monkeypatch):
     assert collection.last_inserted["content"] == "你好"
     assert collection.last_inserted["conversation_id"] == ObjectId("507f1f77bcf86cd799439011")
     assert "token_usage" not in collection.last_inserted
+    assert "card_uuids" not in collection.last_inserted
+    assert collection.last_inserted["history_hidden"] is False
     assert isinstance(collection.last_inserted["created_at"], datetime.datetime)
     assert isinstance(collection.last_inserted["updated_at"], datetime.datetime)
+    assert len(collection.created_indexes) == 3
 
 
 def test_add_message_persists_token_usage_totals_for_assistant(monkeypatch):
@@ -277,6 +305,8 @@ def test_add_message_persists_cards_for_assistant_with_empty_content(monkeypatch
             },
         }
     ]
+    assert collection.last_inserted["card_uuids"] == ["card-1"]
+    assert collection.last_inserted["history_hidden"] is False
 
 
 def test_add_message_rejects_empty_assistant_content_without_cards(monkeypatch):
@@ -521,6 +551,27 @@ def test_list_messages_supports_skip_with_descending_order(monkeypatch):
     assert result[0].uuid == "msg-2"
 
 
+def test_list_messages_can_filter_visible_history(monkeypatch):
+    collection = _DummyCollection()
+    monkeypatch.setattr(
+        service_module,
+        "get_mongo_database",
+        lambda: {"messages": collection},
+    )
+    monkeypatch.setattr(service_module, "_resolve_collection_name", lambda: "messages")
+
+    service_module.list_messages(
+        conversation_id="507f1f77bcf86cd799439011",
+        limit=10,
+        history_hidden=False,
+    )
+
+    assert collection.last_find_query == {
+        "conversation_id": ObjectId("507f1f77bcf86cd799439011"),
+        "history_hidden": {"$ne": True},
+    }
+
+
 def test_count_summarizable_messages_applies_summary_filter(monkeypatch):
     """测试目的：统计摘要消息时仅命中 user/ai success；预期结果：查询条件包含 role/status/after 游标。"""
 
@@ -560,6 +611,24 @@ def test_count_messages_counts_only_current_conversation(monkeypatch):
     }
 
 
+def test_count_messages_can_filter_visible_history(monkeypatch):
+    collection = _DummyCollection()
+    collection.count_documents_result = 3
+    monkeypatch.setattr(service_module, "get_mongo_database", lambda: {"messages": collection})
+    monkeypatch.setattr(service_module, "_resolve_collection_name", lambda: "messages")
+
+    count = service_module.count_messages(
+        conversation_id="507f1f77bcf86cd799439011",
+        history_hidden=False,
+    )
+
+    assert count == 3
+    assert collection.last_count_query == {
+        "conversation_id": ObjectId("507f1f77bcf86cd799439011"),
+        "history_hidden": {"$ne": True},
+    }
+
+
 def test_list_latest_summarizable_messages_returns_ascending(monkeypatch):
     """测试目的：读取最新可总结消息后返回正序；预期结果：输出顺序为旧到新。"""
 
@@ -596,3 +665,103 @@ def test_list_latest_summarizable_messages_returns_ascending(monkeypatch):
     )
 
     assert [item.uuid for item in documents] == ["msg-1", "msg-2"]
+
+
+def test_hide_message_card_updates_hidden_card_uuids_and_history_hidden(monkeypatch):
+    collection = _DummyCollection()
+    collection.find_one_result = {
+        "_id": ObjectId("507f1f77bcf86cd799439099"),
+        "uuid": "msg-1",
+        "conversation_id": ObjectId("507f1f77bcf86cd799439011"),
+        "role": "ai",
+        "status": "success",
+        "content": "",
+        "cards": [
+            {
+                "id": "card-1",
+                "type": "selection-card",
+                "data": {"title": "请选择", "options": ["A", "B"]},
+            }
+        ],
+        "created_at": datetime.datetime(2026, 1, 1, 10, 0, 1),
+        "updated_at": datetime.datetime(2026, 1, 1, 10, 0, 1),
+    }
+    monkeypatch.setattr(service_module, "get_mongo_database", lambda: {"messages": collection})
+    monkeypatch.setattr(service_module, "_resolve_collection_name", lambda: "messages")
+
+    service_module.hide_message_card(
+        conversation_id="507f1f77bcf86cd799439011",
+        message_uuid="msg-1",
+        card_uuid="card-1",
+    )
+
+    assert collection.last_find_one_query == {
+        "conversation_id": ObjectId("507f1f77bcf86cd799439011"),
+        "uuid": "msg-1",
+        "$or": [
+            {"card_uuids": "card-1"},
+            {"cards.id": "card-1"},
+            {"cards.card_uuid": "card-1"},
+        ],
+    }
+    assert collection.last_update_query == {"_id": ObjectId("507f1f77bcf86cd799439099")}
+    assert collection.last_update_document is not None
+    assert collection.last_update_document["$set"]["card_uuids"] == ["card-1"]
+    assert collection.last_update_document["$set"]["hidden_card_uuids"] == ["card-1"]
+    assert collection.last_update_document["$set"]["history_hidden"] is True
+
+
+def test_hide_message_card_is_idempotent_for_repeated_click(monkeypatch):
+    collection = _DummyCollection()
+    collection.find_one_result = {
+        "_id": ObjectId("507f1f77bcf86cd799439099"),
+        "uuid": "msg-1",
+        "conversation_id": ObjectId("507f1f77bcf86cd799439011"),
+        "role": "ai",
+        "status": "success",
+        "content": "还有文本",
+        "hidden_card_uuids": ["card-1"],
+        "card_uuids": ["card-1", "card-2"],
+        "cards": [
+            {
+                "id": "card-1",
+                "type": "consent-card",
+                "data": {"title": "是否同意"},
+            },
+            {
+                "id": "card-2",
+                "type": "selection-card",
+                "data": {"title": "请选择", "options": ["A", "B"]},
+            },
+        ],
+        "created_at": datetime.datetime(2026, 1, 1, 10, 0, 1),
+        "updated_at": datetime.datetime(2026, 1, 1, 10, 0, 1),
+    }
+    monkeypatch.setattr(service_module, "get_mongo_database", lambda: {"messages": collection})
+    monkeypatch.setattr(service_module, "_resolve_collection_name", lambda: "messages")
+
+    service_module.hide_message_card(
+        conversation_id="507f1f77bcf86cd799439011",
+        message_uuid="msg-1",
+        card_uuid="card-1",
+    )
+
+    assert collection.last_update_document is not None
+    assert collection.last_update_document["$set"]["hidden_card_uuids"] == ["card-1"]
+    assert collection.last_update_document["$set"]["history_hidden"] is False
+
+
+def test_hide_message_card_rejects_invalid_target(monkeypatch):
+    collection = _DummyCollection()
+    collection.find_one_result = None
+    monkeypatch.setattr(service_module, "get_mongo_database", lambda: {"messages": collection})
+    monkeypatch.setattr(service_module, "_resolve_collection_name", lambda: "messages")
+
+    with pytest.raises(ServiceException) as exc_info:
+        service_module.hide_message_card(
+            conversation_id="507f1f77bcf86cd799439011",
+            message_uuid="msg-1",
+            card_uuid="card-1",
+        )
+
+    assert exc_info.value.code == ResponseCode.BAD_REQUEST

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 from langchain_core.tools import tool
-from pydantic import BaseModel, ConfigDict, Field
 
+from app.agent.client.domain.tools.schema import (
+    OpenUserAfterSaleListRequest,
+    OpenUserOrderListRequest,
+)
 from app.core.agent.agent_event_bus import enqueue_final_sse_response
 from app.schemas.sse_response import (
     Action,
@@ -15,7 +18,9 @@ from app.schemas.sse_response import (
     UserOrderListPayload,
 )
 
+# 前端动作用统一优先级下发，确保页面跳转类动作优先被消费。
 _DEFAULT_ACTION_PRIORITY = 100
+# 订单状态码到用户文案的映射，用于生成自然语言反馈。
 _ORDER_STATUS_LABELS: dict[str, str] = {
     "PENDING_PAYMENT": "待支付",
     "PENDING_SHIPMENT": "待发货",
@@ -23,6 +28,7 @@ _ORDER_STATUS_LABELS: dict[str, str] = {
     "COMPLETED": "已完成",
     "CANCELLED": "已取消",
 }
+# 售后状态码到用户文案的映射，用于生成自然语言反馈。
 _AFTER_SALE_STATUS_LABELS: dict[str, str] = {
     "PENDING": "待审核",
     "APPROVED": "已通过",
@@ -32,45 +38,9 @@ _AFTER_SALE_STATUS_LABELS: dict[str, str] = {
     "CANCELLED": "已取消",
 }
 
-
-class OpenUserOrderListRequest(BaseModel):
-    """打开用户订单列表工具参数。"""
-
-    model_config = ConfigDict(extra="forbid")
-
-    orderStatus: OrderStatusValue | None = Field(
-        default=None,
-        description=(
-            "订单状态，可选值："
-            "PENDING_PAYMENT（待支付）、"
-            "PENDING_SHIPMENT（待发货）、"
-            "PENDING_RECEIPT（待收货）、"
-            "COMPLETED（已完成）、"
-            "CANCELLED（已取消）。"
-        ),
-    )
-
-
-class OpenUserAfterSaleListRequest(BaseModel):
-    """打开用户售后列表工具参数。"""
-
-    model_config = ConfigDict(extra="forbid")
-
-    afterSaleStatus: AfterSaleStatusValue | None = Field(
-        default=None,
-        description=(
-            "售后状态，可选值："
-            "PENDING（待审核）、"
-            "APPROVED（已通过）、"
-            "REJECTED（已拒绝）、"
-            "PROCESSING（处理中）、"
-            "COMPLETED（已完成）、"
-            "CANCELLED（已取消）。"
-        ),
-    )
-
-
 def _build_order_list_message(order_status: OrderStatusValue | None) -> str:
+    """根据订单状态生成给用户看的打开页面提示语。"""
+
     if order_status is None:
         return "已为你打开订单列表"
     status_label = _ORDER_STATUS_LABELS.get(order_status, order_status)
@@ -80,6 +50,8 @@ def _build_order_list_message(order_status: OrderStatusValue | None) -> str:
 def _build_after_sale_list_message(
         after_sale_status: AfterSaleStatusValue | None,
 ) -> str:
+    """根据售后状态生成给用户看的打开页面提示语。"""
+
     if after_sale_status is None:
         return "已为你打开售后列表"
     status_label = _AFTER_SALE_STATUS_LABELS.get(after_sale_status, after_sale_status)
@@ -89,6 +61,8 @@ def _build_after_sale_list_message(
 def _build_order_list_action_response(
         order_status: OrderStatusValue | None,
 ) -> AssistantResponse:
+    """构建“打开订单列表”动作响应。"""
+
     message = _build_order_list_message(order_status)
     return AssistantResponse(
         type=MessageType.ACTION,
@@ -105,6 +79,8 @@ def _build_order_list_action_response(
 def _build_after_sale_list_action_response(
         after_sale_status: AfterSaleStatusValue | None,
 ) -> AssistantResponse:
+    """构建“打开售后列表”动作响应。"""
+
     message = _build_after_sale_list_message(after_sale_status)
     return AssistantResponse(
         type=MessageType.ACTION,

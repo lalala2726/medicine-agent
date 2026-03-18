@@ -38,6 +38,7 @@ def _build_action_response(*, message: str, order_status: str | None, priority: 
 def _build_card_response(
         *product_ids: int,
         card_uuid: str = "123e4567-e89b-12d3-a456-426614174000",
+        persist_card: bool = False,
 ) -> AssistantResponse:
     products = [
         ProductCardProduct(
@@ -60,6 +61,7 @@ def _build_card_response(
         ),
         meta={
             "card_uuid": card_uuid,
+            "persist_card": persist_card,
         },
     )
 
@@ -173,6 +175,7 @@ def test_serialize_sse_includes_product_card_payload():
     }
     assert parsed["meta"] == {
         "card_uuid": "123e4567-e89b-12d3-a456-426614174000",
+        "persist_card": False,
     }
 
 
@@ -281,6 +284,7 @@ def test_event_stream_passes_final_cards_to_answer_completed_callback():
                 _build_card_response(
                     1001,
                     card_uuid="123e4567-e89b-12d3-a456-426614174001",
+                    persist_card=True,
                 )
             )
             enqueue_final_sse_response(
@@ -350,19 +354,59 @@ def test_event_stream_passes_final_cards_to_answer_completed_callback():
                 ],
             },
         },
-        {
-            "id": "123e4567-e89b-12d3-a456-426614174002",
-            "type": "product-card",
-            "data": {
-                "title": "为您推荐以下商品",
-                "products": [
-                    {
-                        "id": "1002",
-                        "name": "商品1002",
-                        "image": "https://example.com/1002.png",
-                        "price": "1.00",
-                    }
-                ],
-            },
-        },
     ]
+
+
+def test_extract_persistable_cards_ignores_cards_with_persist_flag_false():
+    cards = orchestrator_module._extract_persistable_cards(
+        [
+            _build_card_response(
+                1001,
+                card_uuid="123e4567-e89b-12d3-a456-426614174001",
+            )
+        ]
+    )
+
+    assert cards is None
+
+
+def test_extract_persistable_cards_ignores_cards_without_persist_flag():
+    cards = orchestrator_module._extract_persistable_cards(
+        [
+            AssistantResponse(
+                type=MessageType.CARD,
+                content=Content(),
+                card=Card(
+                    type="product-card",
+                    data=ProductCardData(
+                        title="为您推荐以下商品",
+                        products=[],
+                    ).model_dump(mode="json"),
+                ),
+                meta={"card_uuid": "123e4567-e89b-12d3-a456-426614174001"},
+            )
+        ]
+    )
+
+    assert cards is None
+
+
+def test_extract_persistable_cards_ignores_cards_without_card_uuid():
+    cards = orchestrator_module._extract_persistable_cards(
+        [
+            AssistantResponse(
+                type=MessageType.CARD,
+                content=Content(),
+                card=Card(
+                    type="product-card",
+                    data=ProductCardData(
+                        title="为您推荐以下商品",
+                        products=[],
+                    ).model_dump(mode="json"),
+                ),
+                meta={"persist_card": True},
+            )
+        ]
+    )
+
+    assert cards is None

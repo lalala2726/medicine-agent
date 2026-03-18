@@ -50,7 +50,7 @@ class ConversationCardResponse(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    id: str = Field(..., min_length=1, description="卡片唯一ID")
+    card_uuid: str = Field(..., min_length=1, description="卡片唯一 UUID")
     type: str = Field(..., min_length=1, description="卡片类型")
     data: dict[str, Any] = Field(default_factory=dict, description="卡片数据")
 
