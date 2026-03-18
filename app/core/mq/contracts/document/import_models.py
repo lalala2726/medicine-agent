@@ -3,9 +3,9 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Literal
 
+from app.core.mq.contracts.document.result_stages import ImportResultStage
 from pydantic import BaseModel, Field, model_validator
 
-from app.core.mq.contracts.document.result_stages import ImportResultStage
 from app.rag.chunking.types import MAX_CHUNK_OVERLAP, MAX_CHUNK_SIZE, MIN_CHUNK_SIZE
 from app.rag.file_loader.types import FileKind
 

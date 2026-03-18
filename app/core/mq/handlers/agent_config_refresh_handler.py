@@ -7,8 +7,8 @@ from loguru import logger
 from app.core.config_sync import refresh_agent_config_snapshot
 from app.core.mq.broker import get_broker
 from app.core.mq.models.agent_config_refresh import AgentConfigRefreshMessage
-from app.core.speech.runtime import handle_speech_config_refresh as handle_runtime_speech_config_refresh
 from app.core.mq.topology import agent_config_refresh_exchange, agent_config_refresh_queue
+from app.core.speech.runtime import handle_speech_config_refresh as handle_runtime_speech_config_refresh
 
 broker = get_broker()
 

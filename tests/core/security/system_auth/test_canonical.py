@@ -8,8 +8,8 @@ from app.core.security.system_auth.canonical import (
 def test_sha256_hex_returns_lowercase_digest() -> None:
     """验证 SHA256 摘要输出为小写十六进制。"""
     assert (
-        sha256_hex(b"abc")
-        == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+            sha256_hex(b"abc")
+            == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
     )
 
 
@@ -42,4 +42,3 @@ def test_build_canonical_string_uses_six_lines_and_body_hash() -> None:
     assert lines[3] == "1772700000"
     assert lines[4] == "nonce-123"
     assert lines[5] == "015abd7f5cc57a2dd94b7590f04ad8084273905ee33ec5cebeae62276a97f862"
-

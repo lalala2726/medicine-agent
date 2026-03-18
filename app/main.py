@@ -16,7 +16,6 @@ from app.core.exception.exception_handlers import ExceptionHandlers
 from app.core.exception.exceptions import ServiceException
 from app.core.mq.broker import get_broker, is_mq_configured
 from app.core.security.anonymous_access import is_anonymous_request
-from app.core.security.system_auth import is_system_request, verify_system_request
 from app.core.security.auth_context import (
     reset_authorization_header,
     reset_current_user,
@@ -24,6 +23,7 @@ from app.core.security.auth_context import (
     set_current_user,
 )
 from app.core.security.cors import load_cors_config
+from app.core.security.system_auth import is_system_request, verify_system_request
 from app.core.speech import (
     verify_volcengine_stt_connection_on_startup,
     verify_volcengine_tts_connection_on_startup,
@@ -34,18 +34,18 @@ from app.services.auth_service import verify_authorization
 load_dotenv()
 
 OPENAPI_DESCRIPTION = """
-## 项目简介
-
-本项目提供药品相关的 AI 能力接口，包含管理助手对话、药品图片解析、知识库导入与检索等功能。
-
-## 认证说明
-
-除 `/docs`、`/redoc`、`/openapi.json`、显式标注 `allow_anonymous`（匿名）与
-`allow_system`（系统签名）的接口外，其他接口均需要用户认证。
-
-请由药品服务端提供访问令牌，并在请求头中携带：
-
-- `Authorization: Bearer <token>`
+    ## 项目简介
+    
+    本项目提供药品相关的 AI 能力接口，包含管理助手对话、药品图片解析、知识库导入与检索等功能。
+    
+    ## 认证说明
+    
+    除 `/docs`、`/redoc`、`/openapi.json`、显式标注 `allow_anonymous`（匿名）与
+    `allow_system`（系统签名）的接口外，其他接口均需要用户认证。
+    
+    请由药品服务端提供访问令牌，并在请求头中携带：
+    
+    - `Authorization: Bearer <token>`
 """
 
 _speech_startup_probe_done = False

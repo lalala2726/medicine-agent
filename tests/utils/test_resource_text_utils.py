@@ -15,11 +15,11 @@ def reset_resources_dir(monkeypatch, tmp_path):
 
 
 def test_load_resource_text_reads_nested_file(tmp_path):
-    target_file = tmp_path / "prompt" / "assistant" / "chat.md"
+    target_file = tmp_path / "prompt" / "admin" / "chat.md"
     target_file.parent.mkdir(parents=True, exist_ok=True)
     target_file.write_text("hello", encoding="utf-8")
 
-    assert load_resource_text("prompt", "assistant/chat.md") == "hello"
+    assert load_resource_text("prompt", "admin/chat.md") == "hello"
 
 
 def test_load_resource_text_raises_for_empty_name():
@@ -76,14 +76,14 @@ def test_load_resource_text_validates_allowed_suffixes(tmp_path):
 
 
 def test_load_resource_text_uses_cache(tmp_path):
-    prompt_file = tmp_path / "prompt" / "assistant_demo_prompt.md"
+    prompt_file = tmp_path / "prompt" / "admin_demo_prompt.md"
     prompt_file.parent.mkdir(parents=True, exist_ok=True)
     prompt_file.write_text("v1", encoding="utf-8")
     cache: dict[str, str] = {}
 
     assert load_resource_text(
         "prompt",
-        "assistant_demo_prompt.md",
+        "admin_demo_prompt.md",
         allowed_suffixes=(".md",),
         cache=cache,
     ) == "v1"
@@ -91,7 +91,7 @@ def test_load_resource_text_uses_cache(tmp_path):
     prompt_file.write_text("v2", encoding="utf-8")
     assert load_resource_text(
         "prompt",
-        "assistant_demo_prompt.md",
+        "admin_demo_prompt.md",
         allowed_suffixes=(".md",),
         cache=cache,
     ) == "v1"

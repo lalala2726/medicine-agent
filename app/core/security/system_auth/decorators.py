@@ -56,4 +56,3 @@ def is_system_request(request: Request) -> bool:
         if match is Match.FULL:
             return is_system_endpoint(route.endpoint)
     return False
-

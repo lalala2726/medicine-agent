@@ -299,11 +299,59 @@ def list_admin_conversations(
         数据库异常会由全局异常处理器统一拦截。
     """
 
+    return _list_conversations(
+        conversation_type=_ADMIN_MARK,
+        user_id=user_id,
+        page_num=page_num,
+        page_size=page_size,
+    )
+
+
+def list_client_conversations(
+        *,
+        user_id: Annotated[int, Field(ge=1)],
+        page_num: Annotated[int, Field(ge=1)] = 1,
+        page_size: Annotated[int, Field(ge=1, le=100)] = 20,
+) -> tuple[list[ConversationListItem], int]:
+    """
+    分页查询客户端会话列表（仅返回会话 UUID 与标题）。
+
+    Args:
+        user_id: 用户 ID，用于筛选当前用户的会话。
+        page_num: 页码（从 1 开始）。
+        page_size: 每页大小（1-100）。
+
+    Returns:
+        tuple[list[ConversationListItem], int]:
+            - rows: 会话列表项模型列表。
+            - total: 总记录数。
+
+    Note:
+        数据库异常会由全局异常处理器统一拦截。
+    """
+
+    return _list_conversations(
+        conversation_type=_CLIENT_MARK,
+        user_id=user_id,
+        page_num=page_num,
+        page_size=page_size,
+    )
+
+
+def _list_conversations(
+        *,
+        conversation_type: str,
+        user_id: int,
+        page_num: int,
+        page_size: int,
+) -> tuple[list[ConversationListItem], int]:
+    """按会话类型分页查询会话列表。"""
+
     db = get_mongo_database()
     collection = db[_TABLE_NAME]
 
     query = {
-        "conversation_type": _ADMIN_MARK,
+        "conversation_type": conversation_type,
         "user_id": _to_mongo_long(user_id),
         "is_deleted": _NOT_DELETED_FILTER,
     }
@@ -405,6 +453,44 @@ def update_admin_conversation_title(
     return int(getattr(result, "matched_count", 0)) > 0
 
 
+def update_client_conversation_title(
+        *,
+        conversation_uuid: Annotated[str, Field(min_length=1)],
+        user_id: Annotated[int, Field(ge=1)],
+        title: Annotated[str, Field(min_length=1)],
+) -> bool:
+    """
+    更新当前用户的客户端会话标题。
+
+    Args:
+        conversation_uuid: 会话 UUID。
+        user_id: 当前用户 ID。
+        title: 新标题。
+
+    Returns:
+        bool: True 表示命中并更新成功；False 表示会话不存在或无权限。
+
+    Note:
+        数据库异常会由全局异常处理器统一拦截。
+    """
+
+    db = get_mongo_database()
+    collection = db[_TABLE_NAME]
+
+    now = datetime.datetime.now()
+    query = {
+        "uuid": conversation_uuid,
+        "conversation_type": _CLIENT_MARK,
+        "user_id": _to_mongo_long(user_id),
+        "is_deleted": _NOT_DELETED_FILTER,
+    }
+    update_set = ConversationUpdateSet(title=title, update_time=now)
+    update_doc = {"$set": update_set.model_dump(mode="python", exclude_none=True)}
+
+    result = collection.update_one(query, update_doc)
+    return int(getattr(result, "matched_count", 0)) > 0
+
+
 def delete_admin_conversation(
         *,
         conversation_uuid: Annotated[str, Field(min_length=1)],
@@ -431,6 +517,42 @@ def delete_admin_conversation(
     query = {
         "uuid": conversation_uuid,
         "conversation_type": _ADMIN_MARK,
+        "user_id": _to_mongo_long(user_id),
+        "is_deleted": _NOT_DELETED_FILTER,
+    }
+    update_set = ConversationUpdateSet(is_deleted=1, update_time=now)
+    update_doc = {"$set": update_set.model_dump(mode="python", exclude_none=True)}
+
+    result = collection.update_one(query, update_doc)
+    return int(getattr(result, "matched_count", 0)) > 0
+
+
+def delete_client_conversation(
+        *,
+        conversation_uuid: Annotated[str, Field(min_length=1)],
+        user_id: Annotated[int, Field(ge=1)],
+) -> bool:
+    """
+    逻辑删除当前用户的客户端会话。
+
+    Args:
+        conversation_uuid: 会话 UUID。
+        user_id: 当前用户 ID。
+
+    Returns:
+        bool: True 表示删除成功；False 表示会话不存在、无权限或已删除。
+
+    Note:
+        数据库异常会由全局异常处理器统一拦截。
+    """
+
+    db = get_mongo_database()
+    collection = db[_TABLE_NAME]
+
+    now = datetime.datetime.now()
+    query = {
+        "uuid": conversation_uuid,
+        "conversation_type": _CLIENT_MARK,
         "user_id": _to_mongo_long(user_id),
         "is_deleted": _NOT_DELETED_FILTER,
     }

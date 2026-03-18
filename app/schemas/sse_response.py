@@ -1,6 +1,6 @@
 import time
 from enum import Enum
-from typing import Any
+from typing import Annotated, Any, Literal
 
 from pydantic import AliasChoices, BaseModel, Field
 
@@ -16,6 +16,70 @@ class Content(BaseModel):
     arguments: str | None = Field(default=None, description="参数")
 
 
+OrderStatusValue = Literal[
+    "PENDING_PAYMENT",
+    "PENDING_SHIPMENT",
+    "PENDING_RECEIPT",
+    "COMPLETED",
+    "CANCELLED",
+]
+AfterSaleStatusValue = Literal[
+    "PENDING",
+    "APPROVED",
+    "REJECTED",
+    "PROCESSING",
+    "COMPLETED",
+    "CANCELLED",
+]
+
+
+class UserOrderListPayload(BaseModel):
+    orderStatus: OrderStatusValue | None = Field(
+        default=None,
+        description="订单状态过滤",
+    )
+
+
+class UserAfterSaleListPayload(BaseModel):
+    afterSaleStatus: AfterSaleStatusValue | None = Field(
+        default=None,
+        description="售后状态过滤",
+    )
+
+
+class Action(BaseModel):
+    type: Literal["navigate"] = Field(default="navigate", description="动作类型")
+    target: Literal["user_order_list", "user_after_sale_list"] = Field(
+        default="user_order_list",
+        description="动作目标",
+    )
+    payload: UserOrderListPayload | UserAfterSaleListPayload = Field(
+        default_factory=UserOrderListPayload,
+        description="动作参数",
+    )
+    priority: int = Field(default=0, description="优先级，数值越大越先发送")
+
+
+ProductIdValue = Annotated[int, Field(ge=1, description="商品 ID，必须为正整数")]
+
+
+class ProductCardData(BaseModel):
+    """商品卡片数据"""
+    productIds: list[ProductIdValue] = Field(
+        min_length=1,
+        description="商品 ID 列表",
+    )
+
+
+class ProductCard(BaseModel):
+    type: Literal["product-card"] = Field(
+        default="product-card",
+        description="卡片类型",
+    )
+    version: int = Field(default=1, description="卡片版本")
+    data: ProductCardData = Field(..., description="卡片数据")
+
+
 class MessageType(str, Enum):
     ANSWER = "answer"
     THINKING = "thinking"
@@ -23,6 +87,8 @@ class MessageType(str, Enum):
     TOOL_RESPONSE = "tool_response"
     STATUS = "status"
     NOTICE = "notice"
+    ACTION = "action"
+    CARD = "card"
 
 
 class AssistantResponse(BaseModel):
@@ -30,6 +96,8 @@ class AssistantResponse(BaseModel):
 
     content: Content = Field(default_factory=Content, description="内容")
     type: MessageType = Field(default=MessageType.ANSWER, description="类型")
+    action: Action | None = Field(default=None, description="前端动作")
+    card: ProductCard | None = Field(default=None, description="前端卡片")
     meta: dict[str, Any] | None = Field(
         default=None,
         validation_alias=AliasChoices("meta", "extra"),

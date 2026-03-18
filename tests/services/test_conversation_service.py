@@ -235,6 +235,28 @@ def test_update_admin_conversation_title_scopes_by_user_and_type(monkeypatch):
     assert "update_time" in collection.last_update_doc["$set"]
 
 
+def test_update_client_conversation_title_scopes_by_user_and_type(monkeypatch):
+    collection = _DummyCollection()
+    monkeypatch.setattr(service_module, "get_mongo_database", lambda: {"conversations": collection})
+
+    result = service_module.update_client_conversation_title(
+        conversation_uuid="client-conv-1",
+        user_id=6,
+        title="客户端标题",
+    )
+
+    assert result is True
+    assert collection.last_update_query == {
+        "uuid": "client-conv-1",
+        "conversation_type": "client",
+        "user_id": Int64(6),
+        "is_deleted": {"$ne": 1},
+    }
+    assert collection.last_update_doc is not None
+    assert collection.last_update_doc["$set"]["title"] == "客户端标题"
+    assert "update_time" in collection.last_update_doc["$set"]
+
+
 def test_delete_admin_conversation_scopes_by_user_and_type(monkeypatch):
     collection = _DummyCollection()
     monkeypatch.setattr(service_module, "get_mongo_database", lambda: {"conversations": collection})
@@ -249,6 +271,27 @@ def test_delete_admin_conversation_scopes_by_user_and_type(monkeypatch):
         "uuid": "conv-2",
         "conversation_type": "admin",
         "user_id": Int64(3),
+        "is_deleted": {"$ne": 1},
+    }
+    assert collection.last_update_doc is not None
+    assert collection.last_update_doc["$set"]["is_deleted"] == 1
+    assert "update_time" in collection.last_update_doc["$set"]
+
+
+def test_delete_client_conversation_scopes_by_user_and_type(monkeypatch):
+    collection = _DummyCollection()
+    monkeypatch.setattr(service_module, "get_mongo_database", lambda: {"conversations": collection})
+
+    result = service_module.delete_client_conversation(
+        conversation_uuid="client-conv-2",
+        user_id=7,
+    )
+
+    assert result is True
+    assert collection.last_update_query == {
+        "uuid": "client-conv-2",
+        "conversation_type": "client",
+        "user_id": Int64(7),
         "is_deleted": {"$ne": 1},
     }
     assert collection.last_update_doc is not None
@@ -298,6 +341,37 @@ def test_list_admin_conversations_returns_uuid_and_title(monkeypatch):
     ]
 
 
+def test_list_client_conversations_returns_uuid_and_title(monkeypatch):
+    collection = _DummyCollection()
+    collection.find_result = [
+        {"uuid": "client-conv-1", "title": "客户端会话"},
+        {"uuid": "client-conv-2", "title": ""},
+    ]
+    monkeypatch.setattr(service_module, "get_mongo_database", lambda: {"conversations": collection})
+
+    rows, total = service_module.list_client_conversations(
+        user_id=8,
+        page_num=1,
+        page_size=20,
+    )
+
+    assert collection.last_count_query == {
+        "conversation_type": "client",
+        "user_id": Int64(8),
+        "is_deleted": {"$ne": 1},
+    }
+    assert collection.last_find_query == {
+        "conversation_type": "client",
+        "user_id": Int64(8),
+        "is_deleted": {"$ne": 1},
+    }
+    assert total == 2
+    assert [item.model_dump() for item in rows] == [
+        {"conversation_uuid": "client-conv-1", "title": "客户端会话"},
+        {"conversation_uuid": "client-conv-2", "title": "新聊天"},
+    ]
+
+
 def test_delete_admin_conversation_returns_false_when_not_matched(monkeypatch):
     collection = _DummyCollection()
     collection.update_matched_count = 0
@@ -306,6 +380,33 @@ def test_delete_admin_conversation_returns_false_when_not_matched(monkeypatch):
     result = service_module.delete_admin_conversation(
         conversation_uuid="conv-3",
         user_id=4,
+    )
+
+    assert result is False
+
+
+def test_update_client_conversation_title_returns_false_when_not_matched(monkeypatch):
+    collection = _DummyCollection()
+    collection.update_matched_count = 0
+    monkeypatch.setattr(service_module, "get_mongo_database", lambda: {"conversations": collection})
+
+    result = service_module.update_client_conversation_title(
+        conversation_uuid="client-conv-3",
+        user_id=10,
+        title="未命中标题",
+    )
+
+    assert result is False
+
+
+def test_delete_client_conversation_returns_false_when_not_matched(monkeypatch):
+    collection = _DummyCollection()
+    collection.update_matched_count = 0
+    monkeypatch.setattr(service_module, "get_mongo_database", lambda: {"conversations": collection})
+
+    result = service_module.delete_client_conversation(
+        conversation_uuid="client-conv-4",
+        user_id=11,
     )
 
     assert result is False

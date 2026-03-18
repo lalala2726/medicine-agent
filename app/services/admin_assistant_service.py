@@ -10,14 +10,14 @@ from fastapi.responses import StreamingResponse
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from loguru import logger
 
-from app.agent.assistant.state import ChatHistoryMessage, ExecutionTraceState, TokenUsageState
-from app.agent.assistant.workflow import build_graph
-from app.core.config_sync import create_agent_title_llm
+from app.agent.admin.state import ChatHistoryMessage, ExecutionTraceState, TokenUsageState
+from app.agent.admin.workflow import build_graph
 from app.core.agent.agent_orchestrator import (
     AssistantStreamConfig,
     create_streaming_response,
 )
 from app.core.codes import ResponseCode
+from app.core.config_sync import create_agent_title_llm
 from app.core.exception.exceptions import ServiceException
 from app.core.langsmith import build_langsmith_runnable_config
 from app.core.security.auth_context import get_user_id
@@ -45,6 +45,7 @@ from app.services.token_usage_service import (
 )
 from app.utils.prompt_utils import load_prompt
 
+ADMIN_WORKFLOW_NAME = "admin_assistant_graph"
 ADMIN_WORKFLOW = build_graph()
 STREAM_OUTPUT_NODES = {
     "chat_agent",
@@ -88,7 +89,7 @@ def _invoke_admin_workflow(state: dict[str, Any]) -> dict[str, Any]:
     """
 
     config = build_langsmith_runnable_config(
-        run_name="admin_assistant_graph",
+        run_name=ADMIN_WORKFLOW_NAME,
         tags=["admin-assistant", "langgraph"],
         metadata={"entrypoint": "api.admin_assistant.chat"},
     )
@@ -105,7 +106,7 @@ def _build_stream_config() -> dict | None:
     """
 
     return build_langsmith_runnable_config(
-        run_name="admin_assistant_graph",
+        run_name=ADMIN_WORKFLOW_NAME,
         tags=["admin-assistant", "langgraph"],
         metadata={"entrypoint": "api.admin_assistant.chat"},
     )
@@ -343,6 +344,7 @@ def _persist_assistant_message(
         token_usage: TokenUsageState | dict[str, Any] | None,
         status: MessageStatus | str,
         thinking_text: str | None = None,
+        workflow_name: str = ADMIN_WORKFLOW_NAME,
 ) -> None:
     """
     持久化 AI 消息并触发追踪与摘要刷新。
@@ -355,6 +357,7 @@ def _persist_assistant_message(
         token_usage: workflow 消息级 token 汇总。
         status: 消息状态（success/error）。
         thinking_text: 可选深度思考文本。
+        workflow_name: 工作流名称。
 
     Returns:
         None
@@ -397,6 +400,7 @@ def _persist_assistant_message(
         add_message_trace(
             message_uuid=message_uuid,
             conversation_id=conversation_id,
+            workflow_name=workflow_name,
             execution_trace=execution_trace,
             token_usage=persistable_trace_token_usage,
             has_error=resolved_status == MessageStatus.ERROR,
@@ -408,7 +412,12 @@ def _persist_assistant_message(
         )
 
 
-def _build_assistant_message_callback(*, conversation_id: str, assistant_message_uuid: str):
+def _build_assistant_message_callback(
+        *,
+        conversation_id: str,
+        assistant_message_uuid: str,
+        workflow_name: str = ADMIN_WORKFLOW_NAME,
+):
     """
     构建“流结束后写入 AI 消息”的异步回调。
 
@@ -446,6 +455,7 @@ def _build_assistant_message_callback(*, conversation_id: str, assistant_message
                 "execution_trace": execution_trace,
                 "token_usage": resolved_token_usage,
                 "status": resolved_status,
+                "workflow_name": workflow_name,
             },
         )
 

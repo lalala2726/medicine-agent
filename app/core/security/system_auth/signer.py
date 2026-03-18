@@ -34,4 +34,3 @@ def is_signature_equal(*, expected: str, actual: str) -> bool:
         bool: 匹配返回 True，否则 False。
     """
     return hmac.compare_digest(expected, actual)
-

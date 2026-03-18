@@ -13,6 +13,7 @@ from loguru import logger
 
 from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException
+from app.core.security.auth_context import get_authorization_header
 from app.core.security.system_auth.canonical import build_canonical_string
 from app.core.security.system_auth.config import get_system_auth_settings
 from app.core.security.system_auth.constants import (
@@ -23,7 +24,6 @@ from app.core.security.system_auth.constants import (
     HEADER_X_AGENT_TIMESTAMP,
 )
 from app.core.security.system_auth.signer import sign_hmac_sha256_base64url
-from app.core.security.auth_context import get_authorization_header
 
 
 class HttpClient:
