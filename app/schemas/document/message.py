@@ -18,7 +18,9 @@ class MessageRole(str, Enum):
 class MessageStatus(str, Enum):
     """会话消息状态。"""
 
+    STREAMING = "streaming"
     SUCCESS = "success"
+    CANCELLED = "cancelled"
     ERROR = "error"
 
 
@@ -73,6 +75,7 @@ class MessageCreate(BaseModel):
 
         规则：
         - user 消息必须有非空 content；
+        - ai 消息在 `status=streaming` 时允许 `content=""`；
         - ai 消息允许 content 为空字符串，但必须至少有一项 cards；
         - 当 ai 消息仅包含卡片时，会把 content 统一归一化为空字符串。
 
@@ -89,6 +92,10 @@ class MessageCreate(BaseModel):
         if self.role == MessageRole.USER:
             if not normalized_content:
                 raise ValueError("用户消息内容不能为空")
+            return self
+
+        if self.status == MessageStatus.STREAMING:
+            self.content = normalized_content
             return self
 
         if not normalized_content and has_cards:

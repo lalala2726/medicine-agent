@@ -572,6 +572,60 @@ def test_list_messages_can_filter_visible_history(monkeypatch):
     }
 
 
+def test_list_messages_can_filter_statuses(monkeypatch):
+    """验证普通消息查询支持按状态白名单过滤。"""
+
+    collection = _DummyCollection()
+    monkeypatch.setattr(
+        service_module,
+        "get_mongo_database",
+        lambda: {"messages": collection},
+    )
+    monkeypatch.setattr(service_module, "_resolve_collection_name", lambda: "messages")
+
+    service_module.list_messages(
+        conversation_id="507f1f77bcf86cd799439011",
+        limit=10,
+        statuses=[MessageStatus.STREAMING, MessageStatus.CANCELLED],
+    )
+
+    assert collection.last_find_query == {
+        "conversation_id": ObjectId("507f1f77bcf86cd799439011"),
+        "status": {"$in": ["streaming", "cancelled"]},
+    }
+
+
+def test_update_assistant_message_updates_existing_placeholder(monkeypatch):
+    """验证 AI 占位消息可被更新为新的状态与内容。"""
+
+    collection = _DummyCollection()
+    monkeypatch.setattr(
+        service_module,
+        "get_mongo_database",
+        lambda: {"messages": collection},
+    )
+    monkeypatch.setattr(service_module, "_resolve_collection_name", lambda: "messages")
+
+    updated = service_module.update_assistant_message(
+        conversation_id="507f1f77bcf86cd799439011",
+        message_uuid="msg-1",
+        status=MessageStatus.CANCELLED,
+        content="部分回答",
+        thinking="部分思考",
+    )
+
+    assert updated is True
+    assert collection.last_update_query == {
+        "uuid": "msg-1",
+        "conversation_id": ObjectId("507f1f77bcf86cd799439011"),
+        "role": MessageRole.AI,
+    }
+    assert collection.last_update_document is not None
+    assert collection.last_update_document["$set"]["status"] == MessageStatus.CANCELLED
+    assert collection.last_update_document["$set"]["content"] == "部分回答"
+    assert collection.last_update_document["$set"]["thinking"] == "部分思考"
+
+
 def test_count_summarizable_messages_applies_summary_filter(monkeypatch):
     """测试目的：统计摘要消息时仅命中 user/ai success；预期结果：查询条件包含 role/status/after 游标。"""
 

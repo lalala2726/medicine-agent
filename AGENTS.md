@@ -92,6 +92,12 @@
   on startup when MongoDB is unreachable/unauthorized).
 - Redis configuration (optional): `REDIS_URL`, `REDIS_HOST`, `REDIS_PORT`, `REDIS_DB`, `REDIS_PASSWORD`, `REDIS_SSL`.
   Redis connection/config entry is `app/core/database/redis/config.py`.
+- Assistant run streaming configuration (optional):
+  `ASSISTANT_RUN_SNAPSHOT_FLUSH_MS`（流式消息快照刷 Mongo 间隔，默认 `500` 毫秒），
+  `ASSISTANT_RUN_REDIS_TTL_SECONDS`（运行中 Redis 元数据保留时长，默认 `7200` 秒），
+  `ASSISTANT_RUN_TERMINAL_TTL_SECONDS`（终态 Redis 元数据保留时长，默认 `900` 秒），
+  `ASSISTANT_RUN_EVENT_STREAM_MAX_LEN`（Redis Stream 最大事件条数，默认 `2000`），
+  `ASSISTANT_RUN_STREAM_BLOCK_MS`（attach 读取 Redis Stream 的阻塞等待时长，默认 `15000` 毫秒）。
 - Rate limit configuration (optional): `RATE_LIMIT_KEY_PREFIX` (defaults to `rate_limit`),
   `RATE_LIMIT_TRUST_X_FORWARDED_FOR` (default false; when true, fallback to `X-Forwarded-For`
   only if `request.client.host` is unavailable).

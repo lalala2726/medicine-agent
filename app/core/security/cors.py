@@ -26,10 +26,13 @@ LOCALHOST_ORIGIN_REGEX = r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
 LOCAL_AREA_NETWORK = (
     r"^https?://(192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+)(:\d+)?$"
 )
-# 默认 CORS 来源规则：同时允许 localhost 与局域网调试来源。
+# 正式环境默认允许 zhangchuangla.cn 主域及其任意层级子域名。
+ZHANGCHUANGLA_ORIGIN_REGEX = r"^https?://(?:[A-Za-z0-9-]+\.)*zhangchuangla\.cn(?::\d+)?$"
+# 默认 CORS 来源规则：同时允许 localhost、局域网调试来源以及 zhangchuangla.cn 域名体系。
 DEFAULT_CORS_ALLOW_ORIGIN_REGEX = _merge_origin_regex_patterns(
     LOCALHOST_ORIGIN_REGEX,
     LOCAL_AREA_NETWORK,
+    ZHANGCHUANGLA_ORIGIN_REGEX,
 )
 
 
@@ -84,7 +87,7 @@ def load_cors_config() -> dict[str, Any]:
 
     规则：
     1. 若 `CORS_ALLOW_ORIGINS` 显式配置且非空，则优先使用 origins 列表；
-    2. 否则使用 `CORS_ALLOW_ORIGIN_REGEX`（默认允许 localhost 与局域网调试来源）；
+    2. 否则使用 `CORS_ALLOW_ORIGIN_REGEX`（默认允许 localhost、局域网调试来源与 zhangchuangla.cn 域名体系）；
     3. methods/headers/credentials 由对应环境变量解析，未配置使用默认值。
 
     Returns:

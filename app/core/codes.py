@@ -8,6 +8,7 @@ class ResponseCode(IntEnum):
     RESULT_EMPTY = (400, "结果为空")
     UNAUTHORIZED = (401, "未认证或登录已失效")
     FORBIDDEN = (403, "无权限访问")
+    CONFLICT = (409, "资源冲突")
     NOT_FOUND = (404, "资源不存在")
     TOO_MANY_REQUESTS = (429, "请求过于频繁")
     ERROR = (500, "服务器内部异常")

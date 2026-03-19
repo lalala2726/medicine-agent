@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import uuid
 from typing import Any
 
@@ -7,26 +8,34 @@ from fastapi.responses import StreamingResponse
 from langchain_core.messages import HumanMessage
 
 from app.agent.client.workflow import build_graph
-from app.core.agent.agent_orchestrator import AssistantStreamConfig, create_streaming_response
+from app.core.agent.run_event_store import LocalRunHandle
 from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException
 from app.core.langsmith import build_langsmith_runnable_config
 from app.core.security.auth_context import get_user_id
 from app.core.speech import build_message_tts_stream
+from app.schemas.assistant_run import (
+    AssistantRunStatus,
+    AssistantRunStopResponse,
+    AssistantRunSubmitResponse,
+)
 from app.schemas.admin_assistant_history import ConversationMessageResponse
 from app.schemas.base_request import PageRequest
 from app.schemas.document.conversation import ConversationListItem, ConversationType
 from app.schemas.document.message import MessageRole
 from app.services.admin_assistant_service import (
     ConversationContext,
-    _build_assistant_message_callback,
+    RUN_EVENT_STORE,
+    _build_attach_streaming_response,
+    _build_background_run_done_callback,
     _build_conversation_created_event,
-    _build_initial_state,
     _build_message_prepared_event,
+    _build_run_stream_config,
+    _create_placeholder_assistant_message,
     _map_exception,
     _persist_user_message,
+    _run_assistant_workflow_in_background,
     _serialize_cards_for_history,
-    _schedule_background_task,
     _schedule_title_generation,
     _should_stream_token,
 )
@@ -208,8 +217,8 @@ def assistant_chat(
         question: str,
         conversation_uuid: str | None = None,
         card_action: ClientCardAction | None = None,
-) -> StreamingResponse:
-    """客户端助手聊天入口（SSE 流式返回）。"""
+) -> AssistantRunSubmitResponse:
+    """客户端助手聊天提交入口（创建后台 run 并返回运行态）。"""
 
     current_user_id = get_user_id()
     assistant_message_uuid = str(uuid.uuid4())
@@ -221,34 +230,125 @@ def assistant_chat(
         card_action=card_action,
     )
 
-    _schedule_background_task(
-        task_name="persist_user_message",
-        func=_persist_user_message,
-        kwargs={
-            "conversation_id": context.conversation_id,
-            "question": question,
-        },
+    created_meta = RUN_EVENT_STORE.create_run(
+        conversation_uuid=context.conversation_uuid,
+        user_id=current_user_id,
+        conversation_type=ConversationType.CLIENT.value,
+        assistant_message_uuid=context.assistant_message_uuid,
+    )
+    if created_meta is None:
+        active_meta = RUN_EVENT_STORE.get_run_meta(
+            conversation_uuid=context.conversation_uuid,
+        )
+        if active_meta is not None and active_meta.status == AssistantRunStatus.RUNNING:
+            raise ServiceException(
+                code=ResponseCode.CONFLICT,
+                message="当前会话已有正在输出的回答",
+                data=AssistantRunSubmitResponse(
+                    conversation_uuid=context.conversation_uuid,
+                    message_uuid=active_meta.assistant_message_uuid,
+                    run_status=active_meta.status,
+                ).model_dump(),
+            )
+        raise ServiceException(
+            code=ResponseCode.SERVICE_UNAVAILABLE,
+            message="创建助手运行态失败",
+        )
+
+    _persist_user_message(
+        conversation_id=context.conversation_id,
+        question=question,
+    )
+    _create_placeholder_assistant_message(
+        conversation_id=context.conversation_id,
+        message_uuid=context.assistant_message_uuid,
     )
 
-    stream_config = AssistantStreamConfig(
+    cancel_event = asyncio.Event()
+    stream_config = _build_run_stream_config(
+        question=question,
+        context=context,
         workflow=CLIENT_WORKFLOW,
-        build_initial_state=lambda q: _build_initial_state(
-            q,
-            history_messages=context.history_messages,
-        ),
-        extract_final_content=lambda state: str(state.get("result") or ""),
-        should_stream_token=_should_stream_token,
-        build_stream_config=_build_stream_config,
-        invoke_sync=_invoke_client_workflow,
-        map_exception=_map_exception,
-        on_answer_completed=_build_assistant_message_callback(
-            conversation_id=context.conversation_id,
-            assistant_message_uuid=context.assistant_message_uuid,
-            workflow_name=CLIENT_WORKFLOW_NAME,
-        ),
-        initial_emitted_events=context.initial_emitted_events,
+        workflow_name=CLIENT_WORKFLOW_NAME,
+        build_stream_config_func=_build_stream_config,
+        invoke_sync_func=_invoke_client_workflow,
+        map_exception_func=_map_exception,
+        should_stream_token_func=_should_stream_token,
+        cancel_event=cancel_event,
     )
-    return create_streaming_response(question, stream_config)
+    background_task = asyncio.create_task(
+        _run_assistant_workflow_in_background(
+            question=question,
+            context=context,
+            stream_config=stream_config,
+        )
+    )
+    background_task.add_done_callback(
+        _build_background_run_done_callback(
+            conversation_uuid=context.conversation_uuid,
+        )
+    )
+    RUN_EVENT_STORE.register_local_handle(
+        conversation_uuid=context.conversation_uuid,
+        handle=LocalRunHandle(
+            task=background_task,
+            cancel_event=cancel_event,
+        ),
+    )
+    return AssistantRunSubmitResponse(
+        conversation_uuid=context.conversation_uuid,
+        message_uuid=context.assistant_message_uuid,
+        run_status=AssistantRunStatus.RUNNING,
+    )
+
+
+def assistant_chat_stream(
+        *,
+        conversation_uuid: str,
+        last_event_id: str | None = None,
+) -> StreamingResponse:
+    """attach 到客户端助手当前的流式 run。"""
+
+    current_user_id = get_user_id()
+    _load_client_conversation(
+        conversation_uuid=conversation_uuid,
+        user_id=current_user_id,
+    )
+    meta = RUN_EVENT_STORE.get_run_meta(conversation_uuid=conversation_uuid)
+    if meta is None:
+        raise ServiceException(
+            code=ResponseCode.NOT_FOUND,
+            message="当前会话没有可连接的流式输出",
+        )
+    return _build_attach_streaming_response(
+        conversation_uuid=conversation_uuid,
+        last_event_id=last_event_id,
+    )
+
+
+def assistant_chat_stop(
+        *,
+        conversation_uuid: str,
+) -> AssistantRunStopResponse:
+    """停止客户端助手当前会话的流式 run。"""
+
+    current_user_id = get_user_id()
+    _load_client_conversation(
+        conversation_uuid=conversation_uuid,
+        user_id=current_user_id,
+    )
+    meta = RUN_EVENT_STORE.request_cancel(conversation_uuid=conversation_uuid)
+    if meta is None or meta.status != AssistantRunStatus.RUNNING:
+        raise ServiceException(
+            code=ResponseCode.NOT_FOUND,
+            message="当前会话没有运行中的输出",
+        )
+    return AssistantRunStopResponse(
+        conversation_uuid=conversation_uuid,
+        message_uuid=meta.assistant_message_uuid,
+        run_status=meta.status,
+        stop_requested=True,
+    )
 
 
 def assistant_message_tts_stream(

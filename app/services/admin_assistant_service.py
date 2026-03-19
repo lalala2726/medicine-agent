@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+import time
 import uuid
 from dataclasses import dataclass
 from typing import Any
@@ -14,7 +15,16 @@ from app.agent.admin.state import ChatHistoryMessage, ExecutionTraceState, Token
 from app.agent.admin.workflow import build_graph
 from app.core.agent.agent_orchestrator import (
     AssistantStreamConfig,
-    create_streaming_response,
+    build_answer_response,
+    iterate_assistant_responses,
+    serialize_sse,
+)
+from app.core.agent.run_event_store import (
+    AssistantRunEventStore,
+    AssistantRunSnapshot,
+    LocalRunHandle,
+    resolve_assistant_run_snapshot_flush_ms,
+    resolve_assistant_run_stream_block_ms,
 )
 from app.core.codes import ResponseCode
 from app.core.config_sync import create_agent_title_llm
@@ -22,6 +32,11 @@ from app.core.exception.exceptions import ServiceException
 from app.core.langsmith import build_langsmith_runnable_config
 from app.core.security.auth_context import get_user_id
 from app.core.speech import build_message_tts_stream
+from app.schemas.assistant_run import (
+    AssistantRunStatus,
+    AssistantRunStopResponse,
+    AssistantRunSubmitResponse,
+)
 from app.schemas.admin_assistant_history import ConversationMessageResponse
 from app.schemas.base_request import PageRequest
 from app.schemas.document.conversation import ConversationListItem, ConversationType
@@ -37,7 +52,12 @@ from app.services.conversation_service import (
 )
 from app.services.memory_service import load_memory, resolve_assistant_memory_mode
 from app.services.memory_summary_service import refresh_conversation_summary_if_needed
-from app.services.message_service import add_message, count_messages, list_messages
+from app.services.message_service import (
+    add_message,
+    count_messages,
+    list_messages,
+    update_assistant_message,
+)
 from app.services.message_trace_service import add_message_trace
 from app.services.token_usage_service import (
     resolve_persistable_token_usage,
@@ -57,6 +77,16 @@ STREAM_OUTPUT_NODES = {
     "adaptive_agent",
 }
 EMPTY_ASSISTANT_ANSWER_FALLBACK = "服务暂时不可用，请稍后重试。"
+RUN_EVENT_STORE = AssistantRunEventStore()
+"""助手运行态存储入口，统一负责 Redis 运行态与本机句柄。"""
+
+STREAMING_STATUS_VISIBLE_SET = {
+    MessageStatus.STREAMING,
+    MessageStatus.SUCCESS,
+    MessageStatus.CANCELLED,
+    MessageStatus.ERROR,
+}
+"""历史消息列表允许返回的消息状态集合。"""
 
 
 @dataclass(frozen=True)
@@ -79,6 +109,22 @@ class ConversationContext:
     history_messages: list[ChatHistoryMessage]
     initial_emitted_events: tuple[AssistantResponse, ...]
     is_new_conversation: bool
+
+
+@dataclass
+class StreamAggregateState:
+    """
+    流式聚合状态。
+
+    Attributes:
+        answer_text: 已聚合回答文本。
+        thinking_text: 已聚合思考文本。
+        last_flush_monotonic: 上次刷 Mongo 的单调时钟时间。
+    """
+
+    answer_text: str = ""
+    thinking_text: str = ""
+    last_flush_monotonic: float = 0.0
 
 
 def _serialize_cards_for_history(
@@ -412,6 +458,83 @@ def _persist_user_message(
     add_message(conversation_id=conversation_id, role="user", content=question)
 
 
+def _create_placeholder_assistant_message(
+        *,
+        conversation_id: str,
+        message_uuid: str,
+) -> None:
+    """
+    创建一条 AI 占位消息。
+
+    Args:
+        conversation_id: 会话 ID。
+        message_uuid: 当前 AI 消息 UUID。
+
+    Returns:
+        None
+    """
+
+    add_message(
+        conversation_id=conversation_id,
+        role=MessageRole.AI,
+        status=MessageStatus.STREAMING,
+        content="",
+        message_uuid=message_uuid,
+    )
+
+
+def _persist_assistant_stream_snapshot(
+        *,
+        conversation_id: str,
+        message_uuid: str,
+        answer_text: str,
+        thinking_text: str | None,
+) -> None:
+    """
+    更新 AI 消息的流式快照。
+
+    Args:
+        conversation_id: 会话 ID。
+        message_uuid: 当前 AI 消息 UUID。
+        answer_text: 当前聚合回答文本。
+        thinking_text: 当前聚合思考文本。
+
+    Returns:
+        None
+    """
+
+    update_assistant_message(
+        conversation_id=conversation_id,
+        message_uuid=message_uuid,
+        status=MessageStatus.STREAMING,
+        content=answer_text,
+        thinking=thinking_text,
+    )
+
+
+def _resolve_message_status_from_finish_status(
+        *,
+        finish_status: AssistantRunStatus,
+        has_error: bool,
+) -> MessageStatus:
+    """
+    根据运行终态解析消息状态。
+
+    Args:
+        finish_status: 运行最终状态。
+        has_error: orchestrator 是否报告错误。
+
+    Returns:
+        MessageStatus: 对应的消息状态枚举。
+    """
+
+    if finish_status == AssistantRunStatus.CANCELLED:
+        return MessageStatus.CANCELLED
+    if finish_status == AssistantRunStatus.ERROR or has_error:
+        return MessageStatus.ERROR
+    return MessageStatus.SUCCESS
+
+
 def _persist_assistant_message(
         *,
         conversation_id: str,
@@ -433,7 +556,7 @@ def _persist_assistant_message(
         answer_text: AI 最终回复文本。
         execution_trace: workflow 节点执行轨迹。
         token_usage: workflow 消息级 token 汇总。
-        status: 消息状态（success/error）。
+        status: 消息状态（streaming/success/cancelled/error）。
         thinking_text: 可选深度思考文本。
         cards: 可选结构化卡片列表。
         workflow_name: 工作流名称。
@@ -459,23 +582,23 @@ def _persist_assistant_message(
         token_usage,
         execution_trace,
     )
-    add_message(
+    update_assistant_message(
         conversation_id=conversation_id,
-        role="ai",
+        message_uuid=message_uuid,
         status=resolved_status,
         content=answer_text,
         thinking=thinking_text,
         token_usage=persistable_token_usage,
         cards=cards,
-        message_uuid=message_uuid,
     )
-    _schedule_background_task(
-        task_name="refresh_conversation_summary",
-        func=refresh_conversation_summary_if_needed,
-        kwargs={
-            "conversation_id": conversation_id,
-        },
-    )
+    if resolved_status == MessageStatus.SUCCESS:
+        _schedule_background_task(
+            task_name="refresh_conversation_summary",
+            func=refresh_conversation_summary_if_needed,
+            kwargs={
+                "conversation_id": conversation_id,
+            },
+        )
     try:
         add_message_trace(
             message_uuid=message_uuid,
@@ -483,7 +606,7 @@ def _persist_assistant_message(
             workflow_name=workflow_name,
             execution_trace=execution_trace,
             token_usage=persistable_trace_token_usage,
-            has_error=resolved_status == MessageStatus.ERROR,
+            workflow_status=resolved_status.value,
         )
     except Exception as exc:  # pragma: no cover - 防御性兜底
         logger.opt(exception=exc).warning(
@@ -527,6 +650,7 @@ def _build_assistant_message_callback(
             has_error: bool = False,
             thinking_text: str | None = None,
             cards: list[dict[str, Any]] | None = None,
+            finish_status: AssistantRunStatus = AssistantRunStatus.SUCCESS,
     ) -> None:
         resolved_token_usage = token_usage
         resolved_has_error = has_error
@@ -539,9 +663,14 @@ def _build_assistant_message_callback(
 
         normalized_answer = str(answer_text or "").strip()
         has_cards = bool(resolved_cards)
-        resolved_status = MessageStatus.ERROR if resolved_has_error else MessageStatus.SUCCESS
+        resolved_status = _resolve_message_status_from_finish_status(
+            finish_status=finish_status,
+            has_error=resolved_has_error,
+        )
         if not normalized_answer:
             if has_cards:
+                normalized_answer = ""
+            elif resolved_status == MessageStatus.CANCELLED:
                 normalized_answer = ""
             else:
                 normalized_answer = EMPTY_ASSISTANT_ANSWER_FALLBACK
@@ -698,28 +827,416 @@ def _prepare_conversation_context(
     )
 
 
-def assistant_chat(
+def _append_stream_response_to_aggregate(
+        *,
+        aggregate_state: StreamAggregateState,
+        response: AssistantResponse,
+) -> None:
+    """
+    将标准流式响应聚合到本地快照状态。
+
+    Args:
+        aggregate_state: 当前聚合状态。
+        response: 最新响应事件。
+
+    Returns:
+        None
+    """
+
+    if response.is_end:
+        return
+
+    text = response.content.text
+    if not isinstance(text, str):
+        return
+
+    if response.type == MessageType.ANSWER:
+        if response.content.state == "replace":
+            aggregate_state.answer_text = text
+        else:
+            aggregate_state.answer_text += text
+    elif response.type == MessageType.THINKING:
+        if response.content.state == "replace":
+            aggregate_state.thinking_text = text
+        else:
+            aggregate_state.thinking_text += text
+
+
+def _build_run_snapshot(
+        *,
+        aggregate_state: StreamAggregateState,
+        assistant_message_uuid: str,
+        status: AssistantRunStatus,
+        last_event_id: str | None = None,
+) -> AssistantRunSnapshot:
+    """
+    根据当前聚合状态构造运行快照。
+
+    Args:
+        aggregate_state: 当前聚合状态。
+        assistant_message_uuid: AI 消息 UUID。
+        status: 当前运行态状态。
+        last_event_id: 最新事件 ID。
+
+    Returns:
+        AssistantRunSnapshot: 当前运行快照模型。
+    """
+
+    return AssistantRunSnapshot(
+        answer_text=aggregate_state.answer_text,
+        thinking_text=aggregate_state.thinking_text,
+        status=status,
+        assistant_message_uuid=assistant_message_uuid,
+        last_event_id=last_event_id,
+    )
+
+
+def _build_snapshot_attach_events(
+        *,
+        conversation_uuid: str,
+        snapshot: AssistantRunSnapshot,
+) -> tuple[AssistantResponse, ...]:
+    """
+    为 attach 首次连接构造 replace 语义的快照事件。
+
+    Args:
+        conversation_uuid: 会话 UUID。
+        snapshot: 当前运行快照。
+
+    Returns:
+        tuple[AssistantResponse, ...]: 需要先发送给前端的快照事件。
+    """
+
+    events: list[AssistantResponse] = []
+    shared_meta = {
+        "snapshot": True,
+        "replace": True,
+        "conversation_uuid": conversation_uuid,
+        "message_uuid": snapshot.assistant_message_uuid,
+    }
+    if snapshot.answer_text:
+        events.append(
+            AssistantResponse(
+                content=Content(
+                    text=snapshot.answer_text,
+                    state="replace",
+                ),
+                type=MessageType.ANSWER,
+                meta=shared_meta,
+            )
+        )
+    if snapshot.thinking_text:
+        events.append(
+            AssistantResponse(
+                content=Content(
+                    text=snapshot.thinking_text,
+                    state="replace",
+                ),
+                type=MessageType.THINKING,
+                meta=shared_meta,
+            )
+        )
+    return tuple(events)
+
+
+async def _flush_stream_snapshot_if_due(
+        *,
+        conversation_id: str,
+        assistant_message_uuid: str,
+        aggregate_state: StreamAggregateState,
+        force: bool = False,
+) -> None:
+    """
+    按固定节流周期将流式快照刷回 Mongo。
+
+    Args:
+        conversation_id: 会话 ID。
+        assistant_message_uuid: AI 消息 UUID。
+        aggregate_state: 当前聚合状态。
+        force: 是否强制立即刷库。
+
+    Returns:
+        None
+    """
+
+    now_monotonic = time.monotonic()
+    flush_interval_seconds = resolve_assistant_run_snapshot_flush_ms() / 1000
+    if (
+            not force
+            and aggregate_state.last_flush_monotonic > 0
+            and (now_monotonic - aggregate_state.last_flush_monotonic) < flush_interval_seconds
+    ):
+        return
+
+    await asyncio.to_thread(
+        _persist_assistant_stream_snapshot,
+        conversation_id=conversation_id,
+        message_uuid=assistant_message_uuid,
+        answer_text=aggregate_state.answer_text,
+        thinking_text=(aggregate_state.thinking_text or None),
+    )
+    aggregate_state.last_flush_monotonic = now_monotonic
+
+
+def _build_background_run_done_callback(
+        *,
+        conversation_uuid: str,
+) -> Any:
+    """
+    构造后台 run 完成回调，用于记录异常并清理本机句柄。
+
+    Args:
+        conversation_uuid: 会话 UUID。
+
+    Returns:
+        Callable[[asyncio.Task[Any]], None]: task 完成回调。
+    """
+
+    def _callback(task: asyncio.Task[Any]) -> None:
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            logger.info(
+                "Assistant background run cancelled conversation_uuid={conversation_uuid}",
+                conversation_uuid=conversation_uuid,
+            )
+        except Exception as exc:  # pragma: no cover - 防御性兜底
+            logger.opt(exception=exc).error(
+                "Assistant background run failed conversation_uuid={conversation_uuid}",
+                conversation_uuid=conversation_uuid,
+            )
+
+    return _callback
+
+
+async def _run_assistant_workflow_in_background(
+        *,
+        question: str,
+        context: ConversationContext,
+        stream_config: AssistantStreamConfig,
+) -> None:
+    """
+    在后台执行 workflow，并把标准事件写入 Redis 运行态存储。
+
+    Args:
+        question: 用户问题文本。
+        context: 会话上下文。
+        stream_config: orchestrator 流式配置。
+
+    Returns:
+        None
+    """
+
+    aggregate_state = StreamAggregateState(
+        last_flush_monotonic=time.monotonic(),
+    )
+    final_status = AssistantRunStatus.ERROR
+    final_snapshot = _build_run_snapshot(
+        aggregate_state=aggregate_state,
+        assistant_message_uuid=context.assistant_message_uuid,
+        status=AssistantRunStatus.RUNNING,
+    )
+
+    try:
+        async for response in iterate_assistant_responses(
+                question=question,
+                config=stream_config,
+        ):
+            _append_stream_response_to_aggregate(
+                aggregate_state=aggregate_state,
+                response=response,
+            )
+            response_meta = response.meta if isinstance(response.meta, dict) else {}
+            response_status = AssistantRunStatus.RUNNING
+            if response.is_end:
+                response_status = AssistantRunStatus(
+                    str(response_meta.get("run_status") or AssistantRunStatus.SUCCESS.value)
+                )
+            current_snapshot = _build_run_snapshot(
+                aggregate_state=aggregate_state,
+                assistant_message_uuid=context.assistant_message_uuid,
+                status=response_status,
+            )
+            stored_event = await asyncio.to_thread(
+                RUN_EVENT_STORE.append_event,
+                conversation_uuid=context.conversation_uuid,
+                payload=response,
+                snapshot=current_snapshot,
+            )
+            final_snapshot = _build_run_snapshot(
+                aggregate_state=aggregate_state,
+                assistant_message_uuid=context.assistant_message_uuid,
+                status=response_status,
+                last_event_id=stored_event.event_id,
+            )
+            if response_status == AssistantRunStatus.RUNNING:
+                await _flush_stream_snapshot_if_due(
+                    conversation_id=context.conversation_id,
+                    assistant_message_uuid=context.assistant_message_uuid,
+                    aggregate_state=aggregate_state,
+                )
+            else:
+                final_status = response_status
+                await _flush_stream_snapshot_if_due(
+                    conversation_id=context.conversation_id,
+                    assistant_message_uuid=context.assistant_message_uuid,
+                    aggregate_state=aggregate_state,
+                    force=True,
+                )
+    finally:
+        await asyncio.to_thread(
+            RUN_EVENT_STORE.finalize_run,
+            conversation_uuid=context.conversation_uuid,
+            final_status=final_status,
+            final_snapshot=final_snapshot,
+        )
+
+
+def _build_run_stream_config(
+        *,
+        question: str,
+        context: ConversationContext,
+        workflow: Any,
+        workflow_name: str,
+        build_stream_config_func: Any,
+        invoke_sync_func: Any,
+        map_exception_func: Any,
+        should_stream_token_func: Any,
+        cancel_event: asyncio.Event,
+) -> AssistantStreamConfig:
+    """
+    构造后台 run 使用的 orchestrator 配置。
+
+    Args:
+        question: 用户问题文本。
+        context: 当前会话上下文。
+        workflow: 已编译 workflow。
+        workflow_name: 工作流名称。
+        build_stream_config_func: tracing 配置构造函数。
+        invoke_sync_func: 同步回退执行函数。
+        map_exception_func: 异常映射函数。
+        should_stream_token_func: token 输出判定函数。
+        cancel_event: 本机取消事件。
+
+    Returns:
+        AssistantStreamConfig: 可直接驱动后台 run 的流式配置。
+    """
+
+    _ = question
+    return AssistantStreamConfig(
+        workflow=workflow,
+        build_initial_state=lambda q: _build_initial_state(
+            q,
+            history_messages=context.history_messages,
+        ),
+        extract_final_content=lambda state: str(state.get("result") or ""),
+        should_stream_token=should_stream_token_func,
+        build_stream_config=build_stream_config_func,
+        invoke_sync=invoke_sync_func,
+        map_exception=map_exception_func,
+        on_answer_completed=_build_assistant_message_callback(
+            conversation_id=context.conversation_id,
+            assistant_message_uuid=context.assistant_message_uuid,
+            workflow_name=workflow_name,
+        ),
+        initial_emitted_events=context.initial_emitted_events,
+        is_cancel_requested=lambda: (
+                cancel_event.is_set()
+                or RUN_EVENT_STORE.is_cancel_requested(
+            conversation_uuid=context.conversation_uuid,
+        )
+        ),
+    )
+
+
+def _build_attach_streaming_response(
+        *,
+        conversation_uuid: str,
+        last_event_id: str | None = None,
+) -> StreamingResponse:
+    """
+    构造 attach SSE 响应。
+
+    Args:
+        conversation_uuid: 会话 UUID。
+        last_event_id: 客户端已消费到的最后事件 ID。
+
+    Returns:
+        StreamingResponse: attach SSE 响应对象。
+    """
+
+    normalized_last_event_id = str(last_event_id or "").strip() or None
+
+    async def _stream() -> Any:
+        current_event_id = normalized_last_event_id or "0-0"
+        if normalized_last_event_id is None:
+            snapshot = await asyncio.to_thread(
+                RUN_EVENT_STORE.get_snapshot,
+                conversation_uuid=conversation_uuid,
+            )
+            if snapshot is not None:
+                for snapshot_event in _build_snapshot_attach_events(
+                        conversation_uuid=conversation_uuid,
+                        snapshot=snapshot,
+                ):
+                    yield serialize_sse(snapshot_event)
+                if snapshot.last_event_id is not None:
+                    current_event_id = snapshot.last_event_id
+
+        while True:
+            meta = await asyncio.to_thread(
+                RUN_EVENT_STORE.get_run_meta,
+                conversation_uuid=conversation_uuid,
+            )
+            if meta is None:
+                break
+
+            block_ms = (
+                resolve_assistant_run_stream_block_ms()
+                if meta.status == AssistantRunStatus.RUNNING
+                else 1
+            )
+            events = await asyncio.to_thread(
+                RUN_EVENT_STORE.read_events,
+                conversation_uuid=conversation_uuid,
+                last_event_id=current_event_id,
+                block_ms=block_ms,
+            )
+            if not events:
+                if meta.status != AssistantRunStatus.RUNNING:
+                    break
+                continue
+
+            for event in events:
+                current_event_id = event.event_id
+                yield serialize_sse(event.payload)
+                if event.payload.is_end:
+                    return
+
+    return StreamingResponse(
+        _stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+def assistant_chat_submit(
         *,
         question: str,
         conversation_uuid: str | None = None,
-) -> StreamingResponse:
+) -> AssistantRunSubmitResponse:
     """
-    管理助手聊天入口（SSE 流式返回）。
-
-    行为说明：
-    1. 每次请求都会先预生成本轮 AI `message_uuid`；
-    2. 首次消息（未传 `conversation_uuid`）会创建会话并先推送“会话创建成功”事件；
-    3. 旧会话会先推送“消息已创建”事件，确保前端先拿到本轮 `message_uuid`；
-    4. 用户提问会后台写入消息表；
-    5. AI 回复会在流结束后后台写入消息表（空输出也会落库 error 兜底文案）；
-    6. 标题生成与保存在后台并行执行，不阻塞当前流式响应。
-    7. 会话准备逻辑由 `_prepare_conversation_context` 统一处理。
+    提交管理助手聊天请求并创建后台 run。
 
     Args:
         question: 用户输入问题文本。
         conversation_uuid: 可选会话 UUID；为空时创建新会话。
+
     Returns:
-        StreamingResponse: 标准 SSE 流式响应对象。
+        AssistantRunSubmitResponse: 新建或已存在运行态的响应。
     """
 
     current_user_id = get_user_id()
@@ -731,33 +1248,142 @@ def assistant_chat(
         assistant_message_uuid=assistant_message_uuid,
     )
 
-    _schedule_background_task(
-        task_name="persist_user_message",
-        func=_persist_user_message,
-        kwargs={
-            "conversation_id": context.conversation_id,
-            "question": question,
-        },
+    created_meta = RUN_EVENT_STORE.create_run(
+        conversation_uuid=context.conversation_uuid,
+        user_id=current_user_id,
+        conversation_type=ConversationType.ADMIN.value,
+        assistant_message_uuid=context.assistant_message_uuid,
+    )
+    if created_meta is None:
+        active_meta = RUN_EVENT_STORE.get_run_meta(
+            conversation_uuid=context.conversation_uuid,
+        )
+        if active_meta is not None and active_meta.status == AssistantRunStatus.RUNNING:
+            raise ServiceException(
+                code=ResponseCode.CONFLICT,
+                message="当前会话已有正在输出的回答",
+                data=AssistantRunSubmitResponse(
+                    conversation_uuid=context.conversation_uuid,
+                    message_uuid=active_meta.assistant_message_uuid,
+                    run_status=active_meta.status,
+                ).model_dump(),
+            )
+        raise ServiceException(
+            code=ResponseCode.SERVICE_UNAVAILABLE,
+            message="创建助手运行态失败",
+        )
+
+    _persist_user_message(
+        conversation_id=context.conversation_id,
+        question=question,
+    )
+    _create_placeholder_assistant_message(
+        conversation_id=context.conversation_id,
+        message_uuid=context.assistant_message_uuid,
     )
 
-    stream_config = AssistantStreamConfig(
+    cancel_event = asyncio.Event()
+    stream_config = _build_run_stream_config(
+        question=question,
+        context=context,
         workflow=ADMIN_WORKFLOW,
-        build_initial_state=lambda q: _build_initial_state(
-            q,
-            history_messages=context.history_messages,
-        ),
-        extract_final_content=lambda state: str(state.get("result") or ""),
-        should_stream_token=_should_stream_token,
-        build_stream_config=_build_stream_config,
-        invoke_sync=_invoke_admin_workflow,
-        map_exception=_map_exception,
-        on_answer_completed=_build_assistant_message_callback(
-            conversation_id=context.conversation_id,
-            assistant_message_uuid=context.assistant_message_uuid,
-        ),
-        initial_emitted_events=context.initial_emitted_events,
+        workflow_name=ADMIN_WORKFLOW_NAME,
+        build_stream_config_func=_build_stream_config,
+        invoke_sync_func=_invoke_admin_workflow,
+        map_exception_func=_map_exception,
+        should_stream_token_func=_should_stream_token,
+        cancel_event=cancel_event,
     )
-    return create_streaming_response(question, stream_config)
+    background_task = asyncio.create_task(
+        _run_assistant_workflow_in_background(
+            question=question,
+            context=context,
+            stream_config=stream_config,
+        )
+    )
+    background_task.add_done_callback(
+        _build_background_run_done_callback(
+            conversation_uuid=context.conversation_uuid,
+        )
+    )
+    RUN_EVENT_STORE.register_local_handle(
+        conversation_uuid=context.conversation_uuid,
+        handle=LocalRunHandle(
+            task=background_task,
+            cancel_event=cancel_event,
+        ),
+    )
+    return AssistantRunSubmitResponse(
+        conversation_uuid=context.conversation_uuid,
+        message_uuid=context.assistant_message_uuid,
+        run_status=AssistantRunStatus.RUNNING,
+    )
+
+
+def assistant_chat_stream(
+        *,
+        conversation_uuid: str,
+        last_event_id: str | None = None,
+) -> StreamingResponse:
+    """
+    attach 到指定会话当前的流式运行。
+
+    Args:
+        conversation_uuid: 会话 UUID。
+        last_event_id: 客户端已消费的最后事件 ID。
+
+    Returns:
+        StreamingResponse: SSE attach 流。
+    """
+
+    current_user_id = get_user_id()
+    _load_admin_conversation(
+        conversation_uuid=conversation_uuid,
+        user_id=current_user_id,
+    )
+    meta = RUN_EVENT_STORE.get_run_meta(conversation_uuid=conversation_uuid)
+    if meta is None:
+        raise ServiceException(
+            code=ResponseCode.NOT_FOUND,
+            message="当前会话没有可连接的流式输出",
+        )
+    return _build_attach_streaming_response(
+        conversation_uuid=conversation_uuid,
+        last_event_id=last_event_id,
+    )
+
+
+def assistant_chat_stop(
+        *,
+        conversation_uuid: str,
+) -> AssistantRunStopResponse:
+    """
+    请求停止指定会话当前的流式运行。
+
+    Args:
+        conversation_uuid: 会话 UUID。
+
+    Returns:
+        AssistantRunStopResponse: 停止请求响应。
+    """
+
+    current_user_id = get_user_id()
+    _load_admin_conversation(
+        conversation_uuid=conversation_uuid,
+        user_id=current_user_id,
+    )
+    meta = RUN_EVENT_STORE.request_cancel(conversation_uuid=conversation_uuid)
+    if meta is None or meta.status != AssistantRunStatus.RUNNING:
+        raise ServiceException(
+            code=ResponseCode.NOT_FOUND,
+            message="当前会话没有运行中的输出",
+        )
+    return AssistantRunStopResponse(
+        conversation_uuid=conversation_uuid,
+        message_uuid=meta.assistant_message_uuid,
+        run_status=meta.status,
+        stop_requested=True,
+    )
 
 
 def assistant_message_tts_stream(

@@ -1,15 +1,22 @@
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, Path, Request
+from fastapi import APIRouter, Depends, Header, Path, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.core.security.rate_limit import RateLimitPreset, RateLimitRule, rate_limit
+from app.schemas.assistant_run import (
+    AssistantRunStopRequest,
+    AssistantRunStopResponse,
+    AssistantRunSubmitResponse,
+)
 from app.schemas.admin_assistant_history import ConversationMessagesRequest
 from app.schemas.base_request import PageRequest
 from app.schemas.document.conversation import ConversationListItem
 from app.schemas.response import ApiResponse, PageResponse
 from app.services.client_assistant_service import (
+    assistant_chat_stop,
+    assistant_chat_stream,
     assistant_chat,
     assistant_message_tts_stream as assistant_message_tts_stream_service,
     conversation_list as conversation_list_service,
@@ -162,15 +169,14 @@ class ClientAssistantMessageTtsRequest(BaseModel):
 
 
 @router.post(
-    "/chat",
-    summary="客户端助手对话",
+    "/chat/submit",
+    summary="客户端助手提交对话",
     description=(
-            "客户端 AI 助手聊天接口，使用 `POST + text/event-stream` 返回 SSE 流。"
-            "新会话会先推送带 `conversation_uuid` 和 `message_uuid` 的 `notice` 事件；"
-            "已存在会话会先推送带 `message_uuid` 的 `notice` 事件；"
-            "随后连续推送 `answer/thinking` 增量事件，最终以 `is_end=true` 的结束事件收尾。"
+            "客户端 AI 助手聊天提交接口。"
+            "提交成功后会返回 `conversation_uuid`、`message_uuid` 与 `run_status`，"
+            "前端随后再通过 `/chat/stream` attach 到同一个后台 run。"
     ),
-    response_description="SSE 流式事件；前端需按 `data: <json>\\n\\n` 解析。",
+    response_description="运行态响应对象。",
 )
 @rate_limit(
     rules=CHAT_RATE_LIMIT_RULES,
@@ -178,25 +184,89 @@ class ClientAssistantMessageTtsRequest(BaseModel):
     scope="client_assistant_chat",
     fail_open=False,
 )
-async def assistant(_request: Request, request: ClientAssistantRequest) -> StreamingResponse:
+async def assistant_submit(
+        _request: Request,
+        request: ClientAssistantRequest,
+) -> ApiResponse[AssistantRunSubmitResponse]:
     """
-    客户端助手聊天入口（SSE 流式返回）。
+    客户端助手聊天提交入口。
 
     对接要点：
-    1. 这是 `POST` 接口，标准浏览器 `EventSource` 不能直接使用；
-    2. 请使用 `fetch`/`ReadableStream` 按 SSE 协议解析；
-    3. 当前版本主要事件类型为 `notice`、`answer`、`thinking`；
-    4. 结束标志为最后一条 `is_end=true` 的事件。
+    1. 这是提交接口，只负责创建后台 run；
+    2. 成功后前端应改为调用 `GET /chat/stream` 建立 SSE attach；
+    3. `conversation_uuid` 仍然是控制当前 run 的外部主键；
+    4. `message_uuid` 用于标识当前 AI 消息实体。
     """
 
-    return assistant_chat(
-        question=request.question,
-        conversation_uuid=request.conversation_uuid,
-        card_action=(
-            request.card_action.model_dump(mode="json")
-            if request.card_action is not None
-            else None
+    return ApiResponse.success(
+        data=assistant_chat(
+            question=request.question,
+            conversation_uuid=request.conversation_uuid,
+            card_action=(
+                request.card_action.model_dump(mode="json")
+                if request.card_action is not None
+                else None
+            ),
+        )
+    )
+
+
+@router.get(
+    "/chat/stream",
+    summary="客户端助手 attach 流式输出",
+    description=(
+            "attach 到指定会话当前仍在运行的后台消息流。"
+            "支持可选 `Last-Event-ID` 断点补发；未传时会先发送 replace 语义的快照事件。"
+    ),
+    response_description="SSE 流式事件；前端需按 `data: <json>\\n\\n` 解析。",
+)
+async def assistant_stream(
+        conversation_uuid: str = Query(..., min_length=1, description="会话UUID"),
+        last_event_id: str | None = Header(
+            default=None,
+            alias="Last-Event-ID",
+            description="客户端已消费的最后事件 ID",
         ),
+) -> StreamingResponse:
+    """
+    attach 到客户端助手当前后台 run。
+
+    Args:
+        conversation_uuid: 会话 UUID。
+        last_event_id: 客户端已消费到的最后事件 ID。
+
+    Returns:
+        StreamingResponse: SSE attach 流。
+    """
+
+    return assistant_chat_stream(
+        conversation_uuid=conversation_uuid,
+        last_event_id=last_event_id,
+    )
+
+
+@router.post(
+    "/chat/stop",
+    summary="客户端助手停止当前输出",
+    description="停止指定会话当前正在运行的后台 AI 输出。",
+)
+async def assistant_stop(
+        request: AssistantRunStopRequest,
+) -> ApiResponse[AssistantRunStopResponse]:
+    """
+    请求停止客户端助手当前后台 run。
+
+    Args:
+        request: 停止请求体。
+
+    Returns:
+        ApiResponse[AssistantRunStopResponse]: 停止响应。
+    """
+
+    return ApiResponse.success(
+        data=assistant_chat_stop(
+            conversation_uuid=request.conversation_uuid,
+        )
     )
 
 

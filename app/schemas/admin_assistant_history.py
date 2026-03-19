@@ -64,7 +64,10 @@ class ConversationMessageResponse(BaseModel):
     role: Literal["user", "ai"] = Field(..., description="消息发送方")
     content: str = Field(..., description="消息内容")
     thinking: str | None = Field(default=None, description="AI深度思考完整文本")
-    status: Literal["success", "error"] | None = Field(default=None, description="消息状态")
+    status: Literal["streaming", "success", "cancelled", "error"] | None = Field(
+        default=None,
+        description="消息状态",
+    )
     cards: list[ConversationCardResponse] | None = Field(
         default=None,
         description="结构化卡片列表",

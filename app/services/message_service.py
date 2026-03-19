@@ -228,14 +228,29 @@ def _build_messages_query(
         *,
         conversation_id: Annotated[str, Field(min_length=1)],
         history_hidden: bool | None = None,
+        statuses: list[MessageStatus | str] | None = None,
 ) -> dict[str, Any]:
-    """构建普通消息查询条件，支持按客户端可见性过滤。"""
+    """
+    构建普通消息查询条件，支持按客户端可见性与状态过滤。
+
+    Args:
+        conversation_id: 会话 Mongo ObjectId（字符串形式）。
+        history_hidden: 是否按客户端隐藏标记过滤。
+        statuses: 可选消息状态白名单；为空时不过滤状态。
+
+    Returns:
+        dict[str, Any]: Mongo 查询条件。
+    """
 
     query: dict[str, Any] = {"conversation_id": _to_object_id(conversation_id)}
     if history_hidden is True:
         query["history_hidden"] = True
     elif history_hidden is False:
         query["history_hidden"] = {"$ne": True}
+    if statuses:
+        query["status"] = {
+            "$in": [MessageStatus(status).value for status in statuses]
+        }
     return query
 
 
@@ -330,6 +345,96 @@ def add_message(
     return str(result.inserted_id)
 
 
+def update_assistant_message(
+        *,
+        conversation_id: Annotated[str, Field(min_length=1)],
+        message_uuid: Annotated[str, Field(min_length=1)],
+        status: MessageStatus | str,
+        content: str,
+        thinking: str | None = None,
+        token_usage: TokenUsage | dict[str, Any] | None = None,
+        cards: list[MessageCard | dict[str, Any]] | None = None,
+) -> bool:
+    """
+    更新一条已存在的 AI 消息。
+
+    Args:
+        conversation_id: 所属会话 Mongo ObjectId（字符串形式）。
+        message_uuid: 待更新的 AI 消息 UUID。
+        status: 消息状态。
+        content: 最新消息内容。
+        thinking: 最新思考内容。
+        token_usage: 最新 token 汇总。
+        cards: 最新卡片列表。
+
+    Returns:
+        bool: 命中并完成更新返回 `True`，否则返回 `False`。
+
+    Raises:
+        ServiceException: 参数校验失败时抛出。
+    """
+
+    normalized_cards = _normalize_cards(cards)
+    payload = MessageCreate(
+        uuid=message_uuid,
+        conversation_id=conversation_id,
+        role=MessageRole.AI,
+        status=status,
+        content=_normalize_content(content),
+        thinking=_normalize_thinking(thinking),
+        token_usage=_normalize_token_usage(token_usage),
+        cards=normalized_cards,
+        card_uuids=_extract_card_uuids(normalized_cards),
+        hidden_card_uuids=None,
+        history_hidden=False,
+    )
+
+    now = datetime.datetime.now()
+    set_document: dict[str, Any] = {
+        "status": payload.status,
+        "content": payload.content,
+        "updated_at": now,
+    }
+    unset_document: dict[str, Any] = {}
+
+    if payload.thinking is None:
+        unset_document["thinking"] = ""
+    else:
+        set_document["thinking"] = payload.thinking
+
+    if payload.token_usage is None:
+        unset_document["token_usage"] = ""
+    else:
+        set_document["token_usage"] = payload.token_usage.model_dump()
+
+    if payload.cards is None:
+        unset_document["cards"] = ""
+        unset_document["card_uuids"] = ""
+    else:
+        set_document["cards"] = [
+            card.model_dump(mode="python")
+            if hasattr(card, "model_dump")
+            else dict(card)
+            for card in payload.cards
+        ]
+        set_document["card_uuids"] = payload.card_uuids or []
+
+    update_document: dict[str, Any] = {"$set": set_document}
+    if unset_document:
+        update_document["$unset"] = unset_document
+
+    collection = _get_collection()
+    result = collection.update_one(
+        {
+            "uuid": message_uuid,
+            "conversation_id": _to_object_id(conversation_id),
+            "role": MessageRole.AI,
+        },
+        update_document,
+    )
+    return bool(getattr(result, "matched_count", 0) >= 1)
+
+
 def get_message_by_uuid(message_uuid: Annotated[str, Field(min_length=1)]) -> MessageDocument | None:
     """
     按消息 UUID 查询单条会话消息。
@@ -358,6 +463,7 @@ def list_messages(
         skip: Annotated[int, Field(ge=0)] = 0,
         ascending: bool = True,
         history_hidden: bool | None = None,
+        statuses: list[MessageStatus | str] | None = None,
 ) -> list[MessageDocument]:
     """
     查询某个会话下的消息列表。
@@ -367,6 +473,8 @@ def list_messages(
         limit: 返回条数上限，默认 50。
         skip: 跳过条数，默认 0。
         ascending: 是否按创建时间升序，默认 True（旧到新）。
+        history_hidden: 是否按客户端可见性过滤。
+        statuses: 可选消息状态白名单。
 
     Returns:
         list[MessageDocument]: 消息文档模型列表。
@@ -380,6 +488,7 @@ def list_messages(
     query = _build_messages_query(
         conversation_id=conversation_id,
         history_hidden=history_hidden,
+        statuses=statuses,
     )
     collection = _get_collection()
     cursor = collection.find(query).sort("created_at", sort_direction).skip(skip).limit(limit)
@@ -390,6 +499,7 @@ def count_messages(
         *,
         conversation_id: Annotated[str, Field(min_length=1)],
         history_hidden: bool | None = None,
+        statuses: list[MessageStatus | str] | None = None,
 ) -> int:
     """
     统计某个会话下的消息总数。
@@ -407,6 +517,7 @@ def count_messages(
     query = _build_messages_query(
         conversation_id=conversation_id,
         history_hidden=history_hidden,
+        statuses=statuses,
     )
     collection = _get_collection()
     return int(collection.count_documents(query))

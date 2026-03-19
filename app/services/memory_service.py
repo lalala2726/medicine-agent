@@ -8,7 +8,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException
 from app.core.llms.provider import LlmProvider, resolve_provider
-from app.schemas.document.message import MessageRole
+from app.schemas.document.message import MessageRole, MessageStatus
 from app.schemas.memory import Memory
 from app.services.conversation_service import get_conversation
 from app.services.message_service import list_messages, list_summarizable_tail_messages
@@ -399,6 +399,7 @@ def load_memory_by_window(
         limit=limit,
         ascending=False,
         history_hidden=(None if include_history_hidden else False),
+        statuses=[MessageStatus.SUCCESS],
     )
 
     history_messages = _to_chat_memory_messages(

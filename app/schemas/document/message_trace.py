@@ -55,7 +55,10 @@ class ExecutionTraceItem(BaseModel):
     sequence: int = Field(..., ge=1, description="节点执行顺序（从 1 开始）")
     node_name: str = Field(..., min_length=1, description="节点名称")
     model_name: str = Field(..., min_length=1, description="模型名称")
-    status: Literal["success", "error"] = Field(default="success", description="节点执行状态")
+    status: Literal["success", "error", "cancelled"] = Field(
+        default="success",
+        description="节点执行状态",
+    )
     output_text: str = Field(default="", description="节点输出文本")
     llm_usage_complete: bool = Field(default=True, description="节点 LLM usage 是否完整")
     llm_token_usage: TokenCounter | None = Field(default=None, description="节点自身 LLM token")
@@ -69,7 +72,10 @@ class WorkflowTraceSummary(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     workflow_name: str = Field(default="admin_assistant_graph", min_length=1, description="工作流名称")
-    workflow_status: Literal["success", "error"] = Field(default="success", description="工作流执行状态")
+    workflow_status: Literal["success", "error", "cancelled"] = Field(
+        default="success",
+        description="工作流执行状态",
+    )
     execution_path: list[str] = Field(default_factory=list, description="节点执行路径")
     final_node: str | None = Field(default=None, description="最终执行节点")
     route_targets: list[str] = Field(default_factory=list, description="gateway 路由目标")
