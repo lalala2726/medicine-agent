@@ -31,7 +31,7 @@ from app.core.langsmith import traceable
 from app.utils.prompt_utils import append_current_time_to_prompt, load_prompt
 
 # consultation 最终诊断节点提示词。
-CONSULTATION_FINAL_DIAGNOSIS_PROMPT = load_prompt("client/consultation_final_diagnosis_system_prompt.md")
+CONSULTATION_FINAL_DIAGNOSIS_PROMPT = load_prompt("client/consultation/final_diagnosis_system_prompt.md")
 # consultation 最终诊断节点兜底文本。
 DEFAULT_FINAL_DIAGNOSIS_TEXT = "结合你目前提供的信息，更像是常见轻症方向；如果症状持续加重，请及时线下就医。"
 

@@ -19,7 +19,7 @@ from app.core.langsmith import traceable
 from app.utils.prompt_utils import load_prompt
 
 # consultation 追问节点提示词。
-CONSULTATION_QUESTION_PROMPT = load_prompt("client/consultation_question_system_prompt.md")
+CONSULTATION_QUESTION_PROMPT = load_prompt("client/consultation/question_system_prompt.md")
 
 
 @traceable(name="Client Consultation Question Node", run_type="chain")

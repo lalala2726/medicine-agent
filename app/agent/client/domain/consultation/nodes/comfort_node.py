@@ -14,7 +14,7 @@ from app.core.langsmith import traceable
 from app.utils.prompt_utils import load_prompt
 
 # consultation 安抚节点提示词。
-CONSULTATION_COMFORT_PROMPT = load_prompt("client/consultation_comfort_system_prompt.md")
+CONSULTATION_COMFORT_PROMPT = load_prompt("client/consultation/comfort_system_prompt.md")
 
 
 @traceable(name="Client Consultation Comfort Node", run_type="chain")
