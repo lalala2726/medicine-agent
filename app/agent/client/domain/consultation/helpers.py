@@ -38,6 +38,10 @@ DEFAULT_QUESTION_OPTIONS = ["没有", "轻微", "明显", "不确定"]
 DEFAULT_REPLY_TEXT = DEFAULT_QUESTION_REPLY_TEXT
 # consultation 节点默认温度配置。
 DEFAULT_TEMPERATURE = 0.2
+# consultation 子节点统一使用 Redis 配置中的复杂业务槽位。
+CONSULTATION_AGENT_MODEL_SLOT = AgentChatModelSlot.BUSINESS_COMPLEX
+# consultation 子节点统一关闭深度思考。
+CONSULTATION_AGENT_THINK_ENABLED = False
 # consultation 统一分片时单个分片最大长度。
 CONSULTATION_STREAM_CHUNK_MAX_LENGTH = 80
 # consultation 统一分片时优先按更短软长度切分。
@@ -58,31 +62,6 @@ CONSULTATION_FOLLOWUP_SELECTION_MODE = "multiple"
 CONSULTATION_FOLLOWUP_SUBMIT_TEXT = "发送"
 # consultation 追问卡片默认自定义输入占位文案。
 CONSULTATION_FOLLOWUP_CUSTOM_INPUT_PLACEHOLDER = "补充症状或其他感受"
-# consultation 子图允许的 task_difficulty 到模型槽位映射。
-CONSULTATION_MODEL_SLOT_MAP: dict[str, AgentChatModelSlot] = {
-    "normal": AgentChatModelSlot.BUSINESS_SIMPLE,
-    "high": AgentChatModelSlot.BUSINESS_COMPLEX,
-}
-
-
-def resolve_consultation_model_slot(state: ConsultationState) -> AgentChatModelSlot:
-    """
-    功能描述：
-        根据 consultation 的 task_difficulty 选择模型槽位。
-
-    参数说明：
-        state (ConsultationState): 当前 consultation 状态。
-
-    返回值：
-        AgentChatModelSlot: 最终选中的模型槽位。
-
-    异常说明：
-        无。
-    """
-
-    task_difficulty = str(state.get("task_difficulty") or "").strip().lower()
-    return CONSULTATION_MODEL_SLOT_MAP.get(task_difficulty, AgentChatModelSlot.BUSINESS_SIMPLE)
-
 
 def resolve_payload_text(raw_payload: Any) -> str:
     """
@@ -332,10 +311,11 @@ def build_llm_agent(
         无。
     """
 
+    _ = state
     llm = create_agent_chat_llm(
-        slot=resolve_consultation_model_slot(state),
+        slot=CONSULTATION_AGENT_MODEL_SLOT,
         temperature=temperature,
-        think=False,
+        think=CONSULTATION_AGENT_THINK_ENABLED,
     )
     llm_model_name = str(getattr(llm, "model_name", "") or "").strip() or "unknown"
     agent = create_agent(
@@ -744,8 +724,9 @@ __all__ = [
     "CONSULTATION_FOLLOWUP_CUSTOM_INPUT_PLACEHOLDER",
     "CONSULTATION_FOLLOWUP_SELECTION_MODE",
     "CONSULTATION_FOLLOWUP_SUBMIT_TEXT",
+    "CONSULTATION_AGENT_MODEL_SLOT",
+    "CONSULTATION_AGENT_THINK_ENABLED",
     "CONSULTATION_INTERRUPT_KIND",
-    "CONSULTATION_MODEL_SLOT_MAP",
     "CONSULTATION_STREAM_CHUNK_MAX_LENGTH",
     "CONSULTATION_STREAM_SENTENCE_ENDINGS",
     "CONSULTATION_STREAM_SOFT_BREAKS",

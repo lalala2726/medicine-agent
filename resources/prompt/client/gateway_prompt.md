@@ -19,6 +19,8 @@
 
 约束：
 
+针对于consultation_agent节点这边只能输出一个节点也就是consultation_agent节点禁止输出其他节点！
+
 - `route_targets` 必须是数组，但只能包含一个元素。
 - 目标只允许 `chat_agent`、`consultation_agent`、`order_agent`、`product_agent`、`after_sale_agent`。
 - `task_difficulty` 只能是 `normal` 或 `high`。

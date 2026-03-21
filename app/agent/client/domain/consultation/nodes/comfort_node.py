@@ -36,6 +36,7 @@ def consultation_comfort_node(state: ConsultationState) -> dict[str, object]:
     history_messages = list(state.get("history_messages") or [])
     agent, llm_model_name = build_llm_agent(
         state=state,
+        temperature=1.3,
         prompt_text=CONSULTATION_COMFORT_PROMPT,
     )
     stream_result = agent_stream(

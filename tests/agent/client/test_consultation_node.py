@@ -15,6 +15,7 @@ from app.agent.client.domain.consultation.state import (
     CONSULTATION_STATUS_COLLECTING,
     CONSULTATION_STATUS_COMPLETED,
 )
+from app.core.config_sync import AgentChatModelSlot
 
 
 def test_consultation_node_module_reexports_public_symbols():
@@ -100,6 +101,43 @@ def test_consultation_agent_maps_subgraph_result_to_parent_state(monkeypatch):
     ]
     assert [trace["sequence"] for trace in result["execution_traces"]] == [1, 2]
     assert result["token_usage"]["total_tokens"] == 7
+
+
+def test_build_llm_agent_uses_business_complex_slot(monkeypatch):
+    captured_llm_kwargs: dict[str, object] = {}
+    captured_agent_kwargs: dict[str, object] = {}
+
+    def _fake_create_agent_chat_llm(**kwargs):
+        captured_llm_kwargs.update(kwargs)
+        return SimpleNamespace(model_name="consultation-complex-model")
+
+    def _fake_create_agent(**kwargs):
+        captured_agent_kwargs.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(
+        consultation_helper_module,
+        "create_agent_chat_llm",
+        _fake_create_agent_chat_llm,
+    )
+    monkeypatch.setattr(
+        consultation_helper_module,
+        "create_agent",
+        _fake_create_agent,
+    )
+
+    agent, llm_model_name = consultation_helper_module.build_llm_agent(
+        state={"task_difficulty": "normal"},
+        prompt_text="这是 consultation 测试提示词。",
+        temperature=0.35,
+    )
+
+    assert agent is not None
+    assert llm_model_name == "consultation-complex-model"
+    assert captured_llm_kwargs["slot"] is AgentChatModelSlot.BUSINESS_COMPLEX
+    assert captured_llm_kwargs["temperature"] == 0.35
+    assert captured_llm_kwargs["think"] is False
+    assert captured_agent_kwargs["model"].model_name == "consultation-complex-model"
 
 
 def test_route_functions_return_expected_next_node():
@@ -366,15 +404,14 @@ def test_split_consultation_stream_text_preserves_original_text_order():
     assert all(chunk for chunk in chunks)
 
 
-def test_consultation_final_diagnosis_node_uses_tool_agent_and_emits_thinking(monkeypatch):
+def test_consultation_final_diagnosis_node_uses_complex_slot_tool_agent(monkeypatch):
     answer_deltas: list[str] = []
-    thinking_deltas: list[str] = []
     captured_agent_kwargs: dict[str, object] = {}
     captured_llm_kwargs: dict[str, object] = {}
 
     def _fake_create_agent_chat_llm(**kwargs):
         captured_llm_kwargs.update(kwargs)
-        return SimpleNamespace(model_name="diagnosis-model")
+        return SimpleNamespace(model_name="complex-model")
 
     def _fake_create_agent(**kwargs):
         captured_agent_kwargs.update(kwargs)
@@ -382,12 +419,11 @@ def test_consultation_final_diagnosis_node_uses_tool_agent_and_emits_thinking(mo
 
     def _fake_agent_stream(_agent, _messages, on_model_delta=None, on_thinking_delta=None):
         assert on_model_delta is not None
-        assert on_thinking_delta is not None
-        on_thinking_delta("诊断思考分片")
+        assert on_thinking_delta is None
         on_model_delta("结合你的情况，更像是常见感冒方向。")
         return {
             "streamed_text": "结合你的情况，更像是常见感冒方向。",
-            "streamed_thinking": "诊断思考分片",
+            "streamed_thinking": "",
             "latest_state": {"messages": []},
         }
 
@@ -399,7 +435,6 @@ def test_consultation_final_diagnosis_node_uses_tool_agent_and_emits_thinking(mo
     monkeypatch.setattr(final_diagnosis_node_module, "create_agent", _fake_create_agent)
     monkeypatch.setattr(final_diagnosis_node_module, "agent_stream", _fake_agent_stream)
     monkeypatch.setattr(final_diagnosis_node_module, "emit_answer_delta", answer_deltas.append)
-    monkeypatch.setattr(final_diagnosis_node_module, "emit_thinking_delta", thinking_deltas.append)
     monkeypatch.setattr(
         final_diagnosis_node_module,
         "record_agent_trace",
@@ -433,7 +468,9 @@ def test_consultation_final_diagnosis_node_uses_tool_agent_and_emits_thinking(mo
 
     tool_names = [tool.name for tool in captured_agent_kwargs["tools"]]
 
-    assert captured_llm_kwargs["think"] is True
+    assert captured_llm_kwargs["slot"] is AgentChatModelSlot.BUSINESS_COMPLEX
+    assert captured_llm_kwargs["temperature"] == 0.2
+    assert captured_llm_kwargs["think"] is False
     assert tool_names == [
         "search_products",
         "get_product_detail",
@@ -445,29 +482,28 @@ def test_consultation_final_diagnosis_node_uses_tool_agent_and_emits_thinking(mo
         for middleware in captured_agent_kwargs["middleware"]
     )
     assert answer_deltas == ["结合你的情况，更像是常见感冒方向。"]
-    assert thinking_deltas == ["诊断思考分片"]
     assert result["consultation_status"] == CONSULTATION_STATUS_COMPLETED
     assert result["diagnosis_ready"] is True
     assert result["final_text"] == "结合你的情况，更像是常见感冒方向。"
     assert result["diagnosis_trace"]["tool_calls"][0]["tool_name"] == "search_products"
     assert result["diagnosis_trace"]["tool_calls"][1]["tool_name"] == "send_product_purchase_card"
-    assert result["diagnosis_trace"]["node_context"] == {"thinking_text": "诊断思考分片"}
+    assert result["diagnosis_trace"]["model_name"] == "complex-model"
+    assert result["diagnosis_trace"]["node_context"] is None
 
 
 def test_consultation_final_diagnosis_node_returns_text_without_purchase_card(monkeypatch):
     answer_deltas: list[str] = []
-    thinking_deltas: list[str] = []
 
     monkeypatch.setattr(
         final_diagnosis_node_module,
         "create_agent_chat_llm",
-        lambda **_kwargs: SimpleNamespace(model_name="diagnosis-model"),
+        lambda **_kwargs: SimpleNamespace(model_name="complex-model"),
     )
     monkeypatch.setattr(final_diagnosis_node_module, "create_agent", lambda **_kwargs: object())
 
     def _fake_agent_stream(_agent, _messages, on_model_delta=None, on_thinking_delta=None):
         assert on_model_delta is not None
-        assert on_thinking_delta is not None
+        assert on_thinking_delta is None
         on_model_delta("更像是轻度咽喉不适，建议先观察。")
         return {
             "streamed_text": "更像是轻度咽喉不适，建议先观察。",
@@ -477,7 +513,6 @@ def test_consultation_final_diagnosis_node_returns_text_without_purchase_card(mo
 
     monkeypatch.setattr(final_diagnosis_node_module, "agent_stream", _fake_agent_stream)
     monkeypatch.setattr(final_diagnosis_node_module, "emit_answer_delta", answer_deltas.append)
-    monkeypatch.setattr(final_diagnosis_node_module, "emit_thinking_delta", thinking_deltas.append)
     monkeypatch.setattr(
         final_diagnosis_node_module,
         "record_agent_trace",
@@ -505,7 +540,6 @@ def test_consultation_final_diagnosis_node_returns_text_without_purchase_card(mo
     )
 
     assert answer_deltas == ["更像是轻度咽喉不适，建议先观察。"]
-    assert thinking_deltas == []
     assert result["consultation_status"] == CONSULTATION_STATUS_COMPLETED
     assert result["diagnosis_ready"] is True
     assert result["final_text"] == "更像是轻度咽喉不适，建议先观察。"
