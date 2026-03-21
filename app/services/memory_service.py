@@ -399,7 +399,7 @@ def load_memory_by_window(
         limit=limit,
         ascending=False,
         history_hidden=(None if include_history_hidden else False),
-        statuses=[MessageStatus.SUCCESS],
+        statuses=[MessageStatus.SUCCESS, MessageStatus.WAITING_INPUT],
     )
 
     history_messages = _to_chat_memory_messages(

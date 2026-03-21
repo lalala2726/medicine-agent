@@ -7,121 +7,166 @@ from langgraph.graph import StateGraph
 
 from app.agent.client.domain.consultation.helpers import (
     DEFAULT_COMFORT_TEXT,
-    DEFAULT_QUESTION_TEXT,
     build_text_result,
-    collect_consultation_traces,
+    merge_parallel_round_traces,
 )
 from app.agent.client.domain.consultation.nodes import (
     consultation_comfort_node,
     consultation_final_diagnosis_node,
-    consultation_question_card_node,
-    consultation_status_node,
-    consultation_stream_response_node,
+    consultation_question_interrupt_node,
+    consultation_question_node,
 )
-from app.agent.client.domain.consultation.state import (
-    CONSULTATION_STATUS_COLLECTING,
-    ConsultationState,
-)
+from app.agent.client.domain.consultation.state import ConsultationState
+from app.core.agent.langgraph_redis_checkpoint import _REDIS_CHECKPOINT_SAVER
 
 
-def _route_from_status(state: ConsultationState) -> str:
-    """根据状态判断节点结果选择下一个 consultation 节点。"""
+def _route_from_entry(state: ConsultationState) -> str:
+    """
+    功能描述：
+        根据 consultation 当前状态决定入口直接进入诊断还是 collecting 分支。
 
-    if bool(state.get("should_enter_diagnosis", False)):
-        return "final_diagnosis_node"
-    return "collecting_fanout_node"
+    参数说明：
+        state (ConsultationState): 当前 consultation 状态。
+
+    返回值：
+        str: 下一跳节点名称。
+
+    异常说明：
+        无。
+    """
+
+    if bool(state.get("diagnosis_ready")):
+        return "consultation_final_diagnosis_node"
+    return "consultation_collecting_fanout_node"
 
 
 def _route_after_parallel_merge(state: ConsultationState) -> str:
-    """根据并行问询结果决定是否继续进入最终诊断。"""
+    """
+    功能描述：
+        根据追问节点结果决定 collecting 阶段后进入最终诊断还是 interrupt。
 
-    if bool(state.get("should_enter_diagnosis", False)):
-        return "final_diagnosis_node"
-    return "collecting_response_node"
+    参数说明：
+        state (ConsultationState): 当前 consultation 状态。
+
+    返回值：
+        str: 下一跳节点名称。
+
+    异常说明：
+        无。
+    """
+
+    if bool(state.get("diagnosis_ready")):
+        return "consultation_final_diagnosis_node"
+    return "consultation_question_interrupt_node"
 
 
-def consultation_collecting_fanout_node(state: ConsultationState) -> dict[str, Any]:
-    """作为并行节点的 fanout 占位节点。"""
+def consultation_collecting_fanout_node(_state: ConsultationState) -> dict[str, Any]:
+    """
+    功能描述：
+        作为 collecting 阶段的扇出节点，触发 comfort 与 question 两个并行分支。
 
-    _ = state
+    参数说明：
+        _state (ConsultationState): 当前 consultation 状态。
+
+    返回值：
+        dict[str, Any]: 空状态更新。
+
+    异常说明：
+        无。
+    """
+
     return {}
 
 
 def consultation_parallel_merge_node(state: ConsultationState) -> dict[str, Any]:
-    """作为并行节点汇合后的条件判断占位节点。"""
+    """
+    功能描述：
+        合并 comfort/question 两条并行分支的文本与 trace。
 
-    _ = state
-    return {}
+    参数说明：
+        state (ConsultationState): 当前 consultation 状态。
 
+    返回值：
+        dict[str, Any]: 合并后的状态更新。
 
-def consultation_collecting_response_node(state: ConsultationState) -> dict[str, Any]:
-    """拼接 collecting 分支的最终文本。"""
+    异常说明：
+        无。
+    """
 
-    final_text = build_text_result(
-        str(state.get("comfort_text") or ""),
-        str(state.get("question_text") or ""),
+    comfort_text = str(state.get("comfort_text") or "").strip() or DEFAULT_COMFORT_TEXT
+    question_reply_text = str(state.get("question_reply_text") or "").strip()
+    diagnosis_ready = bool(state.get("diagnosis_ready"))
+    pending_ai_reply_text = (
+        ""
+        if diagnosis_ready
+        else build_text_result(comfort_text, question_reply_text)
     )
-    if not final_text:
-        final_text = build_text_result(DEFAULT_COMFORT_TEXT, DEFAULT_QUESTION_TEXT)
+    execution_traces, token_usage = merge_parallel_round_traces(state=state)
     return {
-        "final_text": final_text,
-        "consultation_status": CONSULTATION_STATUS_COLLECTING,
-        "node_traces": collect_consultation_traces(state),
+        "pending_ai_reply_text": pending_ai_reply_text,
+        "execution_traces": execution_traces,
+        "token_usage": token_usage,
+        "result": "",
+        "messages": [],
     }
 
 
 def build_consultation_graph() -> Any:
-    """构建 consultation 子图。"""
+    """
+    功能描述：
+        构建 consultation 子图。
+
+    参数说明：
+        无。
+
+    返回值：
+        Any: 编译后的 consultation graph。
+
+    异常说明：
+        无。
+    """
 
     graph = StateGraph(ConsultationState)
-
-    graph.add_node("consultation_status_node", consultation_status_node)
-    graph.add_node("collecting_fanout_node", consultation_collecting_fanout_node)
+    graph.add_node("consultation_collecting_fanout_node", consultation_collecting_fanout_node)
     graph.add_node("consultation_comfort_node", consultation_comfort_node)
-    graph.add_node("consultation_question_card_node", consultation_question_card_node)
+    graph.add_node("consultation_question_node", consultation_question_node)
     graph.add_node("consultation_parallel_merge_node", consultation_parallel_merge_node)
-    graph.add_node("collecting_response_node", consultation_collecting_response_node)
-    graph.add_node("final_diagnosis_node", consultation_final_diagnosis_node)
-    graph.add_node("consultation_stream_response_node", consultation_stream_response_node)
+    graph.add_node("consultation_question_interrupt_node", consultation_question_interrupt_node)
+    graph.add_node("consultation_final_diagnosis_node", consultation_final_diagnosis_node)
 
-    graph.add_edge(START, "consultation_status_node")
     graph.add_conditional_edges(
-        "consultation_status_node",
-        _route_from_status,
+        START,
+        _route_from_entry,
         {
-            "final_diagnosis_node": "final_diagnosis_node",
-            "collecting_fanout_node": "collecting_fanout_node",
+            "consultation_collecting_fanout_node": "consultation_collecting_fanout_node",
+            "consultation_final_diagnosis_node": "consultation_final_diagnosis_node",
         },
     )
-    graph.add_edge("collecting_fanout_node", "consultation_comfort_node")
-    graph.add_edge("collecting_fanout_node", "consultation_question_card_node")
+    graph.add_edge("consultation_collecting_fanout_node", "consultation_comfort_node")
+    graph.add_edge("consultation_collecting_fanout_node", "consultation_question_node")
     graph.add_edge("consultation_comfort_node", "consultation_parallel_merge_node")
-    graph.add_edge("consultation_question_card_node", "consultation_parallel_merge_node")
+    graph.add_edge("consultation_question_node", "consultation_parallel_merge_node")
     graph.add_conditional_edges(
         "consultation_parallel_merge_node",
         _route_after_parallel_merge,
         {
-            "final_diagnosis_node": "final_diagnosis_node",
-            "collecting_response_node": "collecting_response_node",
+            "consultation_question_interrupt_node": "consultation_question_interrupt_node",
+            "consultation_final_diagnosis_node": "consultation_final_diagnosis_node",
         },
     )
-    graph.add_edge("collecting_response_node", "consultation_stream_response_node")
-    graph.add_edge("final_diagnosis_node", "consultation_stream_response_node")
-    graph.add_edge("consultation_stream_response_node", END)
-
-    return graph.compile()
+    graph.add_edge("consultation_question_interrupt_node", "consultation_collecting_fanout_node")
+    graph.add_edge("consultation_final_diagnosis_node", END)
+    return graph.compile(checkpointer=_REDIS_CHECKPOINT_SAVER)
 
 
-# consultation 子图编译结果，供父图包装节点复用。
+# consultation 子图编译结果，供父图包装节点与 resume 流程复用。
 _CONSULTATION_GRAPH = build_consultation_graph()
 
 __all__ = [
     "_CONSULTATION_GRAPH",
     "_route_after_parallel_merge",
-    "_route_from_status",
+    "_route_from_entry",
     "build_consultation_graph",
     "consultation_collecting_fanout_node",
-    "consultation_collecting_response_node",
     "consultation_parallel_merge_node",
-    "consultation_stream_response_node",
 ]

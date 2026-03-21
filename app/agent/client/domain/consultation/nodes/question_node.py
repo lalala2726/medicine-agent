@@ -1,28 +1,42 @@
 from __future__ import annotations
 
-from typing import Any
-
 from app.agent.client.domain.consultation.helpers import (
+    DEFAULT_QUESTION_OPTIONS,
+    DEFAULT_QUESTION_REPLY_TEXT,
+    DEFAULT_QUESTION_TEXT,
     build_llm_agent,
-    build_tool_trace,
     build_trace_item,
-    invoke_runnable,
     resolve_question_result,
 )
-from app.agent.client.domain.consultation.state import ConsultationState
-from app.agent.client.domain.tools.card_tools import send_selection_card
+from app.agent.client.domain.consultation.state import (
+    CONSULTATION_STATUS_COLLECTING,
+    CONSULTATION_STATUS_COMPLETED,
+    ConsultationState,
+)
 from app.core.agent.agent_runtime import agent_invoke
 from app.core.agent.agent_tool_trace import record_agent_trace
 from app.core.langsmith import traceable
 from app.utils.prompt_utils import load_prompt
 
-# consultation 问询卡片节点提示词。
+# consultation 追问节点提示词。
 CONSULTATION_QUESTION_PROMPT = load_prompt("client/consultation_question_system_prompt.md")
 
 
-@traceable(name="Client Consultation Question Card Node", run_type="chain")
-def consultation_question_card_node(state: ConsultationState) -> dict[str, Any]:
-    """生成病情咨询追问文本，并按需发送选择卡片。"""
+@traceable(name="Client Consultation Question Node", run_type="chain")
+def consultation_question_node(state: ConsultationState) -> dict[str, object]:
+    """
+    功能描述：
+        以非流式结构化方式判断是否还需追问，并生成阶段性分析文本与问题卡片内容。
+
+    参数说明：
+        state (ConsultationState): 当前 consultation 状态。
+
+    返回值：
+        dict[str, object]: 当前节点写回的追问判断结果。
+
+    异常说明：
+        无；节点执行异常由上层 workflow 统一处理。
+    """
 
     history_messages = list(state.get("history_messages") or [])
     agent, llm_model_name = build_llm_agent(
@@ -31,54 +45,61 @@ def consultation_question_card_node(state: ConsultationState) -> dict[str, Any]:
     )
     result = agent_invoke(agent, history_messages)
     question_result = resolve_question_result(result.payload)
-
-    tool_calls: list[dict[str, Any]] = []
-    selection_card_result: Any = None
-    if not question_result.should_enter_diagnosis:
-        selection_card_payload = {
-            "title": question_result.question_text,
-            "options": list(question_result.options),
-        }
-        selection_card_result = invoke_runnable(
-            send_selection_card,
-            selection_card_payload,
-        )
-        tool_calls.append(
-            build_tool_trace(
-                tool_name="send_selection_card",
-                tool_input=selection_card_payload,
-            )
-        )
-
     trace_payload = record_agent_trace(
         payload=result.payload,
         input_messages=history_messages,
         fallback_text=result.content,
     )
-    trace_item = build_trace_item(
-        node_name="consultation_question_card_node",
-        llm_model_name=llm_model_name,
-        trace_payload=trace_payload,
-        tool_calls=tool_calls,
+
+    if question_result.diagnosis_ready:
+        trace_output_text = "当前信息已足够进入最终诊断。"
+        question_trace = build_trace_item(
+            node_name="consultation_question_node",
+            llm_model_name=llm_model_name or str(trace_payload.get("model_name") or "unknown"),
+            output_text=trace_output_text,
+            llm_usage_complete=bool(trace_payload.get("is_usage_complete", False)),
+            llm_token_usage=trace_payload.get("usage"),
+            tool_calls=list(trace_payload.get("tool_calls") or []),
+            node_context={
+                "diagnosis_ready": True,
+            },
+        )
+        return {
+            "consultation_status": CONSULTATION_STATUS_COMPLETED,
+            "diagnosis_ready": True,
+            "question_reply_text": "",
+            "pending_question_text": "",
+            "pending_question_options": [],
+            "question_trace": question_trace,
+        }
+
+    question_reply_text = question_result.question_reply_text or DEFAULT_QUESTION_REPLY_TEXT
+    question_text = question_result.question_text or DEFAULT_QUESTION_TEXT
+    options = list(question_result.options or DEFAULT_QUESTION_OPTIONS)
+    question_trace = build_trace_item(
+        node_name="consultation_question_node",
+        llm_model_name=llm_model_name or str(trace_payload.get("model_name") or "unknown"),
+        output_text=question_reply_text,
+        llm_usage_complete=bool(trace_payload.get("is_usage_complete", False)),
+        llm_token_usage=trace_payload.get("usage"),
+        tool_calls=list(trace_payload.get("tool_calls") or []),
         node_context={
-            "consultation_status": question_result.consultation_status,
-            "should_enter_diagnosis": question_result.should_enter_diagnosis,
-            "selection_card_result": selection_card_result,
+            "diagnosis_ready": False,
+            "question_text": question_text,
+            "options": options,
         },
     )
     return {
-        "consultation_status": question_result.consultation_status,
-        "should_enter_diagnosis": question_result.should_enter_diagnosis,
-        "question_text": (
-            ""
-            if question_result.should_enter_diagnosis
-            else question_result.question_text
-        ),
-        "question_trace": trace_item,
+        "consultation_status": CONSULTATION_STATUS_COLLECTING,
+        "diagnosis_ready": False,
+        "question_reply_text": question_reply_text,
+        "pending_question_text": question_text,
+        "pending_question_options": options,
+        "question_trace": question_trace,
     }
 
 
 __all__ = [
     "CONSULTATION_QUESTION_PROMPT",
-    "consultation_question_card_node",
+    "consultation_question_node",
 ]

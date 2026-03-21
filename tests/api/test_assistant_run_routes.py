@@ -205,7 +205,7 @@ def test_admin_stop_route_delegates_to_service(monkeypatch) -> None:
 
 
 def test_client_submit_route_delegates_to_service(monkeypatch) -> None:
-    """验证客户端 submit 路由会透传 card_action 并返回运行态。"""
+    """验证客户端 submit 路由仅透传 question/conversation_uuid 并返回运行态。"""
 
     captured: dict[str, object] = {}
     _mock_auth(monkeypatch, roles=[])
@@ -213,12 +213,11 @@ def test_client_submit_route_delegates_to_service(monkeypatch) -> None:
     monkeypatch.setattr(
         client_route_module,
         "assistant_chat",
-        lambda *, question, conversation_uuid=None, card_action=None: (
+        lambda *, question, conversation_uuid=None: (
             captured.update(
                 {
                     "question": question,
                     "conversation_uuid": conversation_uuid,
-                    "card_action": card_action,
                 }
             ),
             {
@@ -253,11 +252,56 @@ def test_client_submit_route_delegates_to_service(monkeypatch) -> None:
     assert captured == {
         "question": "继续处理",
         "conversation_uuid": "client-conv-1",
-        "card_action": {
-            "type": "click",
-            "message_id": "msg-2",
-            "card_uuid": "card-1",
+    }
+
+
+def test_client_submit_route_accepts_card_action_but_ignores_it(monkeypatch) -> None:
+    """验证客户端 submit 路由仍可接受 card_action，但不会再传给 service。"""
+
+    captured: dict[str, object] = {}
+    _mock_auth(monkeypatch, roles=[])
+    _mock_rate_limit_allow(monkeypatch)
+    monkeypatch.setattr(
+        client_route_module,
+        "assistant_chat",
+        lambda *, question, conversation_uuid=None: (
+            captured.update(
+                {
+                    "question": question,
+                    "conversation_uuid": conversation_uuid,
+                }
+            ),
+            {
+                "conversation_uuid": "client-conv-1",
+                "message_uuid": "msg-1",
+                "run_status": AssistantRunStatus.RUNNING,
+            },
+        )[-1],
+    )
+
+    client = TestClient(app)
+    response = client.post(
+        "/client/assistant/chat/submit",
+        headers=_auth_headers(),
+        json={
+            "question": "继续处理",
+            "card_action": {
+                "type": "click",
+                "message_id": "msg-2",
+                "card_uuid": "card-1",
+            },
         },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"] == {
+        "conversation_uuid": "client-conv-1",
+        "message_uuid": "msg-1",
+        "run_status": "running",
+    }
+    assert captured == {
+        "question": "继续处理",
+        "conversation_uuid": None,
     }
 
 

@@ -64,7 +64,7 @@ class ConversationMessageResponse(BaseModel):
     role: Literal["user", "ai"] = Field(..., description="消息发送方")
     content: str = Field(..., description="消息内容")
     thinking: str | None = Field(default=None, description="AI深度思考完整文本")
-    status: Literal["streaming", "success", "cancelled", "error"] | None = Field(
+    status: Literal["streaming", "waiting_input", "success", "cancelled", "error"] | None = Field(
         default=None,
         description="消息状态",
     )

@@ -10,6 +10,7 @@ from app.api.routes import client_assistant as assistant_module
 from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException
 from app.main import app
+from app.schemas.assistant_run import AssistantRunStatus
 from app.schemas.admin_assistant_history import ConversationMessageResponse
 from app.schemas.auth import AuthUser
 from app.schemas.document.conversation import ConversationListItem
@@ -147,7 +148,7 @@ def _mock_rate_limit_result(
     monkeypatch.setattr(rate_limit_module, "_evaluate_rate_limit", _fake_evaluate_rate_limit)
 
 
-def test_client_assistant_chat_route_delegates_to_service(monkeypatch):
+def test_client_assistant_submit_route_delegates_to_service(monkeypatch):
     captured: dict = {}
     _mock_auth(monkeypatch)
     _mock_rate_limit_allow(monkeypatch)
@@ -155,44 +156,47 @@ def test_client_assistant_chat_route_delegates_to_service(monkeypatch):
     monkeypatch.setattr(
         assistant_module,
         "assistant_chat",
-        lambda *, question, conversation_uuid=None, card_action=None: (
+        lambda *, question, conversation_uuid=None: (
             captured.update(
                 {
                     "question": question,
                     "conversation_uuid": conversation_uuid,
-                    "card_action": card_action,
                 }
             ),
-            _build_streaming_response("客户端回复"),
+            {
+                "conversation_uuid": "client-conv-1",
+                "message_uuid": "msg-1",
+                "run_status": AssistantRunStatus.RUNNING,
+            },
         )[-1],
     )
     client = TestClient(app)
 
     response = client.post(
-        "/client/assistant/chat",
+        "/client/assistant/chat/submit",
         headers=_auth_headers(),
         json={"question": "客户端问题", "conversation_uuid": "client-conv-1"},
     )
 
     assert response.status_code == 200
-    assert response.headers["content-type"].startswith("text/event-stream")
+    assert response.json()["data"] == {
+        "conversation_uuid": "client-conv-1",
+        "message_uuid": "msg-1",
+        "run_status": "running",
+    }
     assert captured == {
         "question": "客户端问题",
         "conversation_uuid": "client-conv-1",
-        "card_action": None,
     }
-    payloads = _extract_payloads(response.text)
-    assert payloads[0]["content"]["text"] == "客户端回复"
-    assert payloads[-1]["is_end"] is True
 
 
-def test_client_assistant_chat_rejects_blank_question(monkeypatch):
+def test_client_assistant_submit_rejects_blank_question(monkeypatch):
     _mock_auth(monkeypatch)
     _mock_rate_limit_allow(monkeypatch)
     client = TestClient(app)
 
     response = client.post(
-        "/client/assistant/chat",
+        "/client/assistant/chat/submit",
         headers=_auth_headers(),
         json={"question": "   "},
     )
@@ -200,7 +204,7 @@ def test_client_assistant_chat_rejects_blank_question(monkeypatch):
     assert response.status_code == 400
 
 
-def test_client_assistant_chat_route_accepts_card_action(monkeypatch):
+def test_client_assistant_submit_route_accepts_card_action_but_ignores_it(monkeypatch):
     captured: dict = {}
     _mock_auth(monkeypatch)
     _mock_rate_limit_allow(monkeypatch)
@@ -208,21 +212,24 @@ def test_client_assistant_chat_route_accepts_card_action(monkeypatch):
     monkeypatch.setattr(
         assistant_module,
         "assistant_chat",
-        lambda *, question, conversation_uuid=None, card_action=None: (
+        lambda *, question, conversation_uuid=None: (
             captured.update(
                 {
                     "question": question,
                     "conversation_uuid": conversation_uuid,
-                    "card_action": card_action,
                 }
             ),
-            _build_streaming_response("客户端回复"),
+            {
+                "conversation_uuid": "client-conv-1",
+                "message_uuid": "msg-1",
+                "run_status": AssistantRunStatus.RUNNING,
+            },
         )[-1],
     )
     client = TestClient(app)
 
     response = client.post(
-        "/client/assistant/chat",
+        "/client/assistant/chat/submit",
         headers=_auth_headers(),
         json={
             "question": "继续处理",
@@ -236,24 +243,42 @@ def test_client_assistant_chat_route_accepts_card_action(monkeypatch):
     )
 
     assert response.status_code == 200
+    assert response.json()["data"] == {
+        "conversation_uuid": "client-conv-1",
+        "message_uuid": "msg-1",
+        "run_status": "running",
+    }
     assert captured == {
         "question": "继续处理",
         "conversation_uuid": "client-conv-1",
-        "card_action": {
-            "type": "click",
-            "message_id": "msg-1",
-            "card_uuid": "card-1",
-        },
     }
 
 
-def test_client_assistant_chat_rejects_card_action_without_conversation_uuid(monkeypatch):
+def test_client_assistant_submit_accepts_card_action_without_conversation_uuid(monkeypatch):
+    captured: dict = {}
     _mock_auth(monkeypatch)
     _mock_rate_limit_allow(monkeypatch)
+    monkeypatch.setattr(
+        assistant_module,
+        "assistant_chat",
+        lambda *, question, conversation_uuid=None: (
+            captured.update(
+                {
+                    "question": question,
+                    "conversation_uuid": conversation_uuid,
+                }
+            ),
+            {
+                "conversation_uuid": "client-conv-2",
+                "message_uuid": "msg-2",
+                "run_status": AssistantRunStatus.RUNNING,
+            },
+        )[-1],
+    )
     client = TestClient(app)
 
     response = client.post(
-        "/client/assistant/chat",
+        "/client/assistant/chat/submit",
         headers=_auth_headers(),
         json={
             "question": "继续处理",
@@ -265,16 +290,25 @@ def test_client_assistant_chat_rejects_card_action_without_conversation_uuid(mon
         },
     )
 
-    assert response.status_code == 400
+    assert response.status_code == 200
+    assert response.json()["data"] == {
+        "conversation_uuid": "client-conv-2",
+        "message_uuid": "msg-2",
+        "run_status": "running",
+    }
+    assert captured == {
+        "question": "继续处理",
+        "conversation_uuid": None,
+    }
 
 
-def test_client_assistant_chat_rejects_blank_card_action_fields(monkeypatch):
+def test_client_assistant_submit_rejects_blank_card_action_fields(monkeypatch):
     _mock_auth(monkeypatch)
     _mock_rate_limit_allow(monkeypatch)
     client = TestClient(app)
 
     response = client.post(
-        "/client/assistant/chat",
+        "/client/assistant/chat/submit",
         headers=_auth_headers(),
         json={
             "question": "继续处理",

@@ -1,58 +1,61 @@
 from __future__ import annotations
 
-from typing import Literal
-
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-
-from app.agent.client.domain.consultation.state import (
-    CONSULTATION_STATUS_COLLECTING,
-    CONSULTATION_STATUS_COMPLETED,
-    ConsultationStatusValue,
-)
-
-
-class ConsultationStatusSchema(BaseModel):
-    """consultation 状态判断结构化输出。"""
-
-    model_config = ConfigDict(extra="forbid")
-
-    should_enter_diagnosis: bool = Field(description="当前是否已经具备进入最终诊断节点的条件。")
-    consultation_status: ConsultationStatusValue = Field(
-        description="当前病情咨询阶段，只允许 collecting 或 completed。",
-    )
 
 
 class ConsultationQuestionSchema(BaseModel):
-    """consultation 问询卡片结构化输出。"""
+    """consultation 追问节点结构化输出。"""
 
     model_config = ConfigDict(extra="forbid")
 
-    should_enter_diagnosis: bool = Field(description="当前是否已经具备进入最终诊断节点的条件。")
-    consultation_status: ConsultationStatusValue = Field(
-        description="当前病情咨询阶段，只允许 collecting 或 completed。",
-    )
-    question_text: str = Field(description="给用户展示的追问文本。")
-    options: list[str] = Field(default_factory=list, description="选择卡片选项列表。")
+    diagnosis_ready: bool = Field(description="当前信息是否已经足够进入最终诊断。")
+    question_reply_text: str | None = Field(default=None, description="继续追问前展示给用户的阶段性分析文本。")
+    question_text: str | None = Field(default=None, description="选择卡片标题使用的核心问题。")
+    options: list[str] = Field(default_factory=list, description="用于选择卡片的互斥选项列表。")
 
-    @field_validator("question_text")
+    @field_validator("question_reply_text", "question_text")
     @classmethod
-    def _normalize_question_text(cls, value: str) -> str:
-        """清理追问文本。"""
+    def _normalize_optional_text(cls, value: str | None) -> str | None:
+        """
+        功能描述：
+            清理追问节点可选文本字段的首尾空白。
 
+        参数说明：
+            value (str | None): 原始文本值。
+
+        返回值：
+            str | None: 归一化后的文本；空串统一返回 `None`。
+
+        异常说明：
+            无。
+        """
+
+        if value is None:
+            return None
         normalized = value.strip()
-        if not normalized:
-            raise ValueError("question_text 不能为空")
-        return normalized
+        return normalized or None
 
     @field_validator("options")
     @classmethod
     def _normalize_options(cls, value: list[str]) -> list[str]:
-        """清理并去重选项列表。"""
+        """
+        功能描述：
+            清理、去重并保留选项原顺序。
+
+        参数说明：
+            value (list[str]): 原始选项列表。
+
+        返回值：
+            list[str]: 归一化后的选项列表。
+
+        异常说明：
+            无。
+        """
 
         normalized_options: list[str] = []
         seen: set[str] = set()
-        for item in value:
-            normalized = str(item or "").strip()
+        for raw_option in value:
+            normalized = str(raw_option or "").strip()
             if not normalized or normalized in seen:
                 continue
             seen.add(normalized)
@@ -60,54 +63,98 @@ class ConsultationQuestionSchema(BaseModel):
         return normalized_options
 
     @model_validator(mode="after")
-    def _validate_collecting_payload(self) -> "ConsultationQuestionSchema":
-        """校验 collecting / completed 两类输出约束。"""
+    def _validate_shape(self) -> "ConsultationQuestionSchema":
+        """
+        功能描述：
+            校验“继续追问”和“信息已足够”两种输出形态。
 
-        if self.should_enter_diagnosis:
-            self.consultation_status = CONSULTATION_STATUS_COMPLETED
+        参数说明：
+            无。
+
+        返回值：
+            ConsultationQuestionSchema: 校验后的模型自身。
+
+        异常说明：
+            ValueError: 输出字段不符合当前分支约束时抛出。
+        """
+
+        if self.diagnosis_ready:
+            self.question_reply_text = None
+            self.question_text = None
             self.options = []
             return self
-        self.consultation_status = CONSULTATION_STATUS_COLLECTING
+
+        if not self.question_reply_text:
+            raise ValueError("diagnosis_ready=false 时 question_reply_text 不能为空")
+        if not self.question_text:
+            raise ValueError("diagnosis_ready=false 时 question_text 不能为空")
         if len(self.options) < 2:
-            raise ValueError("collecting 状态至少需要 2 个选项")
+            raise ValueError("diagnosis_ready=false 时 options 至少需要 2 项")
         if len(self.options) > 4:
             self.options = self.options[:4]
         return self
 
 
 class ConsultationFinalDiagnosisSchema(BaseModel):
-    """consultation 最终诊断结构化输出。"""
+    """consultation 最终诊断节点结构化输出。"""
 
     model_config = ConfigDict(extra="forbid")
 
-    diagnosis_text: str = Field(description="最终给用户展示的诊断与就医建议文本。")
-    should_recommend_products: bool = Field(description="当前是否需要继续搜索并推荐商城药品。")
-    product_keyword: str | None = Field(default=None, description="用于商品搜索的关键词，可为空。")
-    product_usage: str | None = Field(default=None, description="用于商品搜索的适用场景，可为空。")
+    diagnosis_text: str = Field(description="最终诊断阶段返回给用户的完整建议文本。")
+    should_recommend_products: bool = Field(default=False, description="是否需要继续推荐商城商品。")
+    product_keyword: str | None = Field(default=None, description="商品搜索关键词。")
+    product_usage: str | None = Field(default=None, description="商品搜索适用场景。")
 
-    @field_validator("diagnosis_text")
+    @field_validator("diagnosis_text", "product_keyword", "product_usage")
     @classmethod
-    def _normalize_diagnosis_text(cls, value: str) -> str:
-        """清理诊断文本。"""
+    def _normalize_text(cls, value: str | None) -> str | None:
+        """
+        功能描述：
+            清理最终诊断文本字段的首尾空白。
 
-        normalized = value.strip()
-        if not normalized:
-            raise ValueError("diagnosis_text 不能为空")
-        return normalized
+        参数说明：
+            value (str | None): 原始文本值。
 
-    @field_validator("product_keyword", "product_usage")
-    @classmethod
-    def _normalize_optional_text(cls, value: str | None) -> str | None:
-        """清理可选搜索参数。"""
+        返回值：
+            str | None: 归一化后的文本；空串统一返回 `None`。
+
+        异常说明：
+            无。
+        """
 
         if value is None:
             return None
         normalized = value.strip()
         return normalized or None
 
+    @model_validator(mode="after")
+    def _validate_shape(self) -> "ConsultationFinalDiagnosisSchema":
+        """
+        功能描述：
+            校验最终诊断节点输出形态。
+
+        参数说明：
+            无。
+
+        返回值：
+            ConsultationFinalDiagnosisSchema: 校验后的模型自身。
+
+        异常说明：
+            ValueError: 诊断文本为空，或商品推荐字段不完整时抛出。
+        """
+
+        if not self.diagnosis_text:
+            raise ValueError("diagnosis_text 不能为空")
+        if not self.should_recommend_products:
+            self.product_keyword = None
+            self.product_usage = None
+            return self
+        if not any([self.product_keyword, self.product_usage]):
+            raise ValueError("should_recommend_products=true 时至少提供 product_keyword 或 product_usage")
+        return self
+
 
 __all__ = [
     "ConsultationFinalDiagnosisSchema",
     "ConsultationQuestionSchema",
-    "ConsultationStatusSchema",
 ]

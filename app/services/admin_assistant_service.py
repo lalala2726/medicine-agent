@@ -82,6 +82,7 @@ RUN_EVENT_STORE = AssistantRunEventStore()
 
 STREAMING_STATUS_VISIBLE_SET = {
     MessageStatus.STREAMING,
+    MessageStatus.WAITING_INPUT,
     MessageStatus.SUCCESS,
     MessageStatus.CANCELLED,
     MessageStatus.ERROR,
@@ -530,6 +531,8 @@ def _resolve_message_status_from_finish_status(
 
     if finish_status == AssistantRunStatus.CANCELLED:
         return MessageStatus.CANCELLED
+    if finish_status == AssistantRunStatus.WAITING_INPUT:
+        return MessageStatus.WAITING_INPUT
     if finish_status == AssistantRunStatus.ERROR or has_error:
         return MessageStatus.ERROR
     return MessageStatus.SUCCESS
