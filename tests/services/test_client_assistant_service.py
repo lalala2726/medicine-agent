@@ -591,13 +591,14 @@ def test_conversation_messages_reads_client_conversation_history(monkeypatch):
     ]
 
 
-def test_build_consultation_interrupt_responses_returns_answer_and_selection_card():
+def test_build_consultation_interrupt_responses_returns_followup_card_only():
     responses = service_module._build_consultation_interrupt_responses(
         {
             "__interrupt__": [
                 SimpleNamespace(
                     value={
                         "kind": "consultation_question",
+                        "reply_text": "结合你刚才补充的情况，我们更偏向咽部炎症方向，再确认一下疼痛位置会更稳。",
                         "question_text": "为了更准确判断，你现在有没有发热？",
                         "options": ["没有发热", "低烧", "高烧", "不确定"],
                     }
@@ -606,11 +607,15 @@ def test_build_consultation_interrupt_responses_returns_answer_and_selection_car
         }
     )
 
-    assert len(responses) == 2
-    assert responses[0].type.value == "answer"
-    assert responses[0].content.text == "为了更准确判断，你现在有没有发热？"
-    assert responses[1].type.value == "card"
-    assert responses[1].card.type == "selection-card"
+    assert len(responses) == 1
+    assert responses[0].type.value == "card"
+    assert responses[0].card.type == "consultation-followup-card"
+    assert responses[0].card.data["title"] == "为了更准确判断，你现在有没有发热？"
+    assert responses[0].card.data["description"] == "结合你刚才补充的情况，我们更偏向咽部炎症方向，再确认一下疼痛位置会更稳。"
+    assert responses[0].card.data["selectionMode"] == "multiple"
+    assert responses[0].card.data["submitText"] == "发送"
+    assert responses[0].card.data["allowCustomInput"] is True
+    assert responses[0].meta["message_uuid"]
 
 
 def test_conversation_messages_skips_ai_message_when_all_cards_hidden(monkeypatch):

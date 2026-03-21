@@ -1,32 +1,58 @@
 from __future__ import annotations
 
+from typing import Any
+
+from langchain.agents import create_agent
+from langchain.agents.middleware import ToolCallLimitMiddleware
+from langchain_core.messages import SystemMessage
+
 from app.agent.client.domain.consultation.helpers import (
-    DEFAULT_PURCHASE_QUANTITY,
     append_trace_to_state,
-    build_llm_agent,
-    build_product_search_payload,
-    build_recommendation_text,
-    build_recommended_products,
-    build_tool_trace,
     build_trace_item,
-    emit_consultation_answer_deltas_async,
-    invoke_runnable,
-    resolve_final_diagnosis_result,
-    run_async_safely,
+    resolve_consultation_model_slot,
+    resolve_natural_language_text,
 )
 from app.agent.client.domain.consultation.state import (
     CONSULTATION_STATUS_COMPLETED,
     ConsultationState,
 )
-from app.agent.client.domain.product.tools import search_products
+from app.agent.client.domain.product.tools import (
+    get_product_detail,
+    get_product_spec,
+    search_products,
+)
 from app.agent.client.domain.tools.card_tools import send_product_purchase_card
-from app.core.agent.agent_runtime import agent_invoke
+from app.core.agent.agent_event_bus import emit_answer_delta, emit_thinking_delta
+from app.core.agent.agent_runtime import agent_stream
 from app.core.agent.agent_tool_trace import record_agent_trace
+from app.core.agent.base_prompt_middleware import BasePromptMiddleware
+from app.core.config_sync import create_agent_chat_llm
 from app.core.langsmith import traceable
-from app.utils.prompt_utils import load_prompt
+from app.utils.prompt_utils import append_current_time_to_prompt, load_prompt
 
 # consultation 最终诊断节点提示词。
 CONSULTATION_FINAL_DIAGNOSIS_PROMPT = load_prompt("client/consultation_final_diagnosis_system_prompt.md")
+# consultation 最终诊断节点兜底文本。
+DEFAULT_FINAL_DIAGNOSIS_TEXT = "结合你目前提供的信息，更像是常见轻症方向；如果症状持续加重，请及时线下就医。"
+
+
+def _resolve_final_diagnosis_think_enabled(state: ConsultationState) -> bool:
+    """
+    功能描述：
+        解析最终诊断节点默认是否开启思考输出。
+
+    参数说明：
+        state (ConsultationState): 当前 consultation 状态。
+
+    返回值：
+        bool: 当前 consultation 属于高复杂度时返回 `True`，否则返回 `False`。
+
+    异常说明：
+        无。
+    """
+
+    task_difficulty = str(state.get("task_difficulty") or "").strip().lower()
+    return task_difficulty == "high"
 
 
 @traceable(name="Client Consultation Final Diagnosis Node", run_type="chain")
@@ -46,56 +72,43 @@ def consultation_final_diagnosis_node(state: ConsultationState) -> dict[str, obj
     """
 
     history_messages = list(state.get("history_messages") or [])
-    agent, llm_model_name = build_llm_agent(
-        state=state,
-        prompt_text=CONSULTATION_FINAL_DIAGNOSIS_PROMPT,
+    llm = create_agent_chat_llm(
+        slot=resolve_consultation_model_slot(state),
+        temperature=0.2,
+        think=_resolve_final_diagnosis_think_enabled(state),
     )
-    result = agent_invoke(agent, history_messages)
-    final_result = resolve_final_diagnosis_result(result.payload)
-
-    tool_calls: list[dict[str, object]] = []
-    recommended_product_ids: list[int] = []
-    product_names: list[str] = []
-
-    search_payload = build_product_search_payload(final_result=final_result)
-    if final_result.should_recommend_products and search_payload is not None:
-        search_result = invoke_runnable(search_products, search_payload)
-        tool_calls.append(
-            build_tool_trace(
-                tool_name="search_products",
-                tool_input=search_payload,
-            )
-        )
-        recommended_product_ids, product_names = build_recommended_products(search_result)
-
-        if recommended_product_ids:
-            purchase_payload = {
-                "items": [
-                    {
-                        "productId": product_id,
-                        "quantity": DEFAULT_PURCHASE_QUANTITY,
-                    }
-                    for product_id in recommended_product_ids
-                ]
-            }
-            invoke_runnable(send_product_purchase_card, purchase_payload)
-            tool_calls.append(
-                build_tool_trace(
-                    tool_name="send_product_purchase_card",
-                    tool_input=purchase_payload,
-                )
-            )
-
-    final_text = build_recommendation_text(
-        diagnosis_text=final_result.diagnosis_text,
-        product_names=product_names,
+    llm_model_name = str(getattr(llm, "model_name", "") or "").strip() or "unknown"
+    diagnosis_agent = create_agent(
+        model=llm,
+        tools=[
+            search_products,
+            get_product_detail,
+            get_product_spec,
+            send_product_purchase_card,
+        ],
+        system_prompt=SystemMessage(
+            content=append_current_time_to_prompt(CONSULTATION_FINAL_DIAGNOSIS_PROMPT)
+        ),
+        middleware=[
+            BasePromptMiddleware(base_prompt_file="client/_client_base_prompt.md"),
+            ToolCallLimitMiddleware(thread_limit=5, run_limit=5),
+        ],
     )
-    run_async_safely(emit_consultation_answer_deltas_async(final_text))
-
+    stream_result = agent_stream(
+        diagnosis_agent,
+        history_messages,
+        on_model_delta=emit_answer_delta,
+        on_thinking_delta=emit_thinking_delta,
+    )
     trace_payload = record_agent_trace(
-        payload=result.payload,
+        payload=stream_result,
         input_messages=history_messages,
-        fallback_text=result.content,
+        fallback_text=str(stream_result.get("streamed_text") or ""),
+    )
+    final_text = resolve_natural_language_text(
+        trace_text=str(trace_payload.get("text") or ""),
+        fallback_text=str(stream_result.get("streamed_text") or ""),
+        default_text=DEFAULT_FINAL_DIAGNOSIS_TEXT,
     )
     diagnosis_trace = build_trace_item(
         node_name="consultation_final_diagnosis_node",
@@ -103,13 +116,8 @@ def consultation_final_diagnosis_node(state: ConsultationState) -> dict[str, obj
         output_text=final_text,
         llm_usage_complete=bool(trace_payload.get("is_usage_complete", False)),
         llm_token_usage=trace_payload.get("usage"),
-        tool_calls=tool_calls,
-        node_context={
-            "should_recommend_products": final_result.should_recommend_products,
-            "recommended_product_ids": list(recommended_product_ids),
-            "product_keyword": final_result.product_keyword,
-            "product_usage": final_result.product_usage,
-        },
+        tool_calls=list(trace_payload.get("tool_calls") or []),
+        node_context=_build_diagnosis_trace_context(stream_result=stream_result),
     )
     execution_traces, token_usage = append_trace_to_state(
         state=state,
@@ -123,13 +131,38 @@ def consultation_final_diagnosis_node(state: ConsultationState) -> dict[str, obj
         "pending_question_text": "",
         "pending_question_options": [],
         "pending_ai_reply_text": "",
-        "recommended_product_ids": recommended_product_ids,
         "final_text": final_text,
         "diagnosis_trace": diagnosis_trace,
         "execution_traces": execution_traces,
         "token_usage": token_usage,
         "result": final_text,
         "messages": [],
+    }
+
+
+def _build_diagnosis_trace_context(
+        *,
+        stream_result: dict[str, Any],
+) -> dict[str, Any] | None:
+    """
+    功能描述：
+        构造最终诊断节点的补充 trace 上下文。
+
+    参数说明：
+        stream_result (dict[str, Any]): `agent_stream(...)` 返回的标准化结果。
+
+    返回值：
+        dict[str, Any] | None: 存在思考文本时返回上下文字典，否则返回 `None`。
+
+    异常说明：
+        无。
+    """
+
+    thinking_text = str(stream_result.get("streamed_thinking") or "").strip()
+    if not thinking_text:
+        return None
+    return {
+        "thinking_text": thinking_text,
     }
 
 

@@ -38,7 +38,6 @@ class ConsultationState(TypedDict, total=False):
     pending_question_options: list[str]
     pending_ai_reply_text: str
     final_text: str
-    recommended_product_ids: list[int]
     execution_traces: list[ExecutionTraceState]
     token_usage: TokenUsageState | None
     comfort_trace: ExecutionTraceState

@@ -51,7 +51,6 @@ def _build_consultation_initial_state(state: AgentState) -> ConsultationState:
         pending_question_options=[],
         pending_ai_reply_text="",
         final_text="",
-        recommended_product_ids=[],
         execution_traces=[],
         token_usage=None,
         interrupt_payload=None,

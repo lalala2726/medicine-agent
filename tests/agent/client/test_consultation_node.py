@@ -1,4 +1,3 @@
-import asyncio
 import json
 from types import SimpleNamespace
 
@@ -367,150 +366,135 @@ def test_split_consultation_stream_text_preserves_original_text_order():
     assert all(chunk for chunk in chunks)
 
 
-def test_consultation_final_diagnosis_node_sends_purchase_card_with_default_quantity(monkeypatch):
-    emitted_texts: list[str] = []
-    captured_calls: list[tuple[str, dict]] = []
-    payload_text = json.dumps(
-        {
-            "diagnosis_text": "结合你的情况，更像是常见感冒方向。先注意休息，多喝温水，观察体温变化。",
-            "should_recommend_products": True,
-            "product_keyword": "感冒药",
-            "product_usage": "缓解咳嗽和流鼻涕",
-        },
-        ensure_ascii=False,
-    )
+def test_consultation_final_diagnosis_node_uses_tool_agent_and_emits_thinking(monkeypatch):
+    answer_deltas: list[str] = []
+    thinking_deltas: list[str] = []
+    captured_agent_kwargs: dict[str, object] = {}
+    captured_llm_kwargs: dict[str, object] = {}
+
+    def _fake_create_agent_chat_llm(**kwargs):
+        captured_llm_kwargs.update(kwargs)
+        return SimpleNamespace(model_name="diagnosis-model")
+
+    def _fake_create_agent(**kwargs):
+        captured_agent_kwargs.update(kwargs)
+        return object()
+
+    def _fake_agent_stream(_agent, _messages, on_model_delta=None, on_thinking_delta=None):
+        assert on_model_delta is not None
+        assert on_thinking_delta is not None
+        on_thinking_delta("诊断思考分片")
+        on_model_delta("结合你的情况，更像是常见感冒方向。")
+        return {
+            "streamed_text": "结合你的情况，更像是常见感冒方向。",
+            "streamed_thinking": "诊断思考分片",
+            "latest_state": {"messages": []},
+        }
 
     monkeypatch.setattr(
         final_diagnosis_node_module,
-        "build_llm_agent",
-        lambda **_kwargs: (object(), "diagnosis-model"),
+        "create_agent_chat_llm",
+        _fake_create_agent_chat_llm,
     )
-    monkeypatch.setattr(
-        final_diagnosis_node_module,
-        "agent_invoke",
-        lambda _agent, _messages: SimpleNamespace(
-            payload={"messages": [SimpleNamespace(content=payload_text)]},
-            content=payload_text,
-        ),
-    )
+    monkeypatch.setattr(final_diagnosis_node_module, "create_agent", _fake_create_agent)
+    monkeypatch.setattr(final_diagnosis_node_module, "agent_stream", _fake_agent_stream)
+    monkeypatch.setattr(final_diagnosis_node_module, "emit_answer_delta", answer_deltas.append)
+    monkeypatch.setattr(final_diagnosis_node_module, "emit_thinking_delta", thinking_deltas.append)
     monkeypatch.setattr(
         final_diagnosis_node_module,
         "record_agent_trace",
         lambda **_kwargs: {
-            "text": payload_text,
+            "text": "结合你的情况，更像是常见感冒方向。",
+            "model_name": "trace-diagnosis-model",
             "is_usage_complete": True,
             "usage": None,
-            "tool_calls": [],
+            "tool_calls": [
+                {
+                    "tool_name": "search_products",
+                    "tool_call_id": "tool-call-1",
+                    "tool_input": {"keyword": "感冒药"},
+                },
+                {
+                    "tool_name": "send_product_purchase_card",
+                    "tool_call_id": "tool-call-2",
+                    "tool_input": {"items": [{"productId": 101, "quantity": 1}]},
+                },
+            ],
         },
     )
-
-    async def _fake_emit(text: str, **_kwargs):
-        emitted_texts.append(text)
-        return [text]
-
-    monkeypatch.setattr(final_diagnosis_node_module, "emit_consultation_answer_deltas_async", _fake_emit)
-    monkeypatch.setattr(final_diagnosis_node_module, "run_async_safely", lambda coro: asyncio.run(coro))
-
-    def _fake_invoke(tool_object, payload):
-        captured_calls.append((tool_object.name, payload))
-        if tool_object.name == "search_products":
-            return {
-                "rows": [
-                    {"id": 101, "name": "感冒灵颗粒"},
-                    {"id": 102, "name": "板蓝根颗粒"},
-                ]
-            }
-        return "__SUCCESS__"
-
-    monkeypatch.setattr(final_diagnosis_node_module, "invoke_runnable", _fake_invoke)
 
     result = final_diagnosis_node_module.consultation_final_diagnosis_node(
         {
             "history_messages": [HumanMessage(content="我咳嗽两天，还有点流鼻涕")],
-            "task_difficulty": "normal",
+            "task_difficulty": "high",
             "execution_traces": [],
         }
     )
 
+    tool_names = [tool.name for tool in captured_agent_kwargs["tools"]]
+
+    assert captured_llm_kwargs["think"] is True
+    assert tool_names == [
+        "search_products",
+        "get_product_detail",
+        "get_product_spec",
+        "send_product_purchase_card",
+    ]
+    assert any(
+        middleware.__class__.__name__ == "ToolCallLimitMiddleware"
+        for middleware in captured_agent_kwargs["middleware"]
+    )
+    assert answer_deltas == ["结合你的情况，更像是常见感冒方向。"]
+    assert thinking_deltas == ["诊断思考分片"]
     assert result["consultation_status"] == CONSULTATION_STATUS_COMPLETED
     assert result["diagnosis_ready"] is True
-    assert result["recommended_product_ids"] == [101, 102]
-    assert "感冒灵颗粒" in result["final_text"]
-    assert "板蓝根颗粒" in result["final_text"]
-    assert emitted_texts == [result["final_text"]]
-    assert captured_calls == [
-        (
-            "search_products",
-            {
-                "keyword": "感冒药",
-                "usage": "缓解咳嗽和流鼻涕",
-                "page_num": 1,
-                "page_size": 3,
-            },
-        ),
-        (
-            "send_product_purchase_card",
-            {
-                "items": [
-                    {"productId": 101, "quantity": 1},
-                    {"productId": 102, "quantity": 1},
-                ]
-            },
-        ),
-    ]
+    assert result["final_text"] == "结合你的情况，更像是常见感冒方向。"
+    assert result["diagnosis_trace"]["tool_calls"][0]["tool_name"] == "search_products"
+    assert result["diagnosis_trace"]["tool_calls"][1]["tool_name"] == "send_product_purchase_card"
+    assert result["diagnosis_trace"]["node_context"] == {"thinking_text": "诊断思考分片"}
 
 
-def test_consultation_final_diagnosis_node_skips_purchase_card_when_search_empty(monkeypatch):
-    emitted_texts: list[str] = []
-    captured_calls: list[tuple[str, dict]] = []
-    payload_text = json.dumps(
-        {
-            "diagnosis_text": "更像是轻度咽喉不适，建议先观察。",
-            "should_recommend_products": True,
-            "product_keyword": "咽喉药",
-            "product_usage": "缓解咽喉不适",
-        },
-        ensure_ascii=False,
-    )
+def test_consultation_final_diagnosis_node_returns_text_without_purchase_card(monkeypatch):
+    answer_deltas: list[str] = []
+    thinking_deltas: list[str] = []
 
     monkeypatch.setattr(
         final_diagnosis_node_module,
-        "build_llm_agent",
-        lambda **_kwargs: (object(), "diagnosis-model"),
+        "create_agent_chat_llm",
+        lambda **_kwargs: SimpleNamespace(model_name="diagnosis-model"),
     )
-    monkeypatch.setattr(
-        final_diagnosis_node_module,
-        "agent_invoke",
-        lambda _agent, _messages: SimpleNamespace(
-            payload={"messages": [SimpleNamespace(content=payload_text)]},
-            content=payload_text,
-        ),
-    )
+    monkeypatch.setattr(final_diagnosis_node_module, "create_agent", lambda **_kwargs: object())
+
+    def _fake_agent_stream(_agent, _messages, on_model_delta=None, on_thinking_delta=None):
+        assert on_model_delta is not None
+        assert on_thinking_delta is not None
+        on_model_delta("更像是轻度咽喉不适，建议先观察。")
+        return {
+            "streamed_text": "更像是轻度咽喉不适，建议先观察。",
+            "streamed_thinking": "",
+            "latest_state": {"messages": []},
+        }
+
+    monkeypatch.setattr(final_diagnosis_node_module, "agent_stream", _fake_agent_stream)
+    monkeypatch.setattr(final_diagnosis_node_module, "emit_answer_delta", answer_deltas.append)
+    monkeypatch.setattr(final_diagnosis_node_module, "emit_thinking_delta", thinking_deltas.append)
     monkeypatch.setattr(
         final_diagnosis_node_module,
         "record_agent_trace",
         lambda **_kwargs: {
-            "text": payload_text,
+            "text": "更像是轻度咽喉不适，建议先观察。",
+            "model_name": "trace-diagnosis-model",
             "is_usage_complete": True,
             "usage": None,
-            "tool_calls": [],
+            "tool_calls": [
+                {
+                    "tool_name": "search_products",
+                    "tool_call_id": "tool-call-1",
+                    "tool_input": {"keyword": "咽喉药"},
+                }
+            ],
         },
     )
-
-    async def _fake_emit(text: str, **_kwargs):
-        emitted_texts.append(text)
-        return [text]
-
-    monkeypatch.setattr(final_diagnosis_node_module, "emit_consultation_answer_deltas_async", _fake_emit)
-    monkeypatch.setattr(final_diagnosis_node_module, "run_async_safely", lambda coro: asyncio.run(coro))
-
-    def _fake_invoke(tool_object, payload):
-        captured_calls.append((tool_object.name, payload))
-        if tool_object.name == "search_products":
-            return {"rows": []}
-        raise AssertionError("search empty 时不应继续发送购买卡")
-
-    monkeypatch.setattr(final_diagnosis_node_module, "invoke_runnable", _fake_invoke)
 
     result = final_diagnosis_node_module.consultation_final_diagnosis_node(
         {
@@ -520,17 +504,12 @@ def test_consultation_final_diagnosis_node_skips_purchase_card_when_search_empty
         }
     )
 
-    assert result["recommended_product_ids"] == []
+    assert answer_deltas == ["更像是轻度咽喉不适，建议先观察。"]
+    assert thinking_deltas == []
+    assert result["consultation_status"] == CONSULTATION_STATUS_COMPLETED
+    assert result["diagnosis_ready"] is True
     assert result["final_text"] == "更像是轻度咽喉不适，建议先观察。"
-    assert emitted_texts == ["更像是轻度咽喉不适，建议先观察。"]
-    assert captured_calls == [
-        (
-            "search_products",
-            {
-                "keyword": "咽喉药",
-                "usage": "缓解咽喉不适",
-                "page_num": 1,
-                "page_size": 3,
-            },
-        )
+    assert [tool_call["tool_name"] for tool_call in result["diagnosis_trace"]["tool_calls"]] == [
+        "search_products"
     ]
+    assert result["diagnosis_trace"]["node_context"] is None

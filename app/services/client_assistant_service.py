@@ -11,12 +11,11 @@ from langchain_core.messages import HumanMessage
 from app.agent.client.domain.consultation.agent import has_pending_consultation_interrupt
 from app.agent.client.domain.consultation.graph import _CONSULTATION_GRAPH
 from app.agent.client.domain.consultation.helpers import (
-    build_selection_card_response,
+    build_consultation_followup_card_response,
     resolve_interrupt_payload,
-    split_consultation_stream_text,
 )
 from app.agent.client.workflow import build_graph
-from app.core.agent.agent_orchestrator import AssistantStreamConfig, build_answer_response
+from app.core.agent.agent_orchestrator import AssistantStreamConfig
 from app.core.agent.run_event_store import LocalRunHandle
 from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException
@@ -184,17 +183,13 @@ def _build_consultation_interrupt_responses(state: dict[str, Any]) -> list[Any]:
     options = list(interrupt_payload.get("options") or [])
     if not reply_text or not question_text:
         return []
-    responses: list[Any] = [
-        build_answer_response(chunk_text, False)
-        for chunk_text in split_consultation_stream_text(reply_text)
-    ]
-    responses.append(
-        build_selection_card_response(
+    return [
+        build_consultation_followup_card_response(
             title=question_text,
+            description=reply_text,
             options=options,
         )
-    )
-    return responses
+    ]
 
 
 def _load_client_conversation(
