@@ -6,24 +6,26 @@ from langgraph.constants import END, START
 from langgraph.graph import StateGraph
 
 from app.agent.client.domain.consultation.helpers import (
-    DEFAULT_COMFORT_TEXT,
     build_text_result,
     merge_parallel_round_traces,
+    resolve_consultation_outputs,
+    resolve_consultation_route,
 )
 from app.agent.client.domain.consultation.nodes import (
-    consultation_comfort_node,
     consultation_final_diagnosis_node,
     consultation_question_interrupt_node,
     consultation_question_node,
+    consultation_response_node,
+    consultation_route_node,
 )
 from app.agent.client.domain.consultation.state import ConsultationState
 from app.core.agent.langgraph_redis_checkpoint import _REDIS_CHECKPOINT_SAVER
 
 
-def _route_from_entry(state: ConsultationState) -> str:
+def _route_after_consultation_route(state: ConsultationState) -> str:
     """
     功能描述：
-        根据 consultation 当前状态决定入口直接进入诊断还是 collecting 分支。
+        根据 consultation 子图内路由结果决定进入直接回答、继续追问还是最终诊断分支。
 
     参数说明：
         state (ConsultationState): 当前 consultation 状态。
@@ -35,9 +37,34 @@ def _route_from_entry(state: ConsultationState) -> str:
         无。
     """
 
-    if bool(state.get("diagnosis_ready")):
+    consultation_route = resolve_consultation_route(state)
+    next_action = str(consultation_route.get("next_action") or "").strip()
+    if next_action == "reply_only":
+        return "consultation_response_node"
+    if next_action == "final_diagnosis":
         return "consultation_final_diagnosis_node"
     return "consultation_collecting_fanout_node"
+
+
+def _route_after_consultation_response(state: ConsultationState) -> str:
+    """
+    功能描述：
+        根据 consultation 子图当前路由动作，判断医学回应节点之后是直接结束还是进入并行汇合。
+
+    参数说明：
+        state (ConsultationState): 当前 consultation 状态。
+
+    返回值：
+        str: 下一跳节点名称。
+
+    异常说明：
+        无。
+    """
+
+    consultation_route = resolve_consultation_route(state)
+    if str(consultation_route.get("next_action") or "").strip() == "reply_only":
+        return END
+    return "consultation_parallel_merge_node"
 
 
 def _route_after_parallel_merge(state: ConsultationState) -> str:
@@ -63,7 +90,7 @@ def _route_after_parallel_merge(state: ConsultationState) -> str:
 def consultation_collecting_fanout_node(_state: ConsultationState) -> dict[str, Any]:
     """
     功能描述：
-        作为 collecting 阶段的扇出节点，触发 comfort 与 question 两个并行分支。
+        作为 collecting 阶段的扇出节点，触发 response 与 question 两个并行分支。
 
     参数说明：
         _state (ConsultationState): 当前 consultation 状态。
@@ -81,7 +108,7 @@ def consultation_collecting_fanout_node(_state: ConsultationState) -> dict[str, 
 def consultation_parallel_merge_node(state: ConsultationState) -> dict[str, Any]:
     """
     功能描述：
-        合并 comfort/question 两条并行分支的文本与 trace。
+        合并 response/question 两条并行分支的文本与 trace，并组装追问阶段完整 AI 回复文本。
 
     参数说明：
         state (ConsultationState): 当前 consultation 状态。
@@ -93,17 +120,20 @@ def consultation_parallel_merge_node(state: ConsultationState) -> dict[str, Any]
         无。
     """
 
-    comfort_text = str(state.get("comfort_text") or "").strip() or DEFAULT_COMFORT_TEXT
-    question_reply_text = str(state.get("question_reply_text") or "").strip()
+    consultation_outputs = resolve_consultation_outputs(state)
+    response_text = str((consultation_outputs.get("response") or {}).get("text") or "").strip()
+    question_reply_text = str((consultation_outputs.get("question") or {}).get("reply_text") or "").strip()
     diagnosis_ready = bool(state.get("diagnosis_ready"))
-    pending_ai_reply_text = (
+    ai_reply_text = (
         ""
         if diagnosis_ready
-        else build_text_result(comfort_text, question_reply_text)
+        else build_text_result(response_text, question_reply_text)
     )
     execution_traces, token_usage = merge_parallel_round_traces(state=state)
     return {
-        "pending_ai_reply_text": pending_ai_reply_text,
+        "consultation_outputs": {
+            "question": {"ai_reply_text": ai_reply_text},
+        },
         "execution_traces": execution_traces,
         "token_usage": token_usage,
         "result": "",
@@ -127,24 +157,34 @@ def build_consultation_graph() -> Any:
     """
 
     graph = StateGraph(ConsultationState)
+    graph.add_node("consultation_route_node", consultation_route_node)
     graph.add_node("consultation_collecting_fanout_node", consultation_collecting_fanout_node)
-    graph.add_node("consultation_comfort_node", consultation_comfort_node)
+    graph.add_node("consultation_response_node", consultation_response_node)
     graph.add_node("consultation_question_node", consultation_question_node)
     graph.add_node("consultation_parallel_merge_node", consultation_parallel_merge_node)
     graph.add_node("consultation_question_interrupt_node", consultation_question_interrupt_node)
     graph.add_node("consultation_final_diagnosis_node", consultation_final_diagnosis_node)
 
+    graph.add_edge(START, "consultation_route_node")
     graph.add_conditional_edges(
-        START,
-        _route_from_entry,
+        "consultation_route_node",
+        _route_after_consultation_route,
         {
+            "consultation_response_node": "consultation_response_node",
             "consultation_collecting_fanout_node": "consultation_collecting_fanout_node",
             "consultation_final_diagnosis_node": "consultation_final_diagnosis_node",
         },
     )
-    graph.add_edge("consultation_collecting_fanout_node", "consultation_comfort_node")
+    graph.add_conditional_edges(
+        "consultation_response_node",
+        _route_after_consultation_response,
+        {
+            END: END,
+            "consultation_parallel_merge_node": "consultation_parallel_merge_node",
+        },
+    )
+    graph.add_edge("consultation_collecting_fanout_node", "consultation_response_node")
     graph.add_edge("consultation_collecting_fanout_node", "consultation_question_node")
-    graph.add_edge("consultation_comfort_node", "consultation_parallel_merge_node")
     graph.add_edge("consultation_question_node", "consultation_parallel_merge_node")
     graph.add_conditional_edges(
         "consultation_parallel_merge_node",
@@ -154,7 +194,7 @@ def build_consultation_graph() -> Any:
             "consultation_final_diagnosis_node": "consultation_final_diagnosis_node",
         },
     )
-    graph.add_edge("consultation_question_interrupt_node", "consultation_collecting_fanout_node")
+    graph.add_edge("consultation_question_interrupt_node", "consultation_route_node")
     graph.add_edge("consultation_final_diagnosis_node", END)
     return graph.compile(checkpointer=_REDIS_CHECKPOINT_SAVER)
 
@@ -164,8 +204,9 @@ _CONSULTATION_GRAPH = build_consultation_graph()
 
 __all__ = [
     "_CONSULTATION_GRAPH",
+    "_route_after_consultation_response",
+    "_route_after_consultation_route",
     "_route_after_parallel_merge",
-    "_route_from_entry",
     "build_consultation_graph",
     "consultation_collecting_fanout_node",
     "consultation_parallel_merge_node",

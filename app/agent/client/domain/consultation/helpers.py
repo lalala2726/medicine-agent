@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from collections.abc import Mapping
 from typing import Any
@@ -10,10 +11,16 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 from pydantic import ValidationError
 
-from app.agent.client.domain.consultation.schema import ConsultationQuestionSchema
+from app.agent.client.domain.consultation.schema import (
+    ConsultationQuestionSchema,
+    ConsultationRouteSchema,
+)
 from app.agent.client.domain.consultation.state import (
-    CONSULTATION_STATUS_COMPLETED,
+    ConsultationFollowupRecordState,
     ConsultationInterruptPayload,
+    ConsultationOutputsState,
+    ConsultationProgressState,
+    ConsultationRouteState,
     ConsultationState,
 )
 from app.agent.client.state import ExecutionTraceState, ToolCallTraceState
@@ -26,8 +33,8 @@ from app.services.token_usage_service import (
 )
 from app.utils.prompt_utils import append_current_time_to_prompt
 
-# consultation 节点兜底的安抚文本。
-DEFAULT_COMFORT_TEXT = "先别太担心，我们先按你已经说到的情况一步步判断。"
+# consultation 节点兜底的医学回应文本。
+DEFAULT_RESPONSE_TEXT = "先按你已经说到的情况处理，优先做基础缓解和观察。"
 # consultation 节点兜底的阶段性分析文本。
 DEFAULT_QUESTION_REPLY_TEXT = "根据你现在提供的信息，我们大致更偏向常见轻症方向，但还需要再确认一个关键点。"
 # consultation 节点兜底的提问标题。
@@ -36,16 +43,26 @@ DEFAULT_QUESTION_TEXT = "为了更准确判断，我还想确认一个症状。"
 DEFAULT_QUESTION_OPTIONS = ["没有", "轻微", "明显", "不确定"]
 # consultation 中断回放兜底文本。
 DEFAULT_REPLY_TEXT = DEFAULT_QUESTION_REPLY_TEXT
+# consultation 路由节点兜底原因。
+DEFAULT_ROUTE_REASON = "当前信息不足以稳定判断，先进入诊断型问询。"
+# consultation 追问兜底槽位。
+DEFAULT_FOLLOWUP_SLOT_KEY = "general_followup"
 # consultation 节点默认温度配置。
 DEFAULT_TEMPERATURE = 0.2
-# consultation 安抚节点模型槽位。
-CONSULTATION_COMFORT_MODEL_SLOT = AgentChatModelSlot.CLIENT_CONSULTATION_COMFORT
+# consultation 子图内部路由节点模型槽位。
+CONSULTATION_ROUTE_MODEL_SLOT = AgentChatModelSlot.CLIENT_ROUTE
+# consultation 医学回应节点模型槽位。
+CONSULTATION_RESPONSE_MODEL_SLOT = AgentChatModelSlot.CLIENT_CONSULTATION_COMFORT
 # consultation 追问节点模型槽位。
 CONSULTATION_QUESTION_MODEL_SLOT = AgentChatModelSlot.CLIENT_CONSULTATION_QUESTION
 # consultation 最终诊断节点模型槽位。
 CONSULTATION_FINAL_DIAGNOSIS_MODEL_SLOT = AgentChatModelSlot.CLIENT_CONSULTATION_FINAL_DIAGNOSIS
-# consultation 子节点统一关闭深度思考。
-CONSULTATION_AGENT_THINK_ENABLED = False
+# consultation 路由节点固定温度。
+CONSULTATION_ROUTE_TEMPERATURE = 0.0
+# consultation 路由节点固定关闭思考。
+CONSULTATION_ROUTE_THINK = False
+# consultation 子节点默认思考开关，仅作为 Redis 覆盖前的本地默认值。
+CONSULTATION_AGENT_DEFAULT_THINK = False
 # consultation 统一分片时单个分片最大长度。
 CONSULTATION_STREAM_CHUNK_MAX_LENGTH = 80
 # consultation 统一分片时优先按更短软长度切分。
@@ -66,6 +83,186 @@ CONSULTATION_FOLLOWUP_SELECTION_MODE = "multiple"
 CONSULTATION_FOLLOWUP_SUBMIT_TEXT = "发送"
 # consultation 追问卡片默认自定义输入占位文案。
 CONSULTATION_FOLLOWUP_CUSTOM_INPUT_PLACEHOLDER = "补充症状或其他感受"
+# consultation 结构化进度提示词标题。
+CONSULTATION_PROGRESS_CONTEXT_TITLE = "以下是当前 consultation 已知的结构化进度"
+
+
+def build_default_consultation_route() -> ConsultationRouteState:
+    """
+    功能描述：
+        构造 consultation 路由状态的默认值。
+
+    参数说明：
+        无。
+
+    返回值：
+        ConsultationRouteState: 默认路由状态。
+
+    异常说明：
+        无。
+    """
+
+    return ConsultationRouteState(
+        next_action="ask_followup",
+        consultation_mode="diagnostic_consultation",
+        reason=DEFAULT_ROUTE_REASON,
+    )
+
+
+def build_default_consultation_progress() -> ConsultationProgressState:
+    """
+    功能描述：
+        构造 consultation 追问进度状态的默认值。
+
+    参数说明：
+        无。
+
+    返回值：
+        ConsultationProgressState: 默认进度状态。
+
+    异常说明：
+        无。
+    """
+
+    return ConsultationProgressState(
+        asked_followups=[],
+        asked_slots=[],
+        answered_slots={},
+        pending_slot_key="",
+    )
+
+
+def build_default_consultation_outputs() -> ConsultationOutputsState:
+    """
+    功能描述：
+        构造 consultation 统一用户可见输出容器的默认值。
+
+    参数说明：
+        无。
+
+    返回值：
+        ConsultationOutputsState: 默认输出容器。
+
+    异常说明：
+        无。
+    """
+
+    return ConsultationOutputsState(
+        response={"text": ""},
+        question={
+            "reply_text": "",
+            "question_text": "",
+            "options": [],
+            "ai_reply_text": "",
+        },
+        final_diagnosis={"text": ""},
+        interrupt={"payload": None},
+    )
+
+
+def resolve_consultation_outputs(
+        state: Mapping[str, Any],
+) -> ConsultationOutputsState:
+    """
+    功能描述：
+        从 consultation state 中提取统一输出容器，并补齐默认结构。
+
+    参数说明：
+        state (Mapping[str, Any]): 当前 consultation 状态。
+
+    返回值：
+        ConsultationOutputsState: 归一化后的统一输出容器。
+
+    异常说明：
+        无。
+    """
+
+    merged_outputs = build_default_consultation_outputs()
+    raw_outputs = state.get("consultation_outputs")
+    if isinstance(raw_outputs, Mapping):
+        for section_name, section_value in raw_outputs.items():
+            if isinstance(section_value, Mapping):
+                merged_section = dict(merged_outputs.get(section_name) or {})
+                merged_section.update(dict(section_value))
+                merged_outputs[section_name] = merged_section
+    return merged_outputs
+
+
+def resolve_consultation_progress(
+        state: Mapping[str, Any],
+) -> ConsultationProgressState:
+    """
+    功能描述：
+        从 consultation state 中提取追问进度状态，并补齐默认结构。
+
+    参数说明：
+        state (Mapping[str, Any]): 当前 consultation 状态。
+
+    返回值：
+        ConsultationProgressState: 归一化后的追问进度状态。
+
+    异常说明：
+        无。
+    """
+
+    progress = build_default_consultation_progress()
+    raw_progress = state.get("consultation_progress")
+    if isinstance(raw_progress, Mapping):
+        progress.update(dict(raw_progress))
+    progress["asked_followups"] = list(progress.get("asked_followups") or [])
+    progress["asked_slots"] = list(progress.get("asked_slots") or [])
+    progress["answered_slots"] = dict(progress.get("answered_slots") or {})
+    progress["pending_slot_key"] = str(progress.get("pending_slot_key") or "").strip()
+    return progress
+
+
+def resolve_consultation_route(
+        state: Mapping[str, Any],
+) -> ConsultationRouteState:
+    """
+    功能描述：
+        从 consultation state 中提取路由结果，并补齐默认结构。
+
+    参数说明：
+        state (Mapping[str, Any]): 当前 consultation 状态。
+
+    返回值：
+        ConsultationRouteState: 归一化后的路由结果。
+
+    异常说明：
+        无。
+    """
+
+    route_state = build_default_consultation_route()
+    raw_route = state.get("consultation_route")
+    if isinstance(raw_route, Mapping):
+        route_state.update(dict(raw_route))
+    return route_state
+
+
+def resolve_consultation_result_text(state: Mapping[str, Any]) -> str:
+    """
+    功能描述：
+        从 consultation state 中解析当前轮最终结果文本。
+
+    参数说明：
+        state (Mapping[str, Any]): 当前 consultation 状态。
+
+    返回值：
+        str: consultation 当前轮最终结果文本。
+
+    异常说明：
+        无。
+    """
+
+    outputs = resolve_consultation_outputs(state)
+    final_text = str((outputs.get("final_diagnosis") or {}).get("text") or "").strip()
+    if final_text:
+        return final_text
+    response_text = str((outputs.get("response") or {}).get("text") or "").strip()
+    if response_text:
+        return response_text
+    return str(state.get("result") or "").strip()
 
 def resolve_payload_text(raw_payload: Any) -> str:
     """
@@ -143,6 +340,7 @@ def resolve_question_result(raw_payload: Any) -> ConsultationQuestionSchema:
             question_reply_text=DEFAULT_QUESTION_REPLY_TEXT,
             question_text=DEFAULT_QUESTION_TEXT,
             options=list(DEFAULT_QUESTION_OPTIONS),
+            slot_key=DEFAULT_FOLLOWUP_SLOT_KEY,
         )
 
     try:
@@ -153,7 +351,257 @@ def resolve_question_result(raw_payload: Any) -> ConsultationQuestionSchema:
             question_reply_text=DEFAULT_QUESTION_REPLY_TEXT,
             question_text=DEFAULT_QUESTION_TEXT,
             options=list(DEFAULT_QUESTION_OPTIONS),
+            slot_key=DEFAULT_FOLLOWUP_SLOT_KEY,
         )
+
+
+def resolve_route_result(raw_payload: Any) -> ConsultationRouteSchema:
+    """
+    功能描述：
+        解析 consultation 路由节点结构化输出。
+
+    参数说明：
+        raw_payload (Any): 路由节点原始 payload。
+
+    返回值：
+        ConsultationRouteSchema: 解析成功或兜底后的路由结果。
+
+    异常说明：
+        无；解析失败时返回兜底结果。
+    """
+
+    parsed_json = parse_json_text(raw_payload)
+    if parsed_json is None:
+        return ConsultationRouteSchema(
+            next_action="ask_followup",
+            consultation_mode="diagnostic_consultation",
+            reason=DEFAULT_ROUTE_REASON,
+        )
+
+    try:
+        return ConsultationRouteSchema.model_validate(parsed_json)
+    except ValidationError:
+        return ConsultationRouteSchema(
+            next_action="ask_followup",
+            consultation_mode="diagnostic_consultation",
+            reason=DEFAULT_ROUTE_REASON,
+        )
+
+
+def normalize_followup_slot_key(raw_slot_key: str | None, *, fallback_text: str) -> str:
+    """
+    功能描述：
+        将追问槽位标识规整为稳定的蛇形 key，用于去重追问。
+
+    参数说明：
+        raw_slot_key (str | None): 模型返回的原始槽位标识。
+        fallback_text (str): 槽位缺失时退化使用的问题文本。
+
+    返回值：
+        str: 归一化后的槽位标识。
+
+    异常说明：
+        无。
+    """
+
+    normalized_source = str(raw_slot_key or "").strip() or str(fallback_text or "").strip()
+    if not normalized_source:
+        return DEFAULT_FOLLOWUP_SLOT_KEY
+
+    normalized_key = re.sub(r"[^0-9a-zA-Z\u4e00-\u9fff]+", "_", normalized_source).strip("_").lower()
+    return normalized_key or DEFAULT_FOLLOWUP_SLOT_KEY
+
+
+def build_progress_context_text(state: ConsultationState) -> str:
+    """
+    功能描述：
+        将 consultation 结构化进度压缩成额外上下文文本，供路由/追问节点读取。
+
+    参数说明：
+        state (ConsultationState): 当前 consultation 状态。
+
+    返回值：
+        str: 结构化进度上下文文本；没有有效内容时返回空串。
+
+    异常说明：
+        无。
+    """
+
+    progress = resolve_consultation_progress(state)
+    asked_followups = list(progress.get("asked_followups") or [])
+    asked_slots = [str(item).strip() for item in progress.get("asked_slots") or [] if str(item).strip()]
+    answered_slots = {
+        str(key).strip(): str(value).strip()
+        for key, value in dict(progress.get("answered_slots") or {}).items()
+        if str(key).strip() and str(value).strip()
+    }
+
+    context_lines: list[str] = [CONSULTATION_PROGRESS_CONTEXT_TITLE]
+    if asked_slots:
+        context_lines.append(f"- 已追问槽位: {', '.join(asked_slots)}")
+    if answered_slots:
+        context_lines.append(
+            "- 已回答槽位: "
+            + ", ".join(f"{slot_key}={slot_value}" for slot_key, slot_value in answered_slots.items())
+        )
+    if asked_followups:
+        recent_followups = asked_followups[-3:]
+        recent_lines = [
+            f"{record.get('slot_key') or DEFAULT_FOLLOWUP_SLOT_KEY}: "
+            f"{str(record.get('question_text') or '').strip()} -> {str(record.get('answer_text') or '').strip()}"
+            for record in recent_followups
+        ]
+        context_lines.append("- 最近追问记录: " + " | ".join(recent_lines))
+
+    if len(context_lines) == 1:
+        return ""
+    return "\n".join(context_lines)
+
+
+def build_consultation_input_messages(
+        *,
+        state: ConsultationState,
+        include_progress_context: bool,
+) -> list[Any]:
+    """
+    功能描述：
+        构造 consultation 节点实际传给模型的消息列表，可按需注入结构化进度上下文。
+
+    参数说明：
+        state (ConsultationState): 当前 consultation 状态。
+        include_progress_context (bool): 是否在消息前追加结构化进度上下文。
+
+    返回值：
+        list[Any]: 最终传给 agent runtime 的消息列表。
+
+    异常说明：
+        无。
+    """
+
+    history_messages = list(state.get("history_messages") or [])
+    if not include_progress_context:
+        return history_messages
+
+    progress_context_text = build_progress_context_text(state)
+    if not progress_context_text:
+        return history_messages
+
+    return [
+        SystemMessage(content=progress_context_text),
+        *history_messages,
+    ]
+
+
+def is_duplicate_followup(
+        *,
+        state: ConsultationState,
+        slot_key: str,
+        question_text: str,
+        options: list[str],
+) -> bool:
+    """
+    功能描述：
+        判断当前准备发出的追问是否与既有追问重复。
+
+    参数说明：
+        state (ConsultationState): 当前 consultation 状态。
+        slot_key (str): 当前追问槽位。
+        question_text (str): 当前追问标题。
+        options (list[str]): 当前追问选项列表。
+
+    返回值：
+        bool: 命中重复追问时返回 `True`。
+
+    异常说明：
+        无。
+    """
+
+    progress = resolve_consultation_progress(state)
+    normalized_slot_key = normalize_followup_slot_key(slot_key, fallback_text=question_text)
+    asked_slots = {
+        str(item).strip().lower()
+        for item in progress.get("asked_slots") or []
+        if str(item).strip()
+    }
+    if normalized_slot_key.lower() in asked_slots:
+        return True
+
+    normalized_question_text = str(question_text or "").strip()
+    normalized_options = [str(item).strip() for item in options if str(item).strip()]
+    for raw_record in progress.get("asked_followups") or []:
+        if not isinstance(raw_record, Mapping):
+            continue
+        record_slot_key = normalize_followup_slot_key(
+            str(raw_record.get("slot_key") or ""),
+            fallback_text=str(raw_record.get("question_text") or ""),
+        )
+        if record_slot_key == normalized_slot_key:
+            return True
+
+        record_question_text = str(raw_record.get("question_text") or "").strip()
+        record_options = [
+            str(item).strip()
+            for item in raw_record.get("options") or []
+            if str(item).strip()
+        ]
+        if record_question_text == normalized_question_text and record_options == normalized_options:
+            return True
+
+    return False
+
+
+def append_followup_progress(
+        *,
+        state: ConsultationState,
+        slot_key: str,
+        question_text: str,
+        options: list[str],
+        answer_text: str,
+) -> ConsultationProgressState:
+    """
+    功能描述：
+        在 interrupt 恢复后将本轮追问与回答写回进度状态。
+
+    参数说明：
+        state (ConsultationState): 当前 consultation 状态。
+        slot_key (str): 当前追问槽位。
+        question_text (str): 当前追问标题。
+        options (list[str]): 当前追问选项列表。
+        answer_text (str): 用户本轮回答文本。
+
+    返回值：
+        ConsultationProgressState: 更新后的进度状态。
+
+    异常说明：
+        无。
+    """
+
+    progress = resolve_consultation_progress(state)
+    normalized_slot_key = normalize_followup_slot_key(slot_key, fallback_text=question_text)
+    normalized_answer_text = str(answer_text or "").strip()
+    normalized_record = ConsultationFollowupRecordState(
+        slot_key=normalized_slot_key,
+        question_text=str(question_text or "").strip() or DEFAULT_QUESTION_TEXT,
+        options=[str(item).strip() for item in options if str(item).strip()] or list(DEFAULT_QUESTION_OPTIONS),
+        answer_text=normalized_answer_text,
+    )
+
+    asked_followups = list(progress.get("asked_followups") or [])
+    asked_followups.append(normalized_record)
+    asked_slots = list(progress.get("asked_slots") or [])
+    if normalized_slot_key not in asked_slots:
+        asked_slots.append(normalized_slot_key)
+
+    answered_slots = dict(progress.get("answered_slots") or {})
+    if normalized_answer_text:
+        answered_slots[normalized_slot_key] = normalized_answer_text
+
+    return ConsultationProgressState(
+        asked_followups=asked_followups,
+        asked_slots=asked_slots,
+        answered_slots=answered_slots,
+        pending_slot_key="",
+    )
 
 
 def build_trace_item(
@@ -261,7 +709,7 @@ def merge_parallel_round_traces(
 ) -> tuple[list[ExecutionTraceState], dict[str, Any] | None]:
     """
     功能描述：
-        合并当前 collecting 轮次的 comfort/question 两条并行 trace。
+        合并当前 collecting 轮次的 response/question 两条并行 trace。
 
     参数说明：
         state (ConsultationState): 当前 consultation 状态。
@@ -278,7 +726,7 @@ def merge_parallel_round_traces(
     merged_traces = list(state.get("execution_traces") or [])
     token_usage = build_token_usage_from_execution_traces(merged_traces)
 
-    for trace_key in ("comfort_trace", "question_trace"):
+    for trace_key in ("response_trace", "question_trace"):
         raw_trace = state.get(trace_key)
         if not isinstance(raw_trace, Mapping):
             continue
@@ -300,7 +748,7 @@ def build_llm_agent(
 ) -> tuple[Any, str]:
     """
     功能描述：
-        构造 consultation 节点使用的 agent。
+        构造 consultation 子节点使用的 agent。
 
     参数说明：
         state (ConsultationState): 当前 consultation 状态。
@@ -321,7 +769,7 @@ def build_llm_agent(
     llm = create_agent_chat_llm(
         slot=slot,
         temperature=temperature,
-        think=CONSULTATION_AGENT_THINK_ENABLED,
+        think=CONSULTATION_AGENT_DEFAULT_THINK,
     )
     llm_model_name = str(getattr(llm, "model_name", "") or "").strip() or "unknown"
     agent = create_agent(
@@ -730,35 +1178,54 @@ __all__ = [
     "CONSULTATION_FOLLOWUP_CUSTOM_INPUT_PLACEHOLDER",
     "CONSULTATION_FOLLOWUP_SELECTION_MODE",
     "CONSULTATION_FOLLOWUP_SUBMIT_TEXT",
-    "CONSULTATION_COMFORT_MODEL_SLOT",
+    "CONSULTATION_AGENT_DEFAULT_THINK",
     "CONSULTATION_FINAL_DIAGNOSIS_MODEL_SLOT",
     "CONSULTATION_QUESTION_MODEL_SLOT",
-    "CONSULTATION_AGENT_THINK_ENABLED",
+    "CONSULTATION_RESPONSE_MODEL_SLOT",
     "CONSULTATION_INTERRUPT_KIND",
+    "CONSULTATION_ROUTE_MODEL_SLOT",
+    "CONSULTATION_ROUTE_TEMPERATURE",
+    "CONSULTATION_ROUTE_THINK",
     "CONSULTATION_STREAM_CHUNK_MAX_LENGTH",
     "CONSULTATION_STREAM_SENTENCE_ENDINGS",
     "CONSULTATION_STREAM_SOFT_BREAKS",
     "CONSULTATION_STREAM_SOFT_CHUNK_LENGTH",
-    "DEFAULT_COMFORT_TEXT",
+    "CONSULTATION_PROGRESS_CONTEXT_TITLE",
+    "DEFAULT_FOLLOWUP_SLOT_KEY",
     "DEFAULT_QUESTION_OPTIONS",
     "DEFAULT_QUESTION_REPLY_TEXT",
     "DEFAULT_QUESTION_TEXT",
     "DEFAULT_REPLY_TEXT",
+    "DEFAULT_RESPONSE_TEXT",
+    "DEFAULT_ROUTE_REASON",
     "DEFAULT_TEMPERATURE",
+    "append_followup_progress",
     "append_resume_messages",
     "append_trace_to_state",
+    "build_consultation_input_messages",
     "build_consultation_graph_config",
     "build_consultation_followup_card_response",
+    "build_default_consultation_outputs",
+    "build_default_consultation_progress",
+    "build_default_consultation_route",
     "build_interrupt_payload",
     "build_llm_agent",
+    "build_progress_context_text",
     "build_text_result",
     "build_trace_item",
+    "is_duplicate_followup",
     "merge_parallel_round_traces",
+    "normalize_followup_slot_key",
     "parse_json_text",
+    "resolve_consultation_outputs",
+    "resolve_consultation_progress",
+    "resolve_consultation_result_text",
+    "resolve_consultation_route",
     "resolve_interrupt_payload",
     "resolve_natural_language_text",
     "resolve_payload_text",
     "resolve_question_result",
+    "resolve_route_result",
     "resolve_resume_text",
     "split_consultation_stream_text",
 ]

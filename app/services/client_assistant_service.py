@@ -12,6 +12,7 @@ from app.agent.client.domain.consultation.agent import has_pending_consultation_
 from app.agent.client.domain.consultation.graph import _CONSULTATION_GRAPH
 from app.agent.client.domain.consultation.helpers import (
     build_consultation_followup_card_response,
+    resolve_consultation_result_text,
     resolve_interrupt_payload,
 )
 from app.agent.client.workflow import build_graph
@@ -445,7 +446,7 @@ def assistant_chat(
             )
         ),
         extract_final_content=(
-            (lambda state: str(state.get("final_text") or state.get("result") or ""))
+            (lambda state: resolve_consultation_result_text(state))
             if should_resume_consultation
             else (lambda state: str(state.get("result") or ""))
         ),

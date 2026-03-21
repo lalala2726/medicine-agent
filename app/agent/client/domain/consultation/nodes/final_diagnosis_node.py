@@ -9,6 +9,7 @@ from langchain_core.messages import SystemMessage
 from app.agent.client.domain.consultation.helpers import (
     CONSULTATION_FINAL_DIAGNOSIS_MODEL_SLOT,
     append_trace_to_state,
+    build_consultation_input_messages,
     build_trace_item,
     resolve_natural_language_text,
 )
@@ -22,7 +23,7 @@ from app.agent.client.domain.product.tools import (
     search_products,
 )
 from app.agent.client.domain.tools.card_tools import send_product_purchase_card
-from app.core.agent.agent_event_bus import emit_answer_delta
+from app.core.agent.agent_event_bus import emit_answer_delta, emit_thinking_delta
 from app.core.agent.agent_runtime import agent_stream
 from app.core.agent.agent_tool_trace import record_agent_trace
 from app.core.agent.base_prompt_middleware import BasePromptMiddleware
@@ -52,7 +53,10 @@ def consultation_final_diagnosis_node(state: ConsultationState) -> dict[str, obj
         无；节点执行异常由上层 workflow 统一处理。
     """
 
-    history_messages = list(state.get("history_messages") or [])
+    input_messages = build_consultation_input_messages(
+        state=state,
+        include_progress_context=True,
+    )
     llm = create_agent_chat_llm(
         slot=CONSULTATION_FINAL_DIAGNOSIS_MODEL_SLOT,
         temperature=0.2,
@@ -77,12 +81,13 @@ def consultation_final_diagnosis_node(state: ConsultationState) -> dict[str, obj
     )
     stream_result = agent_stream(
         diagnosis_agent,
-        history_messages,
+        input_messages,
         on_model_delta=emit_answer_delta,
+        on_thinking_delta=emit_thinking_delta,
     )
     trace_payload = record_agent_trace(
         payload=stream_result,
-        input_messages=history_messages,
+        input_messages=input_messages,
         fallback_text=str(stream_result.get("streamed_text") or ""),
     )
     final_text = resolve_natural_language_text(
@@ -106,12 +111,16 @@ def consultation_final_diagnosis_node(state: ConsultationState) -> dict[str, obj
     return {
         "consultation_status": CONSULTATION_STATUS_COMPLETED,
         "diagnosis_ready": True,
-        "comfort_text": "",
-        "question_reply_text": "",
-        "pending_question_text": "",
-        "pending_question_options": [],
-        "pending_ai_reply_text": "",
-        "final_text": final_text,
+        "consultation_outputs": {
+            "final_diagnosis": {"text": final_text},
+            "response": {"text": ""},
+            "question": {
+                "reply_text": "",
+                "question_text": "",
+                "options": [],
+                "ai_reply_text": "",
+            },
+        },
         "diagnosis_trace": diagnosis_trace,
         "execution_traces": execution_traces,
         "token_usage": token_usage,

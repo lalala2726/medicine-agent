@@ -403,7 +403,9 @@ def test_assistant_chat_resume_consultation_uses_command_resume(monkeypatch):
     assert isinstance(resume_command, Command)
     assert resume_command.resume == "低烧两天了"
     assert stream_config.workflow is fake_consultation_graph
-    assert stream_config.extract_final_content({"final_text": "最终诊断"}) == "最终诊断"
+    assert stream_config.extract_final_content(
+        {"consultation_outputs": {"final_diagnosis": {"text": "最终诊断"}}}
+    ) == "最终诊断"
     assert stream_config.should_stream_token("consultation_diagnosis_node", {}) is False
     assert stream_config.build_stream_config()["configurable"]["thread_id"] == "client-conv-1"
     assert persisted_calls == [

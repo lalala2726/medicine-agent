@@ -8,6 +8,10 @@ from app.agent.client.domain.consultation.graph import _CONSULTATION_GRAPH
 from app.agent.client.domain.consultation.helpers import (
     CONSULTATION_CHECKPOINT_NAMESPACE,
     build_consultation_graph_config,
+    build_default_consultation_outputs,
+    build_default_consultation_progress,
+    build_default_consultation_route,
+    resolve_consultation_result_text,
 )
 from app.agent.client.domain.consultation.state import (
     CONSULTATION_STATUS_COLLECTING,
@@ -45,15 +49,11 @@ def _build_consultation_initial_state(state: AgentState) -> ConsultationState:
         task_difficulty=task_difficulty or "normal",
         consultation_status=CONSULTATION_STATUS_COLLECTING,
         diagnosis_ready=False,
-        comfort_text="",
-        question_reply_text="",
-        pending_question_text="",
-        pending_question_options=[],
-        pending_ai_reply_text="",
-        final_text="",
+        consultation_route=build_default_consultation_route(),
+        consultation_progress=build_default_consultation_progress(),
+        consultation_outputs=build_default_consultation_outputs(),
         execution_traces=[],
         token_usage=None,
-        interrupt_payload=None,
         last_resume_text="",
         result="",
         messages=[],
@@ -131,7 +131,7 @@ def consultation_agent(
         trace_payload["sequence"] = len(existing_traces) + offset
         execution_traces.append(trace_payload)
 
-    final_text = str(graph_result.get("final_text") or graph_result.get("result") or "").strip()
+    final_text = resolve_consultation_result_text(graph_result)
     token_usage = build_token_usage_from_execution_traces(execution_traces)
 
     return {

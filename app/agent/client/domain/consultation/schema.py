@@ -2,6 +2,41 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.agent.client.domain.consultation.state import (
+    ConsultationModeValue,
+    ConsultationNextActionValue,
+)
+
+
+class ConsultationRouteSchema(BaseModel):
+    """consultation 子图内路由节点结构化输出。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    next_action: ConsultationNextActionValue = Field(description="本轮 consultation 的下一步动作。")
+    consultation_mode: ConsultationModeValue = Field(description="当前会话属于简单医学询问还是诊断型咨询。")
+    reason: str = Field(description="路由节点给出的简要原因说明。")
+
+    @field_validator("reason")
+    @classmethod
+    def _normalize_reason(cls, value: str) -> str:
+        """
+        功能描述：
+            清理路由原因文本的首尾空白。
+
+        参数说明：
+            value (str): 原始原因文本。
+
+        返回值：
+            str: 清理后的原因文本。
+
+        异常说明：
+            无。
+        """
+
+        normalized = str(value or "").strip()
+        return normalized or "未说明原因"
+
 
 class ConsultationQuestionSchema(BaseModel):
     """consultation 追问节点结构化输出。"""
@@ -12,8 +47,9 @@ class ConsultationQuestionSchema(BaseModel):
     question_reply_text: str | None = Field(default=None, description="继续追问前展示给用户的阶段性分析文本。")
     question_text: str | None = Field(default=None, description="选择卡片标题使用的核心问题。")
     options: list[str] = Field(default_factory=list, description="用于选择卡片的互斥选项列表。")
+    slot_key: str | None = Field(default=None, description="当前追问对应的结构化槽位标识，用于去重追问。")
 
-    @field_validator("question_reply_text", "question_text")
+    @field_validator("question_reply_text", "question_text", "slot_key")
     @classmethod
     def _normalize_optional_text(cls, value: str | None) -> str | None:
         """
@@ -82,12 +118,15 @@ class ConsultationQuestionSchema(BaseModel):
             self.question_reply_text = None
             self.question_text = None
             self.options = []
+            self.slot_key = None
             return self
 
         if not self.question_reply_text:
             raise ValueError("diagnosis_ready=false 时 question_reply_text 不能为空")
         if not self.question_text:
             raise ValueError("diagnosis_ready=false 时 question_text 不能为空")
+        if not self.slot_key:
+            raise ValueError("diagnosis_ready=false 时 slot_key 不能为空")
         if len(self.options) < 2:
             raise ValueError("diagnosis_ready=false 时 options 至少需要 2 项")
         if len(self.options) > 4:
@@ -96,5 +135,6 @@ class ConsultationQuestionSchema(BaseModel):
 
 
 __all__ = [
+    "ConsultationRouteSchema",
     "ConsultationQuestionSchema",
 ]
