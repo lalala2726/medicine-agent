@@ -203,6 +203,15 @@ def _normalize_chat_slot(slot: AgentChatModelSlot | str) -> AgentChatModelSlot:
     return AgentChatModelSlot(str(slot).strip())
 
 
+def _is_gateway_route_slot(slot: AgentChatModelSlot) -> bool:
+    """判断当前聊天槽位是否属于 Gateway 路由节点。"""
+
+    return slot in {
+        AgentChatModelSlot.ADMIN_ROUTE,
+        AgentChatModelSlot.CLIENT_ROUTE,
+    }
+
+
 def _resolve_slot_overrides(
         slot_config: AgentModelSlotConfig | None,
         *,
@@ -307,7 +316,7 @@ def create_agent_chat_llm(
     )
 
     resolved_model = _resolve_slot_runtime_model_name(slot_config)
-    if resolved_model is None and normalized_slot is AgentChatModelSlot.ROUTE:
+    if resolved_model is None and _is_gateway_route_slot(normalized_slot):
         resolved_model = _resolve_gateway_router_fallback_model_name()
 
     return create_chat_model(

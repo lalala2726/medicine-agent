@@ -114,7 +114,7 @@ def gateway_router(state: AgentState) -> dict[str, Any]:
     """执行 client gateway 路由节点。"""
 
     llm = create_agent_chat_llm(
-        slot=AgentChatModelSlot.ROUTE,
+        slot=AgentChatModelSlot.CLIENT_ROUTE,
         temperature=0.0,
         think=False,
     )

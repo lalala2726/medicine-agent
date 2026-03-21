@@ -22,16 +22,24 @@ from app.core.llms.providers.volcengine import DEFAULT_VOLCENGINE_BASE_URL
 #: Redis 中保存 Agent 全量运行时配置的固定 key。
 AGENT_CONFIG_REDIS_KEY = "agent:config:all"
 #: 当前支持的 Agent 配置快照 schema 版本。
-AGENT_CONFIG_SCHEMA_VERSION = 3
+AGENT_CONFIG_SCHEMA_VERSION = 4
 
 
 class AgentChatModelSlot(str, Enum):
-    """管理助手聊天模型槽位。"""
+    """Agent 聊天模型槽位。"""
 
-    ROUTE = "routeModel"
-    CHAT = "chatModel"
-    BUSINESS_SIMPLE = "businessNodeSimpleModel"
-    BUSINESS_COMPLEX = "businessNodeComplexModel"
+    ADMIN_ROUTE = "adminAssistant.routeModel"
+    ADMIN_CHAT = "adminAssistant.chatModel"
+    ADMIN_BUSINESS_SIMPLE = "adminAssistant.businessNodeSimpleModel"
+    ADMIN_BUSINESS_COMPLEX = "adminAssistant.businessNodeComplexModel"
+    CLIENT_ROUTE = "clientAssistant.routeModel"
+    CLIENT_CHAT = "clientAssistant.chatModel"
+    CLIENT_ORDER = "clientAssistant.orderModel"
+    CLIENT_PRODUCT = "clientAssistant.productModel"
+    CLIENT_AFTER_SALE = "clientAssistant.afterSaleModel"
+    CLIENT_CONSULTATION_COMFORT = "clientAssistant.consultationComfortModel"
+    CLIENT_CONSULTATION_QUESTION = "clientAssistant.consultationQuestionModel"
+    CLIENT_CONSULTATION_FINAL_DIAGNOSIS = "clientAssistant.consultationFinalDiagnosisModel"
 
 
 class AgentImageModelSlot(str, Enum):
@@ -84,7 +92,7 @@ _LOAD_REASON_LABELS: dict[AgentConfigLoadReason, str] = {
     AgentConfigLoadReason.INVALID_SCHEMA: "配置结构校验失败",
 }
 
-#: V3 结构允许的 LLM providerType 列表。
+#: V4 结构允许的 LLM providerType 列表。
 _SUPPORTED_PROVIDER_TYPES = {"openai", "aliyun", "volcengine"}
 #: 本地 `.env` 中知识库名称列表的回退配置键。
 _ENV_AGENT_KNOWLEDGE_NAMES = "AGENT_KNOWLEDGE_NAMES"
@@ -357,7 +365,7 @@ class AgentModelRuntimeConfig(BaseModel):
     @field_validator("provider_type", mode="before")
     @classmethod
     def _normalize_provider_type(cls, value: Any) -> str | None:
-        """归一化 V3 顶层 `providerType` 字段。
+        """归一化 V4 顶层 `providerType` 字段。
 
         Args:
             value: Redis 中的原始 providerType 值。
@@ -515,6 +523,30 @@ class AdminAssistantAgentConfig(BaseModel):
     chat_model: AgentModelSlotConfig | None = Field(default=None, alias="chatModel")
 
 
+class ClientAssistantAgentConfig(BaseModel):
+    """客户端助手配置。"""
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    route_model: AgentModelSlotConfig | None = Field(default=None, alias="routeModel")
+    chat_model: AgentModelSlotConfig | None = Field(default=None, alias="chatModel")
+    order_model: AgentModelSlotConfig | None = Field(default=None, alias="orderModel")
+    product_model: AgentModelSlotConfig | None = Field(default=None, alias="productModel")
+    after_sale_model: AgentModelSlotConfig | None = Field(default=None, alias="afterSaleModel")
+    consultation_comfort_model: AgentModelSlotConfig | None = Field(
+        default=None,
+        alias="consultationComfortModel",
+    )
+    consultation_question_model: AgentModelSlotConfig | None = Field(
+        default=None,
+        alias="consultationQuestionModel",
+    )
+    consultation_final_diagnosis_model: AgentModelSlotConfig | None = Field(
+        default=None,
+        alias="consultationFinalDiagnosisModel",
+    )
+
+
 class ImageRecognitionAgentConfig(BaseModel):
     """图片识别配置。"""
 
@@ -549,12 +581,13 @@ class ChatTitleAgentConfig(BaseModel):
 
 
 class AgentConfigsConfig(BaseModel):
-    """V3 顶层 `agentConfigs` 容器。"""
+    """V4 顶层 `agentConfigs` 容器。"""
 
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
     knowledge_base: KnowledgeBaseAgentConfig | None = Field(default=None, alias="knowledgeBase")
     admin_assistant: AdminAssistantAgentConfig | None = Field(default=None, alias="adminAssistant")
+    client_assistant: ClientAssistantAgentConfig | None = Field(default=None, alias="clientAssistant")
     image_recognition: ImageRecognitionAgentConfig | None = Field(
         default=None,
         alias="imageRecognition",
@@ -662,7 +695,7 @@ class AgentConfigSnapshot(BaseModel):
         return self.llm
 
     def get_chat_slot(self, slot: AgentChatModelSlot) -> AgentModelSlotConfig | None:
-        """根据聊天槽位枚举读取管理助手对应槽位配置。
+        """根据聊天槽位枚举读取对应业务槽位配置。
 
         Args:
             slot: 目标聊天槽位。
@@ -672,17 +705,44 @@ class AgentConfigSnapshot(BaseModel):
         """
 
         agent_configs = self.agent_configs
-        if agent_configs is None or agent_configs.admin_assistant is None:
+        if agent_configs is None:
             return None
-        admin_assistant = agent_configs.admin_assistant
-        if slot is AgentChatModelSlot.ROUTE:
-            return admin_assistant.route_model
-        if slot is AgentChatModelSlot.CHAT:
-            return admin_assistant.chat_model
-        if slot is AgentChatModelSlot.BUSINESS_SIMPLE:
-            return admin_assistant.business_node_simple_model
-        if slot is AgentChatModelSlot.BUSINESS_COMPLEX:
-            return admin_assistant.business_node_complex_model
+        if slot is AgentChatModelSlot.ADMIN_ROUTE:
+            admin_assistant = agent_configs.admin_assistant
+            return None if admin_assistant is None else admin_assistant.route_model
+        if slot is AgentChatModelSlot.ADMIN_CHAT:
+            admin_assistant = agent_configs.admin_assistant
+            return None if admin_assistant is None else admin_assistant.chat_model
+        if slot is AgentChatModelSlot.ADMIN_BUSINESS_SIMPLE:
+            admin_assistant = agent_configs.admin_assistant
+            return None if admin_assistant is None else admin_assistant.business_node_simple_model
+        if slot is AgentChatModelSlot.ADMIN_BUSINESS_COMPLEX:
+            admin_assistant = agent_configs.admin_assistant
+            return None if admin_assistant is None else admin_assistant.business_node_complex_model
+        if slot is AgentChatModelSlot.CLIENT_ROUTE:
+            client_assistant = agent_configs.client_assistant
+            return None if client_assistant is None else client_assistant.route_model
+        if slot is AgentChatModelSlot.CLIENT_CHAT:
+            client_assistant = agent_configs.client_assistant
+            return None if client_assistant is None else client_assistant.chat_model
+        if slot is AgentChatModelSlot.CLIENT_ORDER:
+            client_assistant = agent_configs.client_assistant
+            return None if client_assistant is None else client_assistant.order_model
+        if slot is AgentChatModelSlot.CLIENT_PRODUCT:
+            client_assistant = agent_configs.client_assistant
+            return None if client_assistant is None else client_assistant.product_model
+        if slot is AgentChatModelSlot.CLIENT_AFTER_SALE:
+            client_assistant = agent_configs.client_assistant
+            return None if client_assistant is None else client_assistant.after_sale_model
+        if slot is AgentChatModelSlot.CLIENT_CONSULTATION_COMFORT:
+            client_assistant = agent_configs.client_assistant
+            return None if client_assistant is None else client_assistant.consultation_comfort_model
+        if slot is AgentChatModelSlot.CLIENT_CONSULTATION_QUESTION:
+            client_assistant = agent_configs.client_assistant
+            return None if client_assistant is None else client_assistant.consultation_question_model
+        if slot is AgentChatModelSlot.CLIENT_CONSULTATION_FINAL_DIAGNOSIS:
+            client_assistant = agent_configs.client_assistant
+            return None if client_assistant is None else client_assistant.consultation_final_diagnosis_model
         return None
 
     def get_image_slot(self) -> AgentModelSlotConfig | None:
@@ -1022,8 +1082,8 @@ def _unwrap_snapshot_payload_root(*, data: Any) -> dict[str, Any]:
     return wrapped_data
 
 
-def _ensure_snapshot_matches_v3(snapshot: AgentConfigSnapshot) -> AgentConfigSnapshot:
-    """校验快照是否满足 V3 Redis 结构要求。
+def _ensure_snapshot_matches_v4(snapshot: AgentConfigSnapshot) -> AgentConfigSnapshot:
+    """校验快照是否满足 V4 Redis 结构要求。
 
     Args:
         snapshot: 已通过 Pydantic 基础校验的快照对象。
@@ -1032,13 +1092,13 @@ def _ensure_snapshot_matches_v3(snapshot: AgentConfigSnapshot) -> AgentConfigSna
         AgentConfigSnapshot: 原样返回当前快照对象。
 
     Raises:
-        AgentConfigLoadError: 当快照未满足 V3 必填结构时抛出。
+        AgentConfigLoadError: 当快照未满足 V4 必填结构时抛出。
     """
 
     if snapshot.schema_version != AGENT_CONFIG_SCHEMA_VERSION:
         raise AgentConfigLoadError(
             AgentConfigLoadReason.INVALID_SCHEMA,
-            "Agent config payload schemaVersion must be 3",
+            "Agent config payload schemaVersion must be 4",
         )
     if snapshot.llm is None:
         raise AgentConfigLoadError(
@@ -1106,7 +1166,7 @@ def _load_snapshot_from_redis(*, redis_key: str) -> AgentConfigSnapshot:
             AgentConfigLoadReason.INVALID_SCHEMA,
             "Agent config payload schema is invalid",
         ) from exc
-    return _ensure_snapshot_matches_v3(snapshot)
+    return _ensure_snapshot_matches_v4(snapshot)
 
 
 def _set_current_snapshot(snapshot: AgentConfigSnapshot, *, source: AgentConfigSource) -> None:

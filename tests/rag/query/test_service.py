@@ -72,7 +72,7 @@ def _build_snapshot(
 
     return AgentConfigSnapshot.model_validate(
         {
-            "schemaVersion": 3,
+            "schemaVersion": 4,
             "updatedAt": "2026-03-14T10:30:00+08:00",
             "updatedBy": "admin",
             "llm": {
@@ -404,7 +404,7 @@ def test_query_knowledge_by_raw_question_falls_back_to_default_top_k(
     hits = service_module.query_knowledge_by_raw_question(question="感冒药", top_k=None)
 
     assert hits == []
-    assert captured["final_top_k"] == service_module.RAG_DEFAULT_FINAL_TOP_K
+    assert captured["final_top_k"] == service_module.runtime_module.RAG_DEFAULT_FINAL_TOP_K
 
 
 def test_search_knowledge_hits_evenly_distributes_recall_without_ranking(

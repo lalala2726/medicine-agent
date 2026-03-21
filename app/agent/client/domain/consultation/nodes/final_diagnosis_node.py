@@ -7,6 +7,7 @@ from langchain.agents.middleware import ToolCallLimitMiddleware
 from langchain_core.messages import SystemMessage
 
 from app.agent.client.domain.consultation.helpers import (
+    CONSULTATION_FINAL_DIAGNOSIS_MODEL_SLOT,
     append_trace_to_state,
     build_trace_item,
     resolve_natural_language_text,
@@ -25,7 +26,7 @@ from app.core.agent.agent_event_bus import emit_answer_delta
 from app.core.agent.agent_runtime import agent_stream
 from app.core.agent.agent_tool_trace import record_agent_trace
 from app.core.agent.base_prompt_middleware import BasePromptMiddleware
-from app.core.config_sync import AgentChatModelSlot, create_agent_chat_llm
+from app.core.config_sync import create_agent_chat_llm
 from app.core.langsmith import traceable
 from app.utils.prompt_utils import append_current_time_to_prompt, load_prompt
 
@@ -53,7 +54,7 @@ def consultation_final_diagnosis_node(state: ConsultationState) -> dict[str, obj
 
     history_messages = list(state.get("history_messages") or [])
     llm = create_agent_chat_llm(
-        slot=AgentChatModelSlot.BUSINESS_COMPLEX,
+        slot=CONSULTATION_FINAL_DIAGNOSIS_MODEL_SLOT,
         temperature=0.2,
         think=False,
     )

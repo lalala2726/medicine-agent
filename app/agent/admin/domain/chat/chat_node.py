@@ -62,7 +62,7 @@ def chat_agent(state: AgentState) -> dict[str, Any]:
     knowledge_enabled = get_current_agent_config_snapshot().is_knowledge_enabled()
     tools = _build_chat_tools(knowledge_enabled=knowledge_enabled)
     llm = create_agent_chat_llm(
-        slot=AgentChatModelSlot.CHAT,
+        slot=AgentChatModelSlot.ADMIN_CHAT,
         temperature=1.3,
     )
     llm_model_name = str(getattr(llm, "model_name", "") or "").strip()

@@ -103,7 +103,7 @@ def test_consultation_agent_maps_subgraph_result_to_parent_state(monkeypatch):
     assert result["token_usage"]["total_tokens"] == 7
 
 
-def test_build_llm_agent_uses_business_complex_slot(monkeypatch):
+def test_build_llm_agent_uses_consultation_slot(monkeypatch):
     captured_llm_kwargs: dict[str, object] = {}
     captured_agent_kwargs: dict[str, object] = {}
 
@@ -130,11 +130,12 @@ def test_build_llm_agent_uses_business_complex_slot(monkeypatch):
         state={"task_difficulty": "normal"},
         prompt_text="这是 consultation 测试提示词。",
         temperature=0.35,
+        slot=AgentChatModelSlot.CLIENT_CONSULTATION_QUESTION,
     )
 
     assert agent is not None
     assert llm_model_name == "consultation-complex-model"
-    assert captured_llm_kwargs["slot"] is AgentChatModelSlot.BUSINESS_COMPLEX
+    assert captured_llm_kwargs["slot"] is AgentChatModelSlot.CLIENT_CONSULTATION_QUESTION
     assert captured_llm_kwargs["temperature"] == 0.35
     assert captured_llm_kwargs["think"] is False
     assert captured_agent_kwargs["model"].model_name == "consultation-complex-model"
@@ -468,7 +469,7 @@ def test_consultation_final_diagnosis_node_uses_complex_slot_tool_agent(monkeypa
 
     tool_names = [tool.name for tool in captured_agent_kwargs["tools"]]
 
-    assert captured_llm_kwargs["slot"] is AgentChatModelSlot.BUSINESS_COMPLEX
+    assert captured_llm_kwargs["slot"] is AgentChatModelSlot.CLIENT_CONSULTATION_FINAL_DIAGNOSIS
     assert captured_llm_kwargs["temperature"] == 0.2
     assert captured_llm_kwargs["think"] is False
     assert tool_names == [

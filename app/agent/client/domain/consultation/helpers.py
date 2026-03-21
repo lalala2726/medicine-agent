@@ -38,8 +38,12 @@ DEFAULT_QUESTION_OPTIONS = ["没有", "轻微", "明显", "不确定"]
 DEFAULT_REPLY_TEXT = DEFAULT_QUESTION_REPLY_TEXT
 # consultation 节点默认温度配置。
 DEFAULT_TEMPERATURE = 0.2
-# consultation 子节点统一使用 Redis 配置中的复杂业务槽位。
-CONSULTATION_AGENT_MODEL_SLOT = AgentChatModelSlot.BUSINESS_COMPLEX
+# consultation 安抚节点模型槽位。
+CONSULTATION_COMFORT_MODEL_SLOT = AgentChatModelSlot.CLIENT_CONSULTATION_COMFORT
+# consultation 追问节点模型槽位。
+CONSULTATION_QUESTION_MODEL_SLOT = AgentChatModelSlot.CLIENT_CONSULTATION_QUESTION
+# consultation 最终诊断节点模型槽位。
+CONSULTATION_FINAL_DIAGNOSIS_MODEL_SLOT = AgentChatModelSlot.CLIENT_CONSULTATION_FINAL_DIAGNOSIS
 # consultation 子节点统一关闭深度思考。
 CONSULTATION_AGENT_THINK_ENABLED = False
 # consultation 统一分片时单个分片最大长度。
@@ -290,6 +294,7 @@ def merge_parallel_round_traces(
 def build_llm_agent(
         *,
         state: ConsultationState,
+        slot: AgentChatModelSlot,
         prompt_text: str,
         temperature: float = DEFAULT_TEMPERATURE,
 ) -> tuple[Any, str]:
@@ -299,6 +304,7 @@ def build_llm_agent(
 
     参数说明：
         state (ConsultationState): 当前 consultation 状态。
+        slot (AgentChatModelSlot): 当前节点绑定的客户端助手模型槽位。
         prompt_text (str): 节点系统提示词。
         temperature (float): 模型温度。
 
@@ -313,7 +319,7 @@ def build_llm_agent(
 
     _ = state
     llm = create_agent_chat_llm(
-        slot=CONSULTATION_AGENT_MODEL_SLOT,
+        slot=slot,
         temperature=temperature,
         think=CONSULTATION_AGENT_THINK_ENABLED,
     )
@@ -724,7 +730,9 @@ __all__ = [
     "CONSULTATION_FOLLOWUP_CUSTOM_INPUT_PLACEHOLDER",
     "CONSULTATION_FOLLOWUP_SELECTION_MODE",
     "CONSULTATION_FOLLOWUP_SUBMIT_TEXT",
-    "CONSULTATION_AGENT_MODEL_SLOT",
+    "CONSULTATION_COMFORT_MODEL_SLOT",
+    "CONSULTATION_FINAL_DIAGNOSIS_MODEL_SLOT",
+    "CONSULTATION_QUESTION_MODEL_SLOT",
     "CONSULTATION_AGENT_THINK_ENABLED",
     "CONSULTATION_INTERRUPT_KIND",
     "CONSULTATION_STREAM_CHUNK_MAX_LENGTH",

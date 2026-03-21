@@ -12,7 +12,7 @@ from app.core.config_sync import llm as llm_factory
 def _build_snapshot() -> AgentConfigSnapshot:
     return AgentConfigSnapshot.model_validate(
         {
-            "schemaVersion": 3,
+            "schemaVersion": 4,
             "updatedAt": "2026-03-11T14:30:00+08:00",
             "updatedBy": "admin",
             "llm": {
@@ -35,6 +35,32 @@ def _build_snapshot() -> AgentConfigSnapshot:
                         "reasoningEnabled": True,
                         "maxTokens": 4096,
                         "temperature": 0.2,
+                    },
+                    "chatModel": {
+                        "modelName": "gpt-admin-chat-redis",
+                        "reasoningEnabled": False,
+                        "maxTokens": 2048,
+                        "temperature": 0.4,
+                    },
+                },
+                "clientAssistant": {
+                    "routeModel": {
+                        "modelName": "gpt-client-route-redis",
+                        "reasoningEnabled": False,
+                        "maxTokens": 1024,
+                        "temperature": 0.1,
+                    },
+                    "chatModel": {
+                        "modelName": "gpt-client-chat-redis",
+                        "reasoningEnabled": True,
+                        "maxTokens": 4096,
+                        "temperature": 0.7,
+                    },
+                    "orderModel": {
+                        "modelName": "gpt-client-order-redis",
+                        "reasoningEnabled": False,
+                        "maxTokens": 3072,
+                        "temperature": 0.3,
                     },
                 },
                 "imageRecognition": {
@@ -76,7 +102,7 @@ def test_create_agent_chat_llm_prefers_redis_slot_over_local_defaults(
     monkeypatch.setattr(llm_factory, "create_chat_model", lambda **kwargs: captured.update(kwargs) or "llm")
 
     result = llm_factory.create_agent_chat_llm(
-        slot=AgentChatModelSlot.ROUTE,
+        slot=AgentChatModelSlot.ADMIN_ROUTE,
         temperature=1.0,
         think=False,
         max_tokens=512,
@@ -104,7 +130,7 @@ def test_create_agent_chat_llm_uses_gateway_env_fallback_when_slot_missing(
     monkeypatch.setattr(llm_factory, "create_chat_model", lambda **kwargs: captured.update(kwargs) or "llm")
 
     result = llm_factory.create_agent_chat_llm(
-        slot=AgentChatModelSlot.ROUTE,
+        slot=AgentChatModelSlot.ADMIN_ROUTE,
         temperature=0.0,
         think=False,
     )
@@ -127,7 +153,7 @@ def test_create_agent_chat_llm_treats_zero_max_tokens_as_unlimited(
     monkeypatch.setattr(llm_factory, "create_chat_model", lambda **kwargs: captured.update(kwargs) or "llm")
 
     result = llm_factory.create_agent_chat_llm(
-        slot=AgentChatModelSlot.ROUTE,
+        slot=AgentChatModelSlot.ADMIN_ROUTE,
         temperature=0.0,
         think=False,
         max_tokens=0,
@@ -184,7 +210,7 @@ def test_resolve_agent_image_runtime_uses_provider_specific_env_fallback_when_sl
 
     snapshot = AgentConfigSnapshot.model_validate(
         {
-            "schemaVersion": 3,
+            "schemaVersion": 4,
             "updatedAt": "2026-03-11T14:30:00+08:00",
             "updatedBy": "admin",
             "llm": {
@@ -212,7 +238,7 @@ def test_resolve_agent_image_runtime_raises_provider_specific_model_error_when_m
 
     snapshot = AgentConfigSnapshot.model_validate(
         {
-            "schemaVersion": 3,
+            "schemaVersion": 4,
             "updatedAt": "2026-03-11T14:30:00+08:00",
             "updatedBy": "admin",
             "llm": {
@@ -236,7 +262,7 @@ def test_resolve_agent_image_runtime_raises_provider_specific_api_key_error_when
 
     snapshot = AgentConfigSnapshot.model_validate(
         {
-            "schemaVersion": 3,
+            "schemaVersion": 4,
             "updatedAt": "2026-03-11T14:30:00+08:00",
             "updatedBy": "admin",
             "llm": {
@@ -329,7 +355,7 @@ def test_summary_slot_zero_max_tokens_means_unlimited(
 
     snapshot = AgentConfigSnapshot.model_validate(
         {
-            "schemaVersion": 3,
+            "schemaVersion": 4,
             "updatedAt": "2026-03-11T14:30:00+08:00",
             "updatedBy": "admin",
             "llm": {
@@ -359,6 +385,29 @@ def test_summary_slot_zero_max_tokens_means_unlimited(
     assert captured["model"] == "gpt-summary-redis"
     assert "max_tokens" not in captured
     assert llm_factory.resolve_agent_summary_max_tokens() is None
+
+
+def test_create_agent_chat_llm_reads_client_slot_from_client_assistant_tree(
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """测试目的：client 槽位应从 clientAssistant 子树读取；预期结果：命中独立 clientAssistant.orderModel 配置。"""
+
+    captured: dict[str, Any] = {}
+    monkeypatch.setattr(llm_factory, "get_current_agent_config_snapshot", _build_snapshot)
+    monkeypatch.setattr(llm_factory, "create_chat_model", lambda **kwargs: captured.update(kwargs) or "llm")
+
+    result = llm_factory.create_agent_chat_llm(
+        slot=AgentChatModelSlot.CLIENT_ORDER,
+        temperature=1.0,
+        think=True,
+        max_tokens=512,
+    )
+
+    assert result == "llm"
+    assert captured["model"] == "gpt-client-order-redis"
+    assert captured["temperature"] == 0.3
+    assert captured["max_tokens"] == 3072
+    assert captured["think"] is False
 
 
 def test_create_agent_embedding_client_prefers_explicit_model_name(
@@ -415,4 +464,4 @@ def test_model_switch_returns_complex_slot_for_high_difficulty() -> None:
 
     slot = model_switch({"routing": {"task_difficulty": "high"}})
 
-    assert slot is AgentChatModelSlot.BUSINESS_COMPLEX
+    assert slot is AgentChatModelSlot.ADMIN_BUSINESS_COMPLEX

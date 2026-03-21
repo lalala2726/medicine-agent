@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.agent.client.domain.consultation.helpers import (
+    CONSULTATION_COMFORT_MODEL_SLOT,
     DEFAULT_COMFORT_TEXT,
     build_llm_agent,
     build_trace_item,
@@ -36,6 +37,7 @@ def consultation_comfort_node(state: ConsultationState) -> dict[str, object]:
     history_messages = list(state.get("history_messages") or [])
     agent, llm_model_name = build_llm_agent(
         state=state,
+        slot=CONSULTATION_COMFORT_MODEL_SLOT,
         temperature=1.3,
         prompt_text=CONSULTATION_COMFORT_PROMPT,
     )

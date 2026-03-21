@@ -174,7 +174,7 @@ def gateway_router(state: AgentState) -> dict[str, Any]:
     """
 
     llm = create_agent_chat_llm(
-        slot=AgentChatModelSlot.ROUTE,
+        slot=AgentChatModelSlot.ADMIN_ROUTE,
         temperature=0.0,
         think=False,
     )

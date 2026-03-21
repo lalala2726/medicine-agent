@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.agent.client.domain.consultation.helpers import (
+    CONSULTATION_QUESTION_MODEL_SLOT,
     DEFAULT_QUESTION_OPTIONS,
     DEFAULT_QUESTION_REPLY_TEXT,
     DEFAULT_QUESTION_TEXT,
@@ -41,6 +42,7 @@ def consultation_question_node(state: ConsultationState) -> dict[str, object]:
     history_messages = list(state.get("history_messages") or [])
     agent, llm_model_name = build_llm_agent(
         state=state,
+        slot=CONSULTATION_QUESTION_MODEL_SLOT,
         prompt_text=CONSULTATION_QUESTION_PROMPT,
     )
     result = agent_invoke(agent, history_messages)

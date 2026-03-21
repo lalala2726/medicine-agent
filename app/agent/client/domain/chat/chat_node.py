@@ -31,7 +31,7 @@ def chat_agent(state: AgentState) -> dict[str, Any]:
 
     history_messages = list(state.get("history_messages") or [])
     llm = create_agent_chat_llm(
-        slot=AgentChatModelSlot.CHAT,
+        slot=AgentChatModelSlot.CLIENT_CHAT,
         temperature=1.0,
     )
     llm_model_name = str(getattr(llm, "model_name", "") or "").strip()

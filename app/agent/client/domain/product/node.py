@@ -11,13 +11,12 @@ from app.agent.client.domain.product.tools import (
     get_product_spec,
     search_products,
 )
-from app.agent.client.model_switch import model_switch
 from app.agent.client.state import AgentState, ExecutionTraceState
 from app.core.agent.agent_event_bus import emit_answer_delta, emit_thinking_delta
 from app.core.agent.agent_runtime import agent_stream
 from app.core.agent.agent_tool_trace import record_agent_trace
 from app.core.agent.base_prompt_middleware import BasePromptMiddleware
-from app.core.config_sync import create_agent_chat_llm
+from app.core.config_sync import AgentChatModelSlot, create_agent_chat_llm
 from app.core.langsmith import traceable
 from app.services.token_usage_service import append_trace_and_refresh_token_usage
 from app.utils.prompt_utils import append_current_time_to_prompt, load_prompt
@@ -31,7 +30,7 @@ def product_agent(state: AgentState) -> dict[str, Any]:
 
     history_messages = list(state.get("history_messages") or [])
     llm = create_agent_chat_llm(
-        slot=model_switch(state),
+        slot=AgentChatModelSlot.CLIENT_PRODUCT,
         temperature=1.0,
         think=False,
     )

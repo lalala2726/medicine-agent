@@ -3,17 +3,19 @@ from types import SimpleNamespace
 from langchain_core.messages import HumanMessage
 
 from app.agent.client.domain.after_sale import node as after_sale_node_module
+from app.core.config_sync import AgentChatModelSlot
 
 
 def test_after_sale_agent_registers_after_sale_tools_and_keeps_tool_traces(
         monkeypatch,
 ):
     captured: dict = {}
+    captured_llm_kwargs: dict = {}
 
     monkeypatch.setattr(
         after_sale_node_module,
         "create_agent_chat_llm",
-        lambda **_kwargs: SimpleNamespace(model_name="after-sale-model"),
+        lambda **kwargs: captured_llm_kwargs.update(kwargs) or SimpleNamespace(model_name="after-sale-model"),
     )
     monkeypatch.setattr(
         after_sale_node_module,
@@ -60,6 +62,7 @@ def test_after_sale_agent_registers_after_sale_tools_and_keeps_tool_traces(
         after_sale_node_module.open_user_order_list,
         after_sale_node_module.open_user_after_sale_list,
     ]
+    assert captured_llm_kwargs["slot"] is AgentChatModelSlot.CLIENT_AFTER_SALE
     assert result["execution_traces"][0]["node_name"] == "after_sale_agent"
     assert result["execution_traces"][0]["tool_calls"] == [
         {

@@ -74,7 +74,7 @@ def _build_snapshot_payload(
         knowledge_base["enabled"] = knowledge_enabled
 
     return {
-        "schemaVersion": 3,
+        "schemaVersion": 4,
         "updatedAt": "2026-03-11T14:30:00+08:00",
         "updatedBy": "admin",
         "llm": {
@@ -96,6 +96,56 @@ def _build_snapshot_payload(
                     "reasoningEnabled": True,
                     "maxTokens": 4096,
                     "temperature": 0.7,
+                },
+            },
+            "clientAssistant": {
+                "routeModel": {
+                    "modelName": "gpt-client-route",
+                    "reasoningEnabled": False,
+                    "maxTokens": 1024,
+                    "temperature": 0.1,
+                },
+                "chatModel": {
+                    "modelName": "gpt-client-chat",
+                    "reasoningEnabled": True,
+                    "maxTokens": 4096,
+                    "temperature": 0.6,
+                },
+                "orderModel": {
+                    "modelName": "gpt-client-order",
+                    "reasoningEnabled": False,
+                    "maxTokens": 2048,
+                    "temperature": 0.2,
+                },
+                "productModel": {
+                    "modelName": "gpt-client-product",
+                    "reasoningEnabled": False,
+                    "maxTokens": 2048,
+                    "temperature": 0.2,
+                },
+                "afterSaleModel": {
+                    "modelName": "gpt-client-after-sale",
+                    "reasoningEnabled": False,
+                    "maxTokens": 2048,
+                    "temperature": 0.2,
+                },
+                "consultationComfortModel": {
+                    "modelName": "gpt-client-comfort",
+                    "reasoningEnabled": False,
+                    "maxTokens": 2048,
+                    "temperature": 0.2,
+                },
+                "consultationQuestionModel": {
+                    "modelName": "gpt-client-question",
+                    "reasoningEnabled": False,
+                    "maxTokens": 2048,
+                    "temperature": 0.2,
+                },
+                "consultationFinalDiagnosisModel": {
+                    "modelName": "gpt-client-diagnosis",
+                    "reasoningEnabled": False,
+                    "maxTokens": 2048,
+                    "temperature": 0.2,
                 },
             },
             "imageRecognition": {
@@ -139,10 +189,10 @@ def _build_snapshot_payload(
     }
 
 
-def test_initialize_agent_config_snapshot_loads_valid_v3_payload(
+def test_initialize_agent_config_snapshot_loads_valid_v4_payload(
         monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """测试目的：启动时 Redis 有合法 V3 配置时应成功加载；预期结果：顶层 llm、agentConfigs 和 speech 均可正常解析。"""
+    """测试目的：启动时 Redis 有合法 V4 配置时应成功加载；预期结果：顶层 llm、agentConfigs 和 speech 均可正常解析。"""
 
     payload = json.dumps(_build_snapshot_payload()).encode("utf-8")
     fake_redis = _FakeRedis(return_value=payload)
@@ -150,17 +200,24 @@ def test_initialize_agent_config_snapshot_loads_valid_v3_payload(
 
     snapshot = agent_config_module.initialize_agent_config_snapshot()
 
-    assert snapshot.schema_version == 3
+    assert snapshot.schema_version == 4
     assert snapshot.updated_by == "admin"
     assert snapshot.llm is not None
     assert snapshot.llm.provider_type == "openai"
     assert snapshot.llm.base_url == "https://api.openai.com/v1"
     assert snapshot.llm.api_key == "sk-runtime"
     assert snapshot.agent_configs is not None
-    assert snapshot.get_chat_slot(AgentChatModelSlot.ROUTE) is not None
-    assert snapshot.get_chat_slot(AgentChatModelSlot.ROUTE).model_name == "gpt-4.1-mini"
-    assert snapshot.get_chat_slot(AgentChatModelSlot.CHAT) is not None
-    assert snapshot.get_chat_slot(AgentChatModelSlot.CHAT).model_name == "gpt-4.1"
+    assert snapshot.get_chat_slot(AgentChatModelSlot.ADMIN_ROUTE) is not None
+    assert snapshot.get_chat_slot(AgentChatModelSlot.ADMIN_ROUTE).model_name == "gpt-4.1-mini"
+    assert snapshot.get_chat_slot(AgentChatModelSlot.ADMIN_CHAT) is not None
+    assert snapshot.get_chat_slot(AgentChatModelSlot.ADMIN_CHAT).model_name == "gpt-4.1"
+    assert snapshot.get_chat_slot(AgentChatModelSlot.CLIENT_ORDER) is not None
+    assert snapshot.get_chat_slot(AgentChatModelSlot.CLIENT_ORDER).model_name == "gpt-client-order"
+    assert snapshot.get_chat_slot(AgentChatModelSlot.CLIENT_CONSULTATION_FINAL_DIAGNOSIS) is not None
+    assert (
+            snapshot.get_chat_slot(AgentChatModelSlot.CLIENT_CONSULTATION_FINAL_DIAGNOSIS).model_name
+            == "gpt-client-diagnosis"
+    )
     assert snapshot.get_image_slot() is not None
     assert snapshot.get_image_slot().model_name == "qwen-vl"
     assert snapshot.get_summary_slot() is not None
@@ -191,7 +248,7 @@ def test_initialize_agent_config_snapshot_falls_back_to_local_when_redis_missing
 
     snapshot = agent_config_module.initialize_agent_config_snapshot()
 
-    assert snapshot.schema_version == 3
+    assert snapshot.schema_version == 4
     assert snapshot.updated_by == "local_env_fallback"
     assert snapshot.get_llm_runtime_config() is None
     assert snapshot.agent_configs is not None
@@ -293,13 +350,13 @@ def test_initialize_agent_config_snapshot_rejects_payload_without_schema_version
     snapshot = agent_config_module.initialize_agent_config_snapshot()
 
     assert snapshot.updated_by == "local_env_fallback"
-    assert snapshot.get_chat_slot(AgentChatModelSlot.ROUTE) is None
+    assert snapshot.get_chat_slot(AgentChatModelSlot.ADMIN_ROUTE) is None
 
 
-def test_initialize_agent_config_snapshot_rejects_schema_version_not_equal_three(
+def test_initialize_agent_config_snapshot_rejects_schema_version_not_equal_four(
         monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """测试目的：Redis 配置 schemaVersion 不为 3 时应拒绝；预期结果：初始化回退本地快照。"""
+    """测试目的：Redis 配置 schemaVersion 不为 4 时应拒绝；预期结果：初始化回退本地快照。"""
 
     payload_dict = _build_snapshot_payload()
     payload_dict["schemaVersion"] = 2
@@ -315,7 +372,7 @@ def test_initialize_agent_config_snapshot_rejects_schema_version_not_equal_three
 def test_initialize_agent_config_snapshot_accepts_wrapped_data_root(
         monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """测试目的：Redis 可能带有 Java 序列化包装层；预期结果：应读取 `data` 内层 V3 配置。"""
+    """测试目的：Redis 可能带有 Java 序列化包装层；预期结果：应读取 `data` 内层 V4 配置。"""
 
     payload_dict = {
         "@class": "java.util.LinkedHashMap",
@@ -335,7 +392,7 @@ def test_initialize_agent_config_snapshot_accepts_wrapped_data_root(
 def test_initialize_agent_config_snapshot_rejects_old_v1_slot_runtime_fields(
         monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """测试目的：V3 不兼容槽位内旧运行时字段；预期结果：初始化回退本地快照。"""
+    """测试目的：V4 不兼容槽位内旧运行时字段；预期结果：初始化回退本地快照。"""
 
     payload_dict = _build_snapshot_payload()
     payload_dict["agentConfigs"]["adminAssistant"]["chatModel"]["model"] = {
@@ -348,7 +405,7 @@ def test_initialize_agent_config_snapshot_rejects_old_v1_slot_runtime_fields(
     snapshot = agent_config_module.initialize_agent_config_snapshot()
 
     assert snapshot.updated_by == "local_env_fallback"
-    assert snapshot.get_chat_slot(AgentChatModelSlot.CHAT) is None
+    assert snapshot.get_chat_slot(AgentChatModelSlot.ADMIN_CHAT) is None
 
 
 def test_initialize_agent_config_snapshot_rejects_non_string_embedding_model(
@@ -477,8 +534,8 @@ def test_refresh_agent_config_snapshot_keeps_previous_redis_snapshot_on_failure(
     assert refresh_result.applied is False
     assert refresh_result.speech_changed is False
     assert refresh_result.current_snapshot is not None
-    assert current_snapshot.get_chat_slot(AgentChatModelSlot.ROUTE) is not None
-    assert current_snapshot.get_chat_slot(AgentChatModelSlot.ROUTE).model_name == "gpt-old"
+    assert current_snapshot.get_chat_slot(AgentChatModelSlot.ADMIN_ROUTE) is not None
+    assert current_snapshot.get_chat_slot(AgentChatModelSlot.ADMIN_ROUTE).model_name == "gpt-old"
 
 
 def test_refresh_agent_config_snapshot_always_reload_when_notification_arrives(
@@ -523,8 +580,8 @@ def test_refresh_agent_config_snapshot_applies_redis_payload(
     current_snapshot = agent_config_module.get_current_agent_config_snapshot()
     assert refresh_result.applied is True
     assert refresh_result.speech_changed is False
-    assert current_snapshot.get_chat_slot(AgentChatModelSlot.ROUTE) is not None
-    assert current_snapshot.get_chat_slot(AgentChatModelSlot.ROUTE).model_name == "gpt-new"
+    assert current_snapshot.get_chat_slot(AgentChatModelSlot.ADMIN_ROUTE) is not None
+    assert current_snapshot.get_chat_slot(AgentChatModelSlot.ADMIN_ROUTE).model_name == "gpt-new"
 
 
 def test_initialize_agent_config_snapshot_accepts_partial_speech_auth_without_failing(
