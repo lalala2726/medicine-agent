@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import datetime
-import os
 from typing import Annotated, Any
 
 from bson import ObjectId
 from pydantic import Field
 
 from app.core.codes import ResponseCode
-from app.core.database.mongodb import DEFAULT_MESSAGE_TRACES_COLLECTION, get_mongo_database
+from app.core.database.mongodb import MONGODB_MESSAGE_TRACES_COLLECTION, get_mongo_database
 from app.core.exception.exceptions import ServiceException
 from app.core.llms.provider import LlmProvider, resolve_provider
 from app.schemas.document.message_trace import (
@@ -22,12 +21,14 @@ from app.schemas.document.message_trace import (
 
 _GATEWAY_NODE_NAME = "gateway_router"
 _WORKFLOW_NAME = "admin_assistant_graph"
+_ALLOWED_WORKFLOW_STATUSES = {"success", "error", "cancelled"}
+"""message_trace 支持的工作流终态集合。"""
 
 
 def _resolve_collection_name() -> str:
     """
     功能描述：
-        解析 message_traces 集合名，支持通过环境变量覆盖默认值。
+        返回 `message_traces` 集合固定名称常量。
 
     参数说明：
         无。
@@ -39,10 +40,7 @@ def _resolve_collection_name() -> str:
         无。
     """
 
-    return (
-            (os.getenv("MONGODB_MESSAGE_TRACES_COLLECTION") or DEFAULT_MESSAGE_TRACES_COLLECTION).strip()
-            or DEFAULT_MESSAGE_TRACES_COLLECTION
-    )
+    return MONGODB_MESSAGE_TRACES_COLLECTION
 
 
 def _to_object_id(raw_conversation_id: str) -> ObjectId:
@@ -216,7 +214,7 @@ def _resolve_task_difficulty(raw_task_difficulty: Any) -> str | None:
 def _build_workflow_summary(
         *,
         execution_trace: list[ExecutionTraceItem],
-        has_error: bool,
+        workflow_status: str,
         workflow_name: str,
 ) -> WorkflowTraceSummary:
     """
@@ -225,7 +223,7 @@ def _build_workflow_summary(
 
     参数说明：
         execution_trace (list[ExecutionTraceItem]): 归一化后的节点轨迹列表。
-        has_error (bool): 流式执行是否发生错误，用于计算工作流状态。
+        workflow_status (str): 工作流终态，支持 `success/error/cancelled`。
         workflow_name (str): 工作流名称。
 
     返回值：
@@ -253,7 +251,7 @@ def _build_workflow_summary(
 
     return WorkflowTraceSummary(
         workflow_name=workflow_name,
-        workflow_status="error" if has_error else "success",
+        workflow_status=workflow_status if workflow_status in _ALLOWED_WORKFLOW_STATUSES else "success",
         execution_path=execution_path,
         final_node=final_node,
         route_targets=route_targets,
@@ -294,6 +292,7 @@ def add_message_trace(
         workflow_name: str = _WORKFLOW_NAME,
         execution_trace: list[ExecutionTraceItem | dict[str, Any]] | None = None,
         token_usage: TraceTokenUsage | dict[str, Any] | None = None,
+        workflow_status: str | None = None,
         has_error: bool = False,
 ) -> str | None:
     """
@@ -310,6 +309,7 @@ def add_message_trace(
             节点轨迹列表；为空时按空列表落库。
         token_usage (TraceTokenUsage | dict[str, Any] | None):
             trace token 汇总；为空时不写该字段。
+        workflow_status (str | None): 显式工作流终态；为空时由 `has_error` 推导。
         has_error (bool): 流程是否发生错误，用于生成 workflow_status。
 
     返回值：
@@ -326,9 +326,13 @@ def add_message_trace(
     normalized_execution_trace = _normalize_execution_trace(execution_trace)
     normalized_token_usage = _normalize_trace_token_usage(token_usage)
     normalized_provider = _resolve_message_trace_provider(provider)
+    resolved_workflow_status = (
+            str(workflow_status or "").strip().lower()
+            or ("error" if has_error else "success")
+    )
     workflow_summary = _build_workflow_summary(
         execution_trace=normalized_execution_trace,
-        has_error=has_error,
+        workflow_status=resolved_workflow_status,
         workflow_name=workflow_name,
     )
 

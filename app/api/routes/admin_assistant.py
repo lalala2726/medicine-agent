@@ -1,11 +1,16 @@
 from typing import Any
 
-from fastapi import APIRouter, Depends, Path, Request
+from fastapi import APIRouter, Depends, Header, Path, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.core.security.pre_authorize import RoleCode, has_permission, has_role, pre_authorize
 from app.core.security.rate_limit import RateLimitPreset, RateLimitRule, rate_limit
+from app.schemas.assistant_run import (
+    AssistantRunStopRequest,
+    AssistantRunStopResponse,
+    AssistantRunSubmitResponse,
+)
 from app.schemas.admin_assistant_history import (
     ConversationMessagesRequest,
 )
@@ -14,7 +19,9 @@ from app.schemas.document.conversation import ConversationListItem
 from app.schemas.response import ApiResponse, PageResponse
 from app.services.admin_assistant_service import (
     assistant_message_tts_stream as assistant_message_tts_stream_service,
-    assistant_chat,
+    assistant_chat_stop,
+    assistant_chat_stream,
+    assistant_chat_submit,
     conversation_list as conversation_list_service,
     conversation_messages as conversation_messages_service,
     delete_conversation as delete_conversation_service,
@@ -117,7 +124,7 @@ class UpdateConversationTitleRequest(BaseModel):
     title: str = Field(..., min_length=1, max_length=100, description="会话标题")
 
 
-@router.post("/chat", summary="管理助手对话（Gateway + Supervisor）")
+@router.post("/chat/submit", summary="管理助手提交对话")
 @rate_limit(
     rules=CHAT_RATE_LIMIT_RULES,
     subjects=("user_id",),
@@ -127,21 +134,79 @@ class UpdateConversationTitleRequest(BaseModel):
 @pre_authorize(
     lambda: has_role(RoleCode.SUPER_ADMIN) or has_permission("admin:assistant:access")
 )
-async def assistant(_request: Request, request: AssistantRequest) -> StreamingResponse:
+async def assistant_submit(
+        _request: Request,
+        request: AssistantRequest,
+) -> ApiResponse[AssistantRunSubmitResponse]:
     """
-    管理助手聊天入口（SSE 流式返回，基于 Gateway + Supervisor 工作流）。
+    管理助手聊天提交入口。
 
     Args:
         _request: FastAPI 原始请求对象（当前实现仅用于依赖注入与中间件链路）。
         request: 聊天请求体，包含问题与可选会话 UUID。
 
     Returns:
-        StreamingResponse: SSE 流式响应对象。
+        ApiResponse[AssistantRunSubmitResponse]: 运行态响应对象。
     """
 
-    return assistant_chat(
-        question=request.question,
-        conversation_uuid=request.conversation_uuid,
+    return ApiResponse.success(
+        data=assistant_chat_submit(
+            question=request.question,
+            conversation_uuid=request.conversation_uuid,
+        )
+    )
+
+
+@router.get("/chat/stream", summary="管理助手 attach 流式输出")
+@pre_authorize(
+    lambda: has_role(RoleCode.SUPER_ADMIN) or has_permission("admin:assistant:access")
+)
+async def assistant_stream(
+        conversation_uuid: str = Query(..., min_length=1, description="会话UUID"),
+        last_event_id: str | None = Header(
+            default=None,
+            alias="Last-Event-ID",
+            description="客户端已消费的最后事件 ID",
+        ),
+) -> StreamingResponse:
+    """
+    attach 到指定会话当前的后台流式运行。
+
+    Args:
+        conversation_uuid: 会话 UUID。
+        last_event_id: 客户端已消费到的最后事件 ID。
+
+    Returns:
+        StreamingResponse: SSE attach 流。
+    """
+
+    return assistant_chat_stream(
+        conversation_uuid=conversation_uuid,
+        last_event_id=last_event_id,
+    )
+
+
+@router.post("/chat/stop", summary="管理助手停止当前输出")
+@pre_authorize(
+    lambda: has_role(RoleCode.SUPER_ADMIN) or has_permission("admin:assistant:access")
+)
+async def assistant_stop(
+        request: AssistantRunStopRequest,
+) -> ApiResponse[AssistantRunStopResponse]:
+    """
+    请求停止指定会话当前的后台 run。
+
+    Args:
+        request: 停止请求体，仅包含 `conversation_uuid`。
+
+    Returns:
+        ApiResponse[AssistantRunStopResponse]: 停止请求响应。
+    """
+
+    return ApiResponse.success(
+        data=assistant_chat_stop(
+            conversation_uuid=request.conversation_uuid,
+        )
     )
 
 

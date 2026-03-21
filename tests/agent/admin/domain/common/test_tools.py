@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.agent.admin.domain.common import tools as tools_module
+from app.agent.admin.domain.tools import tools as tools_module
 from app.rag import KnowledgeSearchHit
 
 

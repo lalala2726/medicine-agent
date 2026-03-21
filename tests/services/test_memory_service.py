@@ -31,12 +31,13 @@ def test_load_memory_by_window_returns_ordered_memory(monkeypatch):
     monkeypatch.setattr(
         service_module,
         "list_messages",
-        lambda *, conversation_id, limit, ascending: (
+        lambda *, conversation_id, limit, ascending, history_hidden=None: (
             captured.update(
                 {
                     "conversation_id": conversation_id,
                     "limit": limit,
                     "ascending": ascending,
+                    "history_hidden": history_hidden,
                 }
             ),
             [
@@ -59,6 +60,7 @@ def test_load_memory_by_window_returns_ordered_memory(monkeypatch):
         "conversation_id": "conv-object-id",
         "limit": 2,
         "ascending": False,
+        "history_hidden": None,
     }
     assert [message.type for message in result.messages] == ["human", "ai"]
     assert [message.content for message in result.messages] == ["Q1", "A2"]
@@ -105,7 +107,7 @@ def test_load_memory_uses_env_mode_and_dispatches_window(monkeypatch):
     monkeypatch.setattr(
         service_module,
         "load_memory_by_window",
-        lambda *, conversation_uuid, user_id, limit: Memory(messages=[]),
+        lambda *, conversation_uuid, user_id, limit, include_history_hidden: Memory(messages=[]),
     )
     monkeypatch.setenv("ASSISTANT_MEMORY_MODE", "window")
 
@@ -138,7 +140,7 @@ def test_load_memory_by_summary_returns_summary_and_tail(monkeypatch):
     monkeypatch.setattr(
         service_module,
         "list_summarizable_tail_messages",
-        lambda *, conversation_id, limit: [
+        lambda *, conversation_id, limit, history_hidden=None: [
             SimpleNamespace(role=MessageRole.USER, content="用户问题"),
             SimpleNamespace(role=MessageRole.AI, content="助手回答"),
         ],
@@ -160,6 +162,33 @@ def test_load_memory_by_summary_returns_summary_and_tail(monkeypatch):
         "用户问题",
         "助手回答",
     ]
+
+
+def test_load_memory_by_window_can_exclude_hidden_history(monkeypatch):
+    captured: dict = {}
+
+    monkeypatch.setattr(
+        service_module,
+        "get_conversation",
+        lambda **_kwargs: SimpleNamespace(id="conv-object-id"),
+    )
+    monkeypatch.setattr(
+        service_module,
+        "list_messages",
+        lambda *, conversation_id, limit, ascending, history_hidden=None: (
+            captured.update({"history_hidden": history_hidden}),
+            [],
+        )[-1],
+    )
+
+    service_module.load_memory_by_window(
+        conversation_uuid="conv-1",
+        user_id=100,
+        limit=2,
+        include_history_hidden=False,
+    )
+
+    assert captured == {"history_hidden": False}
 
 
 def test_resolve_assistant_summary_model_prefers_provider_specific_env(monkeypatch):

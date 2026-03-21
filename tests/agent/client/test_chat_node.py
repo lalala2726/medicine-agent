@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 from langchain_core.messages import HumanMessage
 
-from app.agent.client.domain.common import chat_node as chat_node_module
+from app.agent.client.domain.chat import chat_node as chat_node_module
 
 
 def test_chat_agent_registers_product_search_and_card_tools(monkeypatch):
@@ -50,5 +50,8 @@ def test_chat_agent_registers_product_search_and_card_tools(monkeypatch):
     assert [tool.name for tool in captured["tools"]] == [
         "search_products",
         "send_product_card",
+        "send_product_purchase_card",
+        "send_consent_card",
+        "send_selection_card",
     ]
     assert result["execution_traces"][0]["tool_calls"] == []

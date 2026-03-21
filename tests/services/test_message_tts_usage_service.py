@@ -123,6 +123,5 @@ def test_add_message_tts_usage_rejects_invalid_conversation_id(monkeypatch):
     assert exc_info.value.code == ResponseCode.BAD_REQUEST
 
 
-def test_resolve_collection_name_uses_env_override(monkeypatch):
-    monkeypatch.setenv("MONGODB_MESSAGE_TTS_USAGES_COLLECTION", "custom_tts_usages")
-    assert service_module._resolve_collection_name() == "custom_tts_usages"
+def test_resolve_collection_name_returns_fixed_constant():
+    assert service_module._resolve_collection_name() == "message_tts_usages"

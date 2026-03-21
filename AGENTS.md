@@ -84,14 +84,18 @@
   `MILVUS_TIMEOUT`.
 - MongoDB configuration (optional): `MONGODB_URI` (defaults to `mongodb://localhost:27017`),
   `MONGODB_DB_NAME` (defaults to `medicine_ai_agent`), `MONGODB_TIMEOUT_MS` (defaults to `3000`),
-  `MONGODB_CONVERSATIONS_COLLECTION` (defaults to `conversations`), `MONGODB_MESSAGES_COLLECTION`
-  (defaults to `messages`), `MONGODB_MESSAGE_TRACES_COLLECTION` (defaults to `message_traces`),
-  `MONGODB_MESSAGE_TTS_USAGES_COLLECTION` (defaults to `message_tts_usages`),
-  `MONGODB_CONVERSATION_SUMMARIES_COLLECTION` (defaults to `conversation_summaries`),
   `MONGODB_STARTUP_PING_ENABLED` (default false, set true to fail fast
   on startup when MongoDB is unreachable/unauthorized).
+  MongoDB 集合名固定在 `app/core/database/mongodb/config.py` 常量中，
+  不支持通过环境变量修改。
 - Redis configuration (optional): `REDIS_URL`, `REDIS_HOST`, `REDIS_PORT`, `REDIS_DB`, `REDIS_PASSWORD`, `REDIS_SSL`.
   Redis connection/config entry is `app/core/database/redis/config.py`.
+- Assistant run streaming configuration (optional):
+  `ASSISTANT_RUN_SNAPSHOT_FLUSH_MS`（流式消息快照刷 Mongo 间隔，默认 `500` 毫秒），
+  `ASSISTANT_RUN_REDIS_TTL_SECONDS`（运行中 Redis 元数据保留时长，默认 `7200` 秒），
+  `ASSISTANT_RUN_TERMINAL_TTL_SECONDS`（终态 Redis 元数据保留时长，默认 `900` 秒），
+  `ASSISTANT_RUN_EVENT_STREAM_MAX_LEN`（Redis Stream 最大事件条数，默认 `2000`），
+  `ASSISTANT_RUN_STREAM_BLOCK_MS`（attach 读取 Redis Stream 的阻塞等待时长，默认 `15000` 毫秒）。
 - Rate limit configuration (optional): `RATE_LIMIT_KEY_PREFIX` (defaults to `rate_limit`),
   `RATE_LIMIT_TRUST_X_FORWARDED_FOR` (default false; when true, fallback to `X-Forwarded-For`
   only if `request.client.host` is unavailable).

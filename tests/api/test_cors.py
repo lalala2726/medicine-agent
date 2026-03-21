@@ -51,6 +51,57 @@ def test_cors_simple_request_allows_127_origin(monkeypatch):
     assert response.headers["access-control-allow-credentials"] == "true"
 
 
+def test_cors_preflight_allows_local_area_network_origin():
+    """测试目的：默认 CORS 允许局域网地址发起预检请求。"""
+    client = TestClient(app)
+
+    response = client.options(
+        "/image_parse/drug",
+        headers={
+            "Origin": "http://192.168.31.8:3000",
+            "Access-Control-Request-Method": "POST",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://192.168.31.8:3000"
+    assert response.headers["access-control-allow-credentials"] == "true"
+
+
+def test_cors_preflight_allows_zhangchuangla_origin():
+    """测试目的：默认 CORS 允许主域名 zhangchuangla.cn 发起预检请求。"""
+    client = TestClient(app)
+
+    response = client.options(
+        "/image_parse/drug",
+        headers={
+            "Origin": "https://zhangchuangla.cn",
+            "Access-Control-Request-Method": "POST",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "https://zhangchuangla.cn"
+    assert response.headers["access-control-allow-credentials"] == "true"
+
+
+def test_cors_preflight_allows_zhangchuangla_subdomain_origin():
+    """测试目的：默认 CORS 允许 zhangchuangla.cn 任意层级子域名发起预检请求。"""
+    client = TestClient(app)
+
+    response = client.options(
+        "/image_parse/drug",
+        headers={
+            "Origin": "https://admin.api.zhangchuangla.cn:8443",
+            "Access-Control-Request-Method": "POST",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "https://admin.api.zhangchuangla.cn:8443"
+    assert response.headers["access-control-allow-credentials"] == "true"
+
+
 def test_cors_preflight_rejects_non_local_origin():
     client = TestClient(app)
 
@@ -58,6 +109,22 @@ def test_cors_preflight_rejects_non_local_origin():
         "/image_parse/drug",
         headers={
             "Origin": "http://evil.com",
+            "Access-Control-Request-Method": "POST",
+        },
+    )
+
+    assert response.status_code == 400
+    assert "access-control-allow-origin" not in response.headers
+
+
+def test_cors_preflight_rejects_fake_zhangchuangla_suffix_origin():
+    """测试目的：默认 CORS 不应错误放行伪造的后缀域名。"""
+    client = TestClient(app)
+
+    response = client.options(
+        "/image_parse/drug",
+        headers={
+            "Origin": "https://zhangchuangla.cn.evil.com",
             "Access-Control-Request-Method": "POST",
         },
     )

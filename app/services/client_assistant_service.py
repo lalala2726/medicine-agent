@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import uuid
 from typing import Any
 
@@ -7,24 +8,34 @@ from fastapi.responses import StreamingResponse
 from langchain_core.messages import HumanMessage
 
 from app.agent.client.workflow import build_graph
-from app.core.agent.agent_orchestrator import AssistantStreamConfig, create_streaming_response
+from app.core.agent.run_event_store import LocalRunHandle
 from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException
 from app.core.langsmith import build_langsmith_runnable_config
 from app.core.security.auth_context import get_user_id
+from app.core.speech import build_message_tts_stream
+from app.schemas.assistant_run import (
+    AssistantRunStatus,
+    AssistantRunStopResponse,
+    AssistantRunSubmitResponse,
+)
 from app.schemas.admin_assistant_history import ConversationMessageResponse
 from app.schemas.base_request import PageRequest
-from app.schemas.document.conversation import ConversationListItem
+from app.schemas.document.conversation import ConversationListItem, ConversationType
 from app.schemas.document.message import MessageRole
 from app.services.admin_assistant_service import (
     ConversationContext,
-    _build_assistant_message_callback,
+    RUN_EVENT_STORE,
+    _build_attach_streaming_response,
+    _build_background_run_done_callback,
     _build_conversation_created_event,
-    _build_initial_state,
     _build_message_prepared_event,
+    _build_run_stream_config,
+    _create_placeholder_assistant_message,
     _map_exception,
     _persist_user_message,
-    _schedule_background_task,
+    _run_assistant_workflow_in_background,
+    _serialize_cards_for_history,
     _schedule_title_generation,
     _should_stream_token,
 )
@@ -36,10 +47,11 @@ from app.services.conversation_service import (
     update_client_conversation_title,
 )
 from app.services.memory_service import load_memory, resolve_assistant_memory_mode
-from app.services.message_service import count_messages, list_messages
+from app.services.message_service import count_messages, hide_message_card, list_messages
 
 CLIENT_WORKFLOW_NAME = "client_assistant_graph"
 CLIENT_WORKFLOW = build_graph()
+ClientCardAction = dict[str, str]
 
 
 def _invoke_client_workflow(state: dict[str, Any]) -> dict[str, Any]:
@@ -126,6 +138,7 @@ def _prepare_existing_conversation(
         user_id: int,
         question: str,
         assistant_message_uuid: str,
+        card_action: ClientCardAction | None = None,
 ) -> ConversationContext:
     """准备已存在的 client 会话上下文。"""
 
@@ -133,10 +146,15 @@ def _prepare_existing_conversation(
         conversation_uuid=conversation_uuid,
         user_id=user_id,
     )
+    _apply_card_action(
+        conversation_id=conversation_id,
+        card_action=card_action,
+    )
     memory = load_memory(
         memory_type=resolve_assistant_memory_mode(),
         conversation_uuid=conversation_uuid,
         user_id=user_id,
+        include_history_hidden=False,
     )
     history_messages = [*list(memory.messages), HumanMessage(content=question)]
     return ConversationContext(
@@ -159,6 +177,7 @@ def _prepare_conversation_context(
         user_id: int,
         conversation_uuid: str | None,
         assistant_message_uuid: str,
+        card_action: ClientCardAction | None = None,
 ) -> ConversationContext:
     """统一准备 client 会话上下文。"""
 
@@ -173,6 +192,23 @@ def _prepare_conversation_context(
         user_id=user_id,
         question=question,
         assistant_message_uuid=assistant_message_uuid,
+        card_action=card_action,
+    )
+
+
+def _apply_card_action(
+        *,
+        conversation_id: str,
+        card_action: ClientCardAction | None,
+) -> None:
+    """在加载旧会话上下文前应用前端上报的卡片点击事件。"""
+
+    if card_action is None:
+        return
+    hide_message_card(
+        conversation_id=conversation_id,
+        message_uuid=str(card_action.get("message_id") or "").strip(),
+        card_uuid=str(card_action.get("card_uuid") or "").strip(),
     )
 
 
@@ -180,8 +216,9 @@ def assistant_chat(
         *,
         question: str,
         conversation_uuid: str | None = None,
-) -> StreamingResponse:
-    """客户端助手聊天入口（SSE 流式返回）。"""
+        card_action: ClientCardAction | None = None,
+) -> AssistantRunSubmitResponse:
+    """客户端助手聊天提交入口（创建后台 run 并返回运行态）。"""
 
     current_user_id = get_user_id()
     assistant_message_uuid = str(uuid.uuid4())
@@ -190,36 +227,163 @@ def assistant_chat(
         user_id=current_user_id,
         conversation_uuid=conversation_uuid,
         assistant_message_uuid=assistant_message_uuid,
+        card_action=card_action,
     )
 
-    _schedule_background_task(
-        task_name="persist_user_message",
-        func=_persist_user_message,
-        kwargs={
-            "conversation_id": context.conversation_id,
-            "question": question,
+    created_meta = RUN_EVENT_STORE.create_run(
+        conversation_uuid=context.conversation_uuid,
+        user_id=current_user_id,
+        conversation_type=ConversationType.CLIENT.value,
+        assistant_message_uuid=context.assistant_message_uuid,
+    )
+    if created_meta is None:
+        active_meta = RUN_EVENT_STORE.get_run_meta(
+            conversation_uuid=context.conversation_uuid,
+        )
+        if active_meta is not None and active_meta.status == AssistantRunStatus.RUNNING:
+            raise ServiceException(
+                code=ResponseCode.CONFLICT,
+                message="当前会话已有正在输出的回答",
+                data=AssistantRunSubmitResponse(
+                    conversation_uuid=context.conversation_uuid,
+                    message_uuid=active_meta.assistant_message_uuid,
+                    run_status=active_meta.status,
+                ).model_dump(),
+            )
+        raise ServiceException(
+            code=ResponseCode.SERVICE_UNAVAILABLE,
+            message="创建助手运行态失败",
+        )
+
+    _persist_user_message(
+        conversation_id=context.conversation_id,
+        question=question,
+    )
+    _create_placeholder_assistant_message(
+        conversation_id=context.conversation_id,
+        message_uuid=context.assistant_message_uuid,
+    )
+
+    cancel_event = asyncio.Event()
+    stream_config = _build_run_stream_config(
+        question=question,
+        context=context,
+        workflow=CLIENT_WORKFLOW,
+        workflow_name=CLIENT_WORKFLOW_NAME,
+        build_stream_config_func=_build_stream_config,
+        invoke_sync_func=_invoke_client_workflow,
+        map_exception_func=_map_exception,
+        should_stream_token_func=_should_stream_token,
+        cancel_event=cancel_event,
+    )
+    background_task = asyncio.create_task(
+        _run_assistant_workflow_in_background(
+            question=question,
+            context=context,
+            stream_config=stream_config,
+        )
+    )
+    background_task.add_done_callback(
+        _build_background_run_done_callback(
+            conversation_uuid=context.conversation_uuid,
+        )
+    )
+    RUN_EVENT_STORE.register_local_handle(
+        conversation_uuid=context.conversation_uuid,
+        handle=LocalRunHandle(
+            task=background_task,
+            cancel_event=cancel_event,
+        ),
+    )
+    return AssistantRunSubmitResponse(
+        conversation_uuid=context.conversation_uuid,
+        message_uuid=context.assistant_message_uuid,
+        run_status=AssistantRunStatus.RUNNING,
+    )
+
+
+def assistant_chat_stream(
+        *,
+        conversation_uuid: str,
+        last_event_id: str | None = None,
+) -> StreamingResponse:
+    """attach 到客户端助手当前的流式 run。"""
+
+    current_user_id = get_user_id()
+    _load_client_conversation(
+        conversation_uuid=conversation_uuid,
+        user_id=current_user_id,
+    )
+    meta = RUN_EVENT_STORE.get_run_meta(conversation_uuid=conversation_uuid)
+    if meta is None:
+        raise ServiceException(
+            code=ResponseCode.NOT_FOUND,
+            message="当前会话没有可连接的流式输出",
+        )
+    return _build_attach_streaming_response(
+        conversation_uuid=conversation_uuid,
+        last_event_id=last_event_id,
+    )
+
+
+def assistant_chat_stop(
+        *,
+        conversation_uuid: str,
+) -> AssistantRunStopResponse:
+    """停止客户端助手当前会话的流式 run。"""
+
+    current_user_id = get_user_id()
+    _load_client_conversation(
+        conversation_uuid=conversation_uuid,
+        user_id=current_user_id,
+    )
+    meta = RUN_EVENT_STORE.request_cancel(conversation_uuid=conversation_uuid)
+    if meta is None or meta.status != AssistantRunStatus.RUNNING:
+        raise ServiceException(
+            code=ResponseCode.NOT_FOUND,
+            message="当前会话没有运行中的输出",
+        )
+    return AssistantRunStopResponse(
+        conversation_uuid=conversation_uuid,
+        message_uuid=meta.assistant_message_uuid,
+        run_status=meta.status,
+        stop_requested=True,
+    )
+
+
+def assistant_message_tts_stream(
+        *,
+        message_uuid: str,
+) -> StreamingResponse:
+    """
+    客户端助手消息转语音（HTTP chunked audio stream）。
+
+    说明：
+    - 先基于 `message_uuid` 校验消息存在性、client 会话归属与消息角色；
+    - 校验通过后建立上游 Volcengine 双向 TTS websocket；
+    - 下游以音频字节流（chunked）持续返回给前端。
+
+    Args:
+        message_uuid: 目标 AI 消息 UUID。
+
+    Returns:
+        StreamingResponse: 下游音频流响应对象。
+    """
+
+    current_user_id = get_user_id()
+    tts_stream = build_message_tts_stream(
+        message_uuid=message_uuid,
+        user_id=current_user_id,
+        conversation_type=ConversationType.CLIENT,
+    )
+    return StreamingResponse(
+        tts_stream.audio_stream,
+        media_type=tts_stream.media_type,
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
         },
     )
-
-    stream_config = AssistantStreamConfig(
-        workflow=CLIENT_WORKFLOW,
-        build_initial_state=lambda q: _build_initial_state(
-            q,
-            history_messages=context.history_messages,
-        ),
-        extract_final_content=lambda state: str(state.get("result") or ""),
-        should_stream_token=_should_stream_token,
-        build_stream_config=_build_stream_config,
-        invoke_sync=_invoke_client_workflow,
-        map_exception=_map_exception,
-        on_answer_completed=_build_assistant_message_callback(
-            conversation_id=context.conversation_id,
-            assistant_message_uuid=context.assistant_message_uuid,
-            workflow_name=CLIENT_WORKFLOW_NAME,
-        ),
-        initial_emitted_events=context.initial_emitted_events,
-    )
-    return create_streaming_response(question, stream_config)
 
 
 def conversation_list(
@@ -254,17 +418,35 @@ def conversation_messages(
     )
 
     skip = (page_request.page_num - 1) * page_request.page_size
-    total = count_messages(conversation_id=conversation_id)
+    total = count_messages(
+        conversation_id=conversation_id,
+        history_hidden=False,
+    )
     message_documents = list_messages(
         conversation_id=conversation_id,
         limit=page_request.page_size,
         skip=skip,
         ascending=False,
+        history_hidden=False,
     )
 
     result: list[ConversationMessageResponse] = []
     for document in reversed(message_documents):
         role = "user" if document.role == MessageRole.USER else "ai"
+        raw_thinking = getattr(document, "thinking", None)
+        normalized_thinking = (
+            raw_thinking.strip()
+            if isinstance(raw_thinking, str) and raw_thinking.strip()
+            else None
+        )
+        serialized_cards = None
+        if role == "ai":
+            serialized_cards = _serialize_cards_for_history(
+                getattr(document, "cards", None),
+                hidden_card_uuids=getattr(document, "hidden_card_uuids", None),
+            )
+            if not document.content.strip() and normalized_thinking is None and serialized_cards is None:
+                continue
         payload: dict[str, Any] = {
             "id": document.uuid,
             "role": role,
@@ -272,9 +454,10 @@ def conversation_messages(
         }
         if role == "ai":
             payload["status"] = document.status.value
-            raw_thinking = getattr(document, "thinking", None)
-            if isinstance(raw_thinking, str) and raw_thinking.strip():
-                payload["thinking"] = raw_thinking
+            if normalized_thinking is not None:
+                payload["thinking"] = normalized_thinking
+            if serialized_cards is not None:
+                payload["cards"] = serialized_cards
         result.append(ConversationMessageResponse.model_validate(payload))
     return result, total
 

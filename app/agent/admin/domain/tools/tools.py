@@ -10,7 +10,7 @@
 from langchain_core.tools import tool
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.agent.admin.domain.common.schema import UserInfo
+from app.agent.admin.domain.tools.schema import UserInfo
 from app.core.agent.agent_tool_events import tool_call_status
 from app.core.security import get_current_user
 from app.rag import (

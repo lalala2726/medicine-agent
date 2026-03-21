@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.agent.admin.domain.common import adaptive_node as node_module
+from app.agent.admin.domain.adaptive import adaptive_node as node_module
 
 
 def test_build_adaptive_tools_keeps_user_info_as_only_base_tool(

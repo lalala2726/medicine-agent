@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import datetime
-import os
 import uuid
+from functools import lru_cache
 from typing import Annotated, Any, Mapping
 
 from bson import ObjectId
@@ -11,9 +11,10 @@ from pydantic import Field
 from pymongo import ASCENDING, DESCENDING
 
 from app.core.codes import ResponseCode
-from app.core.database.mongodb import DEFAULT_MESSAGES_COLLECTION, get_mongo_database
+from app.core.database.mongodb import MONGODB_MESSAGES_COLLECTION, get_mongo_database
 from app.core.exception.exceptions import ServiceException
 from app.schemas.document.message import (
+    MessageCard,
     MessageRole,
     MessageCreate,
     MessageDocument,
@@ -23,11 +24,39 @@ from app.schemas.document.message import (
 
 
 def _resolve_collection_name() -> str:
-    """解析 messages 集合名，支持环境变量覆盖。"""
+    """返回 messages 集合固定名称常量。"""
 
-    return (
-            (os.getenv("MONGODB_MESSAGES_COLLECTION") or DEFAULT_MESSAGES_COLLECTION).strip()
-            or DEFAULT_MESSAGES_COLLECTION
+    return MONGODB_MESSAGES_COLLECTION
+
+
+def _get_collection():
+    """获取 messages 集合对象。"""
+
+    db = get_mongo_database()
+    return db[_resolve_collection_name()]
+
+
+@lru_cache(maxsize=1)
+def _ensure_message_indexes() -> None:
+    """懒初始化 messages 集合常用索引。"""
+
+    collection = _get_collection()
+    collection.create_index([("uuid", ASCENDING)], unique=True, name="uniq_uuid")
+    collection.create_index(
+        [
+            ("conversation_id", ASCENDING),
+            ("history_hidden", ASCENDING),
+            ("created_at", DESCENDING),
+        ],
+        name="idx_conversation_visible_created_at_desc",
+    )
+    collection.create_index(
+        [
+            ("conversation_id", ASCENDING),
+            ("card_uuids", ASCENDING),
+            ("uuid", ASCENDING),
+        ],
+        name="idx_conversation_card_uuid_message_uuid",
     )
 
 
@@ -118,14 +147,118 @@ def _normalize_thinking(thinking: Any) -> str | None:
     return normalized or None
 
 
+def _normalize_content(content: Any) -> str:
+    """
+    归一化消息内容。
+
+    用途：
+    - 统一处理数据库落库前的 content；
+    - 将 `None`、非字符串和纯空白内容统一收敛为空字符串；
+    - 让上层由 schema 继续判断“该空字符串是否允许落库”。
+
+    Args:
+        content: 原始消息内容，允许为任意类型。
+
+    Returns:
+        str: 归一化后的消息内容；无有效文本时返回空字符串。
+    """
+
+    if not isinstance(content, str):
+        return ""
+    if not content.strip():
+        return ""
+    return content
+
+
+def _normalize_cards(
+        cards: list[MessageCard | dict[str, Any]] | None,
+) -> list[MessageCard | dict[str, Any]] | None:
+    """
+    归一化卡片列表。
+
+    用途：
+    - 统一处理落库前的 `cards` 字段；
+    - 将空列表与 `None` 统一视为“未传卡片”；
+    - 保持非空卡片列表的原始顺序不变。
+
+    Args:
+        cards: 原始卡片列表，元素可以是 `MessageCard` 或普通字典。
+
+    Returns:
+        list[MessageCard | dict[str, Any]] | None:
+            非空时返回原列表；为空时返回 `None`。
+    """
+
+    if not cards:
+        return None
+    return cards
+
+
+def _extract_card_uuids(
+        cards: list[MessageCard | dict[str, Any]] | None,
+) -> list[str] | None:
+    """从消息卡片列表中提取 card_uuid 集合，兼容历史 `id` 字段。"""
+
+    normalized_cards = _normalize_cards(cards)
+    if normalized_cards is None:
+        return None
+
+    card_uuids: list[str] = []
+    for raw_card in normalized_cards:
+        if hasattr(raw_card, "model_dump"):
+            payload = raw_card.model_dump(mode="json", exclude_none=True)
+        elif isinstance(raw_card, dict):
+            payload = raw_card
+        else:
+            payload = {
+                "card_uuid": getattr(raw_card, "card_uuid", None),
+                "id": getattr(raw_card, "id", None),
+            }
+        card_uuid = str(payload.get("card_uuid") or payload.get("id") or "").strip()
+        if card_uuid and card_uuid not in card_uuids:
+            card_uuids.append(card_uuid)
+    return card_uuids or None
+
+
+def _build_messages_query(
+        *,
+        conversation_id: Annotated[str, Field(min_length=1)],
+        history_hidden: bool | None = None,
+        statuses: list[MessageStatus | str] | None = None,
+) -> dict[str, Any]:
+    """
+    构建普通消息查询条件，支持按客户端可见性与状态过滤。
+
+    Args:
+        conversation_id: 会话 Mongo ObjectId（字符串形式）。
+        history_hidden: 是否按客户端隐藏标记过滤。
+        statuses: 可选消息状态白名单；为空时不过滤状态。
+
+    Returns:
+        dict[str, Any]: Mongo 查询条件。
+    """
+
+    query: dict[str, Any] = {"conversation_id": _to_object_id(conversation_id)}
+    if history_hidden is True:
+        query["history_hidden"] = True
+    elif history_hidden is False:
+        query["history_hidden"] = {"$ne": True}
+    if statuses:
+        query["status"] = {
+            "$in": [MessageStatus(status).value for status in statuses]
+        }
+    return query
+
+
 def add_message(
         *,
         conversation_id: Annotated[str, Field(min_length=1)],
         role: MessageRole | str,
         status: MessageStatus | str = MessageStatus.SUCCESS,
-        content: Annotated[str, Field(min_length=1)],
+        content: str,
         thinking: str | None = None,
         token_usage: TokenUsage | dict[str, Any] | None = None,
+        cards: list[MessageCard | dict[str, Any]] | None = None,
         message_uuid: str | None = None,
 ) -> str:
     """
@@ -140,6 +273,7 @@ def add_message(
         token_usage: 可选 token 使用总量，仅支持
             prompt_tokens/completion_tokens/total_tokens 三个字段。
             且仅 ai 消息会保存，user 消息会被忽略。
+        cards: 可选 AI 卡片列表，仅 ai 消息会保存，user 消息会被忽略。
         message_uuid: 可选消息 UUID，不传时自动生成。
 
     Returns:
@@ -152,13 +286,19 @@ def add_message(
         数据库异常会由全局异常处理器统一拦截。
     """
 
+    _ensure_message_indexes()
     normalized_role = MessageRole(role)
+    normalized_cards = (
+        _normalize_cards(cards)
+        if normalized_role == MessageRole.AI
+        else None
+    )
     payload = MessageCreate(
         uuid=message_uuid or str(uuid.uuid4()),
         conversation_id=conversation_id,
         role=normalized_role,
         status=status,
-        content=content,
+        content=_normalize_content(content),
         thinking=(
             _normalize_thinking(thinking)
             if normalized_role == MessageRole.AI
@@ -169,6 +309,14 @@ def add_message(
             if normalized_role == MessageRole.AI
             else None
         ),
+        cards=normalized_cards,
+        card_uuids=(
+            _extract_card_uuids(normalized_cards)
+            if normalized_role == MessageRole.AI
+            else None
+        ),
+        hidden_card_uuids=None,
+        history_hidden=False,
     )
 
     now = datetime.datetime.now()
@@ -178,14 +326,109 @@ def add_message(
         document.pop("thinking", None)
     if document.get("token_usage") is None:
         document.pop("token_usage", None)
+    if document.get("cards") is None:
+        document.pop("cards", None)
+    if document.get("card_uuids") is None:
+        document.pop("card_uuids", None)
+    if document.get("hidden_card_uuids") is None:
+        document.pop("hidden_card_uuids", None)
     document["conversation_id"] = _to_object_id(payload.conversation_id)
     document["created_at"] = now
     document["updated_at"] = now
 
-    db = get_mongo_database()
-    collection = db[_resolve_collection_name()]
+    collection = _get_collection()
     result = collection.insert_one(document)
     return str(result.inserted_id)
+
+
+def update_assistant_message(
+        *,
+        conversation_id: Annotated[str, Field(min_length=1)],
+        message_uuid: Annotated[str, Field(min_length=1)],
+        status: MessageStatus | str,
+        content: str,
+        thinking: str | None = None,
+        token_usage: TokenUsage | dict[str, Any] | None = None,
+        cards: list[MessageCard | dict[str, Any]] | None = None,
+) -> bool:
+    """
+    更新一条已存在的 AI 消息。
+
+    Args:
+        conversation_id: 所属会话 Mongo ObjectId（字符串形式）。
+        message_uuid: 待更新的 AI 消息 UUID。
+        status: 消息状态。
+        content: 最新消息内容。
+        thinking: 最新思考内容。
+        token_usage: 最新 token 汇总。
+        cards: 最新卡片列表。
+
+    Returns:
+        bool: 命中并完成更新返回 `True`，否则返回 `False`。
+
+    Raises:
+        ServiceException: 参数校验失败时抛出。
+    """
+
+    normalized_cards = _normalize_cards(cards)
+    payload = MessageCreate(
+        uuid=message_uuid,
+        conversation_id=conversation_id,
+        role=MessageRole.AI,
+        status=status,
+        content=_normalize_content(content),
+        thinking=_normalize_thinking(thinking),
+        token_usage=_normalize_token_usage(token_usage),
+        cards=normalized_cards,
+        card_uuids=_extract_card_uuids(normalized_cards),
+        hidden_card_uuids=None,
+        history_hidden=False,
+    )
+
+    now = datetime.datetime.now()
+    set_document: dict[str, Any] = {
+        "status": payload.status,
+        "content": payload.content,
+        "updated_at": now,
+    }
+    unset_document: dict[str, Any] = {}
+
+    if payload.thinking is None:
+        unset_document["thinking"] = ""
+    else:
+        set_document["thinking"] = payload.thinking
+
+    if payload.token_usage is None:
+        unset_document["token_usage"] = ""
+    else:
+        set_document["token_usage"] = payload.token_usage.model_dump()
+
+    if payload.cards is None:
+        unset_document["cards"] = ""
+        unset_document["card_uuids"] = ""
+    else:
+        set_document["cards"] = [
+            card.model_dump(mode="python")
+            if hasattr(card, "model_dump")
+            else dict(card)
+            for card in payload.cards
+        ]
+        set_document["card_uuids"] = payload.card_uuids or []
+
+    update_document: dict[str, Any] = {"$set": set_document}
+    if unset_document:
+        update_document["$unset"] = unset_document
+
+    collection = _get_collection()
+    result = collection.update_one(
+        {
+            "uuid": message_uuid,
+            "conversation_id": _to_object_id(conversation_id),
+            "role": MessageRole.AI,
+        },
+        update_document,
+    )
+    return bool(getattr(result, "matched_count", 0) >= 1)
 
 
 def get_message_by_uuid(message_uuid: Annotated[str, Field(min_length=1)]) -> MessageDocument | None:
@@ -202,8 +445,7 @@ def get_message_by_uuid(message_uuid: Annotated[str, Field(min_length=1)]) -> Me
         数据库异常会由全局异常处理器统一拦截。
     """
 
-    db = get_mongo_database()
-    collection = db[_resolve_collection_name()]
+    collection = _get_collection()
     document = collection.find_one({"uuid": message_uuid})
     if document is None:
         return None
@@ -216,6 +458,8 @@ def list_messages(
         limit: Annotated[int, Field(ge=1)] = 50,
         skip: Annotated[int, Field(ge=0)] = 0,
         ascending: bool = True,
+        history_hidden: bool | None = None,
+        statuses: list[MessageStatus | str] | None = None,
 ) -> list[MessageDocument]:
     """
     查询某个会话下的消息列表。
@@ -225,6 +469,8 @@ def list_messages(
         limit: 返回条数上限，默认 50。
         skip: 跳过条数，默认 0。
         ascending: 是否按创建时间升序，默认 True（旧到新）。
+        history_hidden: 是否按客户端可见性过滤。
+        statuses: 可选消息状态白名单。
 
     Returns:
         list[MessageDocument]: 消息文档模型列表。
@@ -235,10 +481,12 @@ def list_messages(
     """
 
     sort_direction = ASCENDING if ascending else DESCENDING
-    query = {"conversation_id": _to_object_id(conversation_id)}
-
-    db = get_mongo_database()
-    collection = db[_resolve_collection_name()]
+    query = _build_messages_query(
+        conversation_id=conversation_id,
+        history_hidden=history_hidden,
+        statuses=statuses,
+    )
+    collection = _get_collection()
     cursor = collection.find(query).sort("created_at", sort_direction).skip(skip).limit(limit)
     return [_to_message_document(item) for item in cursor]
 
@@ -246,6 +494,8 @@ def list_messages(
 def count_messages(
         *,
         conversation_id: Annotated[str, Field(min_length=1)],
+        history_hidden: bool | None = None,
+        statuses: list[MessageStatus | str] | None = None,
 ) -> int:
     """
     统计某个会话下的消息总数。
@@ -260,9 +510,12 @@ def count_messages(
         仅按 `conversation_id` 统计，不附加其他角色、状态或摘要过滤条件。
     """
 
-    query = {"conversation_id": _to_object_id(conversation_id)}
-    db = get_mongo_database()
-    collection = db[_resolve_collection_name()]
+    query = _build_messages_query(
+        conversation_id=conversation_id,
+        history_hidden=history_hidden,
+        statuses=statuses,
+    )
+    collection = _get_collection()
     return int(collection.count_documents(query))
 
 
@@ -270,6 +523,7 @@ def _build_summarizable_messages_query(
         *,
         conversation_id: Annotated[str, Field(min_length=1)],
         after_message_id: str | None = None,
+        history_hidden: bool | None = None,
 ) -> dict[str, Any]:
     """
     功能描述：
@@ -306,6 +560,10 @@ def _build_summarizable_messages_query(
                 code=ResponseCode.BAD_REQUEST,
                 message="after_message_id 格式不正确",
             ) from exc
+    if history_hidden is True:
+        query["history_hidden"] = True
+    elif history_hidden is False:
+        query["history_hidden"] = {"$ne": True}
     return query
 
 
@@ -313,6 +571,7 @@ def count_summarizable_messages(
         *,
         conversation_id: Annotated[str, Field(min_length=1)],
         after_message_id: str | None = None,
+        history_hidden: bool | None = None,
 ) -> int:
     """
     功能描述：
@@ -333,9 +592,9 @@ def count_summarizable_messages(
     query = _build_summarizable_messages_query(
         conversation_id=conversation_id,
         after_message_id=after_message_id,
+        history_hidden=history_hidden,
     )
-    db = get_mongo_database()
-    collection = db[_resolve_collection_name()]
+    collection = _get_collection()
     return int(collection.count_documents(query))
 
 
@@ -345,6 +604,7 @@ def list_summarizable_messages(
         limit: Annotated[int, Field(ge=1)] = 50,
         after_message_id: str | None = None,
         ascending: bool = True,
+        history_hidden: bool | None = None,
 ) -> list[MessageDocument]:
     """
     功能描述：
@@ -367,10 +627,10 @@ def list_summarizable_messages(
     query = _build_summarizable_messages_query(
         conversation_id=conversation_id,
         after_message_id=after_message_id,
+        history_hidden=history_hidden,
     )
     sort_direction = ASCENDING if ascending else DESCENDING
-    db = get_mongo_database()
-    collection = db[_resolve_collection_name()]
+    collection = _get_collection()
     cursor = collection.find(query).sort("created_at", sort_direction).limit(limit)
     return [_to_message_document(item) for item in cursor]
 
@@ -380,6 +640,7 @@ def list_latest_summarizable_messages(
         conversation_id: Annotated[str, Field(min_length=1)],
         limit: Annotated[int, Field(ge=1)] = 100,
         after_message_id: str | None = None,
+        history_hidden: bool | None = None,
 ) -> list[MessageDocument]:
     """
     功能描述：
@@ -403,6 +664,7 @@ def list_latest_summarizable_messages(
         limit=limit,
         after_message_id=after_message_id,
         ascending=False,
+        history_hidden=history_hidden,
     )
     return list(reversed(latest_desc))
 
@@ -411,6 +673,7 @@ def list_summarizable_tail_messages(
         *,
         conversation_id: Annotated[str, Field(min_length=1)],
         limit: Annotated[int, Field(ge=1)] = 20,
+        history_hidden: bool | None = None,
 ) -> list[MessageDocument]:
     """
     功能描述：
@@ -432,4 +695,77 @@ def list_summarizable_tail_messages(
         conversation_id=conversation_id,
         limit=limit,
         after_message_id=None,
+        history_hidden=history_hidden,
+    )
+
+
+def hide_message_card(
+        *,
+        conversation_id: Annotated[str, Field(min_length=1)],
+        message_uuid: Annotated[str, Field(min_length=1)],
+        card_uuid: Annotated[str, Field(min_length=1)],
+) -> None:
+    """
+    标记某条 AI 消息中的卡片已点击，后续不再出现在客户端历史与记忆中。
+
+    说明：
+    - 仅允许处理当前会话下的 AI 消息；
+    - `card_uuid` 不存在、消息不属于该会话、或消息不是 AI 消息时统一返回 BAD_REQUEST；
+    - 重复点击同一卡片视为幂等成功。
+    """
+
+    normalized_message_uuid = message_uuid.strip()
+    normalized_card_uuid = card_uuid.strip()
+    if not normalized_message_uuid or not normalized_card_uuid:
+        raise ServiceException(code=ResponseCode.BAD_REQUEST, message="卡片操作参数不合法")
+
+    _ensure_message_indexes()
+    collection = _get_collection()
+    lookup_query = {
+        "conversation_id": _to_object_id(conversation_id),
+        "uuid": normalized_message_uuid,
+        "$or": [
+            {"card_uuids": normalized_card_uuid},
+            {"cards.id": normalized_card_uuid},
+            {"cards.card_uuid": normalized_card_uuid},
+        ],
+    }
+    document = collection.find_one(lookup_query)
+    if document is None:
+        raise ServiceException(code=ResponseCode.BAD_REQUEST, message="卡片操作无效")
+
+    message_document = _to_message_document(document)
+    if message_document.role != MessageRole.AI:
+        raise ServiceException(code=ResponseCode.BAD_REQUEST, message="卡片操作无效")
+
+    all_card_uuids = _extract_card_uuids(message_document.cards)
+    if not all_card_uuids or normalized_card_uuid not in all_card_uuids:
+        raise ServiceException(code=ResponseCode.BAD_REQUEST, message="卡片操作无效")
+
+    hidden_card_uuids = list(message_document.hidden_card_uuids or [])
+    if normalized_card_uuid not in hidden_card_uuids:
+        hidden_card_uuids.append(normalized_card_uuid)
+
+    normalized_content = message_document.content.strip()
+    normalized_thinking = (message_document.thinking or "").strip()
+    history_hidden = (
+            not normalized_content
+            and not normalized_thinking
+            and all(card_id in hidden_card_uuids for card_id in all_card_uuids)
+    )
+
+    update_query = {"_id": ObjectId(message_document.id)} if message_document.id else {
+        "conversation_id": _to_object_id(conversation_id),
+        "uuid": normalized_message_uuid,
+    }
+    collection.update_one(
+        update_query,
+        {
+            "$set": {
+                "card_uuids": all_card_uuids,
+                "hidden_card_uuids": hidden_card_uuids,
+                "history_hidden": history_hidden,
+                "updated_at": datetime.datetime.now(),
+            }
+        },
     )

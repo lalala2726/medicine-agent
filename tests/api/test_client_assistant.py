@@ -3,9 +3,12 @@ import json
 
 from fastapi.responses import StreamingResponse
 from fastapi.testclient import TestClient
+from redis.exceptions import RedisError
 
 import app.main as main_module
 from app.api.routes import client_assistant as assistant_module
+from app.core.codes import ResponseCode
+from app.core.exception.exceptions import ServiceException
 from app.main import app
 from app.schemas.admin_assistant_history import ConversationMessageResponse
 from app.schemas.auth import AuthUser
@@ -51,6 +54,21 @@ def _build_streaming_response(text: str) -> StreamingResponse:
     return StreamingResponse(_stream(), media_type="text/event-stream")
 
 
+def _build_audio_streaming_response() -> StreamingResponse:
+    async def _stream():
+        yield b"chunk-a"
+        yield b"chunk-b"
+
+    return StreamingResponse(
+        _stream(),
+        media_type="audio/mpeg",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 def _auth_headers() -> dict[str, str]:
     return {"Authorization": "Bearer test-token"}
 
@@ -84,6 +102,51 @@ def _mock_rate_limit_allow(monkeypatch) -> None:
     monkeypatch.setattr(rate_limit_module, "_evaluate_rate_limit", _fake_evaluate_rate_limit)
 
 
+def _mock_rate_limit_result(
+        monkeypatch,
+        *,
+        allowed: bool,
+        retry_after_seconds: int = 0,
+        limit: int = 10,
+        remaining: int = 9,
+        reset_seconds: int = 60,
+        exc: Exception | None = None,
+) -> None:
+    """
+    模拟 rate limit 组件的返回结果或异常。
+
+    Args:
+        monkeypatch: pytest monkeypatch fixture。
+        allowed: 是否允许本次请求。
+        retry_after_seconds: 建议重试秒数。
+        limit: 当前命中的限流阈值。
+        remaining: 当前窗口剩余次数。
+        reset_seconds: 当前窗口重置秒数。
+        exc: 可选异常；传入后优先抛出异常。
+
+    Returns:
+        None
+    """
+
+    if exc is not None:
+        def _raise_error(*, scope: str, subject_key: str, rules):
+            raise exc
+
+        monkeypatch.setattr(rate_limit_module, "_evaluate_rate_limit", _raise_error)
+        return
+
+    def _fake_evaluate_rate_limit(*, scope: str, subject_key: str, rules):
+        return rate_limit_module.RateLimitCheckResult(
+            allowed=allowed,
+            retry_after_seconds=retry_after_seconds,
+            limit=limit,
+            remaining=remaining,
+            reset_seconds=reset_seconds,
+        )
+
+    monkeypatch.setattr(rate_limit_module, "_evaluate_rate_limit", _fake_evaluate_rate_limit)
+
+
 def test_client_assistant_chat_route_delegates_to_service(monkeypatch):
     captured: dict = {}
     _mock_auth(monkeypatch)
@@ -92,11 +155,12 @@ def test_client_assistant_chat_route_delegates_to_service(monkeypatch):
     monkeypatch.setattr(
         assistant_module,
         "assistant_chat",
-        lambda *, question, conversation_uuid=None: (
+        lambda *, question, conversation_uuid=None, card_action=None: (
             captured.update(
                 {
                     "question": question,
                     "conversation_uuid": conversation_uuid,
+                    "card_action": card_action,
                 }
             ),
             _build_streaming_response("客户端回复"),
@@ -115,6 +179,7 @@ def test_client_assistant_chat_route_delegates_to_service(monkeypatch):
     assert captured == {
         "question": "客户端问题",
         "conversation_uuid": "client-conv-1",
+        "card_action": None,
     }
     payloads = _extract_payloads(response.text)
     assert payloads[0]["content"]["text"] == "客户端回复"
@@ -133,6 +198,282 @@ def test_client_assistant_chat_rejects_blank_question(monkeypatch):
     )
 
     assert response.status_code == 400
+
+
+def test_client_assistant_chat_route_accepts_card_action(monkeypatch):
+    captured: dict = {}
+    _mock_auth(monkeypatch)
+    _mock_rate_limit_allow(monkeypatch)
+
+    monkeypatch.setattr(
+        assistant_module,
+        "assistant_chat",
+        lambda *, question, conversation_uuid=None, card_action=None: (
+            captured.update(
+                {
+                    "question": question,
+                    "conversation_uuid": conversation_uuid,
+                    "card_action": card_action,
+                }
+            ),
+            _build_streaming_response("客户端回复"),
+        )[-1],
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/client/assistant/chat",
+        headers=_auth_headers(),
+        json={
+            "question": "继续处理",
+            "conversation_uuid": "client-conv-1",
+            "card_action": {
+                "type": "click",
+                "message_id": "msg-1",
+                "card_uuid": "card-1",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured == {
+        "question": "继续处理",
+        "conversation_uuid": "client-conv-1",
+        "card_action": {
+            "type": "click",
+            "message_id": "msg-1",
+            "card_uuid": "card-1",
+        },
+    }
+
+
+def test_client_assistant_chat_rejects_card_action_without_conversation_uuid(monkeypatch):
+    _mock_auth(monkeypatch)
+    _mock_rate_limit_allow(monkeypatch)
+    client = TestClient(app)
+
+    response = client.post(
+        "/client/assistant/chat",
+        headers=_auth_headers(),
+        json={
+            "question": "继续处理",
+            "card_action": {
+                "type": "click",
+                "message_id": "msg-1",
+                "card_uuid": "card-1",
+            },
+        },
+    )
+
+    assert response.status_code == 400
+
+
+def test_client_assistant_chat_rejects_blank_card_action_fields(monkeypatch):
+    _mock_auth(monkeypatch)
+    _mock_rate_limit_allow(monkeypatch)
+    client = TestClient(app)
+
+    response = client.post(
+        "/client/assistant/chat",
+        headers=_auth_headers(),
+        json={
+            "question": "继续处理",
+            "conversation_uuid": "client-conv-1",
+            "card_action": {
+                "type": "click",
+                "message_id": "   ",
+                "card_uuid": "card-1",
+            },
+        },
+    )
+
+    assert response.status_code == 400
+
+
+def test_client_assistant_message_tts_stream_route_delegates_to_service(monkeypatch):
+    captured: dict = {}
+    _mock_auth(monkeypatch)
+    _mock_rate_limit_allow(monkeypatch)
+
+    def _fake_tts_stream(*, message_uuid: str):
+        captured["message_uuid"] = message_uuid
+        return _build_audio_streaming_response()
+
+    monkeypatch.setattr(
+        assistant_module,
+        "assistant_message_tts_stream_service",
+        _fake_tts_stream,
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/client/assistant/message/tts/stream",
+        headers=_auth_headers(),
+        json={"message_uuid": "  msg-tts-1  "},
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("audio/mpeg")
+    assert response.headers["cache-control"] == "no-cache"
+    assert response.headers["x-accel-buffering"] == "no"
+    assert response.content == b"chunk-achunk-b"
+    assert captured == {"message_uuid": "msg-tts-1"}
+
+
+def test_client_assistant_message_tts_stream_route_rejects_blank_message_uuid(monkeypatch):
+    called = {"value": False}
+    _mock_auth(monkeypatch)
+    _mock_rate_limit_allow(monkeypatch)
+
+    def _fake_tts_stream(*, message_uuid: str):
+        called["value"] = True
+        return _build_audio_streaming_response()
+
+    monkeypatch.setattr(
+        assistant_module,
+        "assistant_message_tts_stream_service",
+        _fake_tts_stream,
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/client/assistant/message/tts/stream",
+        headers=_auth_headers(),
+        json={"message_uuid": "   "},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["message"] == "Validation Failed"
+    assert called["value"] is False
+
+
+def test_client_assistant_message_tts_stream_route_rejects_extra_fields(monkeypatch):
+    called = {"value": False}
+    _mock_auth(monkeypatch)
+    _mock_rate_limit_allow(monkeypatch)
+
+    def _fake_tts_stream(*, message_uuid: str):
+        called["value"] = True
+        return _build_audio_streaming_response()
+
+    monkeypatch.setattr(
+        assistant_module,
+        "assistant_message_tts_stream_service",
+        _fake_tts_stream,
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/client/assistant/message/tts/stream",
+        headers=_auth_headers(),
+        json={
+            "message_uuid": "msg-tts-1",
+            "voice_type": "not-allowed",
+        },
+    )
+
+    assert response.status_code == 400
+    body = response.json()
+    assert body["message"] == "Validation Failed"
+    assert any(
+        item["field"] == "voice_type" and item["type"] == "extra_forbidden"
+        for item in body["errors"]
+    )
+    assert called["value"] is False
+
+
+def test_client_assistant_message_tts_stream_route_requires_authentication(monkeypatch):
+    async def _fake_verify_authorization() -> AuthUser:
+        raise ServiceException(code=ResponseCode.UNAUTHORIZED, message="未认证")
+
+    monkeypatch.setattr(main_module, "verify_authorization", _fake_verify_authorization)
+    client = TestClient(app)
+
+    response = client.post(
+        "/client/assistant/message/tts/stream",
+        json={"message_uuid": "msg-tts-1"},
+    )
+
+    assert response.status_code == ResponseCode.UNAUTHORIZED.code
+
+
+def test_client_assistant_tts_route_returns_429_when_rate_limited(monkeypatch):
+    _mock_auth(monkeypatch)
+    _mock_rate_limit_result(
+        monkeypatch,
+        allowed=False,
+        retry_after_seconds=9,
+        limit=5,
+        remaining=0,
+        reset_seconds=9,
+    )
+    called = {"value": False}
+
+    def _fake_tts_stream(*, message_uuid: str):
+        called["value"] = True
+        return _build_audio_streaming_response()
+
+    monkeypatch.setattr(
+        assistant_module,
+        "assistant_message_tts_stream_service",
+        _fake_tts_stream,
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/client/assistant/message/tts/stream",
+        headers=_auth_headers(),
+        json={"message_uuid": "msg-tts-1"},
+    )
+
+    assert response.status_code == ResponseCode.TOO_MANY_REQUESTS.code
+    assert response.headers["retry-after"] == "9"
+    body = response.json()
+    assert body["code"] == ResponseCode.TOO_MANY_REQUESTS.code
+    assert body["message"] == "访问 /client/assistant/message/tts/stream 过于频繁，请在 9 秒后再试"
+    assert called["value"] is False
+
+
+def test_client_assistant_tts_route_returns_503_when_redis_unavailable(monkeypatch):
+    _mock_auth(monkeypatch)
+    _mock_rate_limit_result(monkeypatch, allowed=True, exc=RedisError("redis down"))
+    called = {"value": False}
+
+    def _fake_tts_stream(*, message_uuid: str):
+        called["value"] = True
+        return _build_audio_streaming_response()
+
+    monkeypatch.setattr(
+        assistant_module,
+        "assistant_message_tts_stream_service",
+        _fake_tts_stream,
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/client/assistant/message/tts/stream",
+        headers=_auth_headers(),
+        json={"message_uuid": "msg-tts-1"},
+    )
+
+    assert response.status_code == ResponseCode.SERVICE_UNAVAILABLE.code
+    assert response.headers["retry-after"] == "1"
+    body = response.json()
+    assert body["code"] == ResponseCode.SERVICE_UNAVAILABLE.code
+    assert body["message"] == "限流服务不可用，请稍后再试"
+    assert called["value"] is False
+
+
+def test_client_voice_tts_rate_limit_rules_match_expected() -> None:
+    assert [
+               (rule.window_seconds, rule.limit)
+               for rule in assistant_module.TTS_RATE_LIMIT_RULES
+           ] == [
+               (60, 5),
+               (3600, 60),
+               (18000, 100),
+               (86400, 200),
+           ]
 
 
 def test_client_conversation_list_route_returns_page(monkeypatch):
@@ -171,9 +512,41 @@ def test_client_history_route_returns_serialized_messages(monkeypatch):
                     id="msg-1",
                     role="user",
                     content="你好",
+                ),
+                ConversationMessageResponse(
+                    id="msg-2",
+                    role="ai",
+                    content="",
+                    status="success",
+                    cards=[
+                        {
+                            "card_uuid": "card-1",
+                            "type": "product-card",
+                            "data": {
+                                "title": "为您推荐以下商品",
+                                "products": [{"id": "1001", "name": "商品1001"}],
+                            },
+                        },
+                        {
+                            "card_uuid": "card-2",
+                            "type": "product-purchase-card",
+                            "data": {
+                                "title": "请确认要购买的商品",
+                                "products": [
+                                    {
+                                        "id": "1002",
+                                        "name": "商品1002",
+                                        "price": "19.90",
+                                        "quantity": 2,
+                                    }
+                                ],
+                                "total_price": "39.80",
+                            },
+                        }
+                    ],
                 )
             ],
-            1,
+            2,
         ),
     )
     client = TestClient(app)
@@ -186,9 +559,41 @@ def test_client_history_route_returns_serialized_messages(monkeypatch):
     assert response.status_code == 200
     body = response.json()
     assert body["data"]["rows"] == [
-        {"id": "msg-1", "role": "user", "content": "你好"}
+        {"id": "msg-1", "role": "user", "content": "你好"},
+        {
+            "id": "msg-2",
+            "role": "ai",
+            "content": "",
+            "status": "success",
+            "cards": [
+                {
+                    "card_uuid": "card-1",
+                    "type": "product-card",
+                    "data": {
+                        "title": "为您推荐以下商品",
+                        "products": [{"id": "1001", "name": "商品1001"}],
+                    },
+                },
+                {
+                    "card_uuid": "card-2",
+                    "type": "product-purchase-card",
+                    "data": {
+                        "title": "请确认要购买的商品",
+                        "products": [
+                            {
+                                "id": "1002",
+                                "name": "商品1002",
+                                "price": "19.90",
+                                "quantity": 2,
+                            }
+                        ],
+                        "total_price": "39.80",
+                    },
+                }
+            ],
+        },
     ]
-    assert body["data"]["total"] == 1
+    assert body["data"]["total"] == 2
 
 
 def test_delete_client_conversation_route_delegates_to_service(monkeypatch):

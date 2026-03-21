@@ -57,6 +57,7 @@ def test_assistant_message_tts_stream_returns_chunked_audio_with_expected_header
     assert captured == {
         "message_uuid": "msg-1",
         "user_id": 101,
+        "conversation_type": ConversationType.ADMIN,
     }
 
 
@@ -775,6 +776,67 @@ def test_answer_completed_persists_fallback_when_answer_empty(monkeypatch):
     assert saved_traces[-1]["message_uuid"] == "msg-uuid-empty"
 
 
+def test_answer_completed_persists_cards_when_callback_receives_persistable_cards(monkeypatch):
+    """测试目标：回调收到已过滤的可持久化 cards 时会随消息入库。"""
+
+    saved_messages: list[dict] = []
+    saved_traces: list[dict] = []
+
+    monkeypatch.setattr(
+        service_module,
+        "_schedule_background_task",
+        lambda *, task_name, func, kwargs: (
+            func(**kwargs) if task_name == "persist_assistant_message" else None
+        ),
+    )
+    monkeypatch.setattr(
+        service_module,
+        "add_message",
+        lambda **kwargs: saved_messages.append(kwargs) or "507f1f77bcf86cd799439012",
+    )
+    monkeypatch.setattr(
+        service_module,
+        "add_message_trace",
+        lambda **kwargs: saved_traces.append(kwargs) or None,
+    )
+    monkeypatch.setattr(
+        service_module,
+        "resolve_persistable_token_usage",
+        lambda _token_usage, _execution_trace: None,
+    )
+
+    callback = service_module._build_assistant_message_callback(
+        conversation_id="507f1f77bcf86cd799439011",
+        assistant_message_uuid="msg-uuid-card-only",
+    )
+    cards = [
+        {
+            "id": "card-1",
+            "type": "product-card",
+            "data": {
+                "title": "为您推荐以下商品",
+                "products": [],
+            },
+        }
+    ]
+    asyncio.run(
+        callback(
+            "   ",
+            [],
+            None,
+            False,
+            None,
+            cards,
+        )
+    )
+
+    assert saved_messages[-1]["status"] == MessageStatus.SUCCESS
+    assert saved_messages[-1]["content"] == ""
+    assert saved_messages[-1]["cards"] == cards
+    assert saved_messages[-1]["message_uuid"] == "msg-uuid-card-only"
+    assert saved_traces[-1]["message_uuid"] == "msg-uuid-card-only"
+
+
 def test_persist_assistant_message_trace_failure_only_logs_warning(monkeypatch):
     """测试目标：trace 持久化失败仅告警；成功标准：主消息已保存且无异常抛出。"""
 
@@ -1064,3 +1126,55 @@ def test_conversation_messages_returns_thinking_for_ai_when_present(monkeypatch)
     assert [item.id for item in rows] == ["msg-user-1", "msg-ai-2"]
     assert rows[0].thinking is None
     assert rows[1].thinking == "这是完整思考文本"
+
+
+def test_conversation_messages_ignores_cards_for_admin_history(monkeypatch):
+    """测试目标：admin 历史消息不返回 cards；成功标准：即使底层文档存在 cards 也不透出。"""
+
+    monkeypatch.setattr(service_module, "get_user_id", lambda: 100)
+    monkeypatch.setattr(
+        service_module,
+        "_load_admin_conversation",
+        lambda *, conversation_uuid, user_id: "507f1f77bcf86cd799439011",
+    )
+    monkeypatch.setattr(
+        service_module,
+        "count_messages",
+        lambda **_kwargs: 1,
+    )
+    monkeypatch.setattr(
+        service_module,
+        "list_messages",
+        lambda **_kwargs: [
+            type(
+                "Doc",
+                (),
+                {
+                    "uuid": "msg-ai-1",
+                    "role": MessageRole.AI,
+                    "status": MessageStatus.SUCCESS,
+                    "content": "",
+                    "cards": [
+                        {
+                            "id": "card-1",
+                            "type": "product-card",
+                            "data": {
+                                "title": "为您推荐以下商品",
+                                "products": [{"id": "1001", "name": "商品1001"}],
+                            },
+                        }
+                    ],
+                },
+            )()
+        ],
+    )
+
+    rows, total = service_module.conversation_messages(
+        conversation_uuid="conv-1",
+        page_request=PageRequest(page_num=1, page_size=50),
+    )
+
+    assert total == 1
+    assert rows[0].id == "msg-ai-1"
+    assert rows[0].content == ""
+    assert rows[0].cards is None

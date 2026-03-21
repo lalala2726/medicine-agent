@@ -13,11 +13,11 @@ from app.core.exception.exceptions import ServiceException
 DEFAULT_MONGODB_URI = "mongodb://localhost:27017"  # MongoDB 默认连接地址
 DEFAULT_MONGODB_DB_NAME = "medicine_ai_agent"  # MongoDB 默认数据库名
 DEFAULT_MONGODB_TIMEOUT_MS = 3000  # MongoDB 默认超时（毫秒）
-DEFAULT_CONVERSATIONS_COLLECTION = "conversations"  # 会话集合名
-DEFAULT_MESSAGES_COLLECTION = "messages"  # 消息集合名
-DEFAULT_MESSAGE_TRACES_COLLECTION = "message_traces"  # 消息追踪集合名
-DEFAULT_MESSAGE_TTS_USAGES_COLLECTION = "message_tts_usages"  # 语音用量集合名
-DEFAULT_CONVERSATION_SUMMARIES_COLLECTION = "conversation_summaries"  # 会话摘要集合名
+MONGODB_CONVERSATIONS_COLLECTION = "conversations"  # MongoDB 会话集合固定名称
+MONGODB_MESSAGES_COLLECTION = "messages"  # MongoDB 消息集合固定名称
+MONGODB_MESSAGE_TRACES_COLLECTION = "message_traces"  # MongoDB 消息追踪集合固定名称
+MONGODB_MESSAGE_TTS_USAGES_COLLECTION = "message_tts_usages"  # MongoDB 语音用量集合固定名称
+MONGODB_CONVERSATION_SUMMARIES_COLLECTION = "conversation_summaries"  # MongoDB 会话摘要集合固定名称
 DEFAULT_MONGODB_STARTUP_PING_ENABLED = False  # 启动期是否执行 MongoDB ping
 
 

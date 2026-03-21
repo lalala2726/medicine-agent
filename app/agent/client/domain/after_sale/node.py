@@ -10,7 +10,7 @@ from app.agent.client.domain.after_sale.tools import (
     check_after_sale_eligibility,
     get_after_sale_detail,
 )
-from app.agent.client.domain.common.user_action_tools import (
+from app.agent.client.domain.tools.action_tools import (
     open_user_after_sale_list,
     open_user_order_list,
 )

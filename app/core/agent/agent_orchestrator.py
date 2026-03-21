@@ -34,7 +34,8 @@ from app.core.agent.agent_event_bus import (
     set_final_response_queue,
     set_status_emitter,
 )
-from app.schemas.sse_response import Action, AssistantResponse, Content, MessageType, ProductCard
+from app.schemas.assistant_run import AssistantRunStatus
+from app.schemas.sse_response import Action, AssistantResponse, Card, Content, MessageType
 from app.utils.streaming_utils import extract_text
 
 StreamEvent = tuple[str, Any]
@@ -73,6 +74,8 @@ class AssistantStreamConfig:
         hide_node_types: 对哪些事件类型隐藏 `node` 字段，默认隐藏 function_call。
         stream_modes: astream 订阅模式，默认 messages + values。
         response_headers: StreamingResponse 的响应头，默认包含禁缓存和禁代理缓冲。
+        is_cancel_requested: 可选取消检查函数，返回 True 时按 cancelled 收尾。
+        cancel_check_interval_ms: 取消检查轮询间隔（毫秒）。
     """
 
     # 流式执行主体，决定事件从哪里产出。
@@ -89,10 +92,11 @@ class AssistantStreamConfig:
     invoke_sync: Callable[[dict[str, Any]], dict[str, Any]]
     # 异常映射器：把内部异常转成统一错误文案。
     map_exception: Callable[[Exception], str]
-    # 可选收尾回调：在流结束时回调完整 answer/thinking 文本、执行追踪与 token 汇总。
-    # 回调兼容 2/3/4/5 参：2参(answer,trace)、3参(answer,trace,has_error)、
+    # 可选收尾回调：在流结束时回调完整 answer/thinking 文本、执行追踪、token 汇总与最终卡片。
+    # 回调兼容 2/3/4/5/6 参：2参(answer,trace)、3参(answer,trace,has_error)、
     # 4参(answer,trace,token_usage,has_error)、
-    # 5参(answer,trace,token_usage,has_error,thinking_text)。
+    # 5参(answer,trace,token_usage,has_error,thinking_text)、
+    # 6参(answer,trace,token_usage,has_error,thinking_text,cards)。
     on_answer_completed: OnAnswerCompletedCallback | None = None
     # 流开始前注入的事件列表（例如会话创建成功事件），会按给定顺序输出。
     initial_emitted_events: tuple[InitialEmittedEvent, ...] = field(
@@ -111,6 +115,10 @@ class AssistantStreamConfig:
             "X-Accel-Buffering": "no",
         }
     )
+    # 可选取消检查器；返回 True 时主流会在最近安全边界停止。
+    is_cancel_requested: Callable[[], bool] | None = None
+    # 取消轮询间隔，避免 attach/后台 run 在无新事件时无限阻塞。
+    cancel_check_interval_ms: int = 200
 
 
 @dataclass
@@ -140,11 +148,11 @@ class EventProcessResult:
     单次事件处理结果。
 
     Attributes:
-        rendered_events: 当前事件产生的 SSE 文本列表。
+        rendered_responses: 当前事件产生的标准响应列表。
         should_break: 主循环是否应在当前事件后进入 done 收尾流程。
     """
 
-    rendered_events: list[str] = field(default_factory=list)
+    rendered_responses: list[AssistantResponse] = field(default_factory=list)
     should_break: bool = False
 
 
@@ -162,6 +170,37 @@ def serialize_sse(payload: AssistantResponse) -> str:
     )
 
 
+def build_answer_response(
+        text: str,
+        is_end: bool,
+        *,
+        state: str | None = None,
+        message: str | None = None,
+        meta: dict[str, Any] | None = None,
+) -> AssistantResponse:
+    """
+    构造 answer 类型的标准响应对象。
+
+    Args:
+        text: 本次要输出的文本片段。
+        is_end: 是否为流式结束包。
+        state: 可选状态字段。
+        message: 可选状态文案。
+        meta: 可选元数据。
+    """
+
+    return AssistantResponse(
+        content=Content(
+            text=text,
+            state=state,
+            message=message,
+        ),
+        type=MessageType.ANSWER,
+        is_end=is_end,
+        meta=meta,
+    )
+
+
 def build_answer_sse(text: str, is_end: bool) -> str:
     """
     构造 answer 类型的 SSE 文本。
@@ -171,12 +210,7 @@ def build_answer_sse(text: str, is_end: bool) -> str:
         is_end: 是否为流式结束包。
     """
 
-    payload = AssistantResponse(
-        content=Content(text=text),
-        type=MessageType.ANSWER,
-        is_end=is_end,
-    )
-    return serialize_sse(payload)
+    return serialize_sse(build_answer_response(text, is_end))
 
 
 def _resolve_message_type(raw_type: Any) -> MessageType:
@@ -226,14 +260,14 @@ def _resolve_action(raw_action: Any) -> Action | None:
     return None
 
 
-def _resolve_card(raw_card: Any) -> ProductCard | None:
+def _resolve_card(raw_card: Any) -> Card | None:
     """解析输入的 card 字段，仅接受合法卡片对象。"""
 
-    if isinstance(raw_card, ProductCard):
+    if isinstance(raw_card, Card):
         return raw_card
     if isinstance(raw_card, dict):
         try:
-            return ProductCard.model_validate(raw_card)
+            return Card.model_validate(raw_card)
         except Exception:
             return None
     return None
@@ -378,7 +412,7 @@ def _normalize_execution_trace_item(
     sequence = raw_sequence if raw_sequence is not None and raw_sequence >= 1 else fallback_sequence
     model_name = str(raw_item.get("model_name") or UNKNOWN_MODEL_NAME).strip() or UNKNOWN_MODEL_NAME
     status = str(raw_item.get("status") or "success").strip().lower()
-    normalized_status = status if status in {"success", "error"} else "success"
+    normalized_status = status if status in {"success", "error", "cancelled"} else "success"
     tool_calls = raw_item.get("tool_calls")
     if not isinstance(tool_calls, list):
         tool_calls = []
@@ -601,7 +635,7 @@ def handle_graph_message_chunk(
         return result
 
     runtime_state.has_streamed_output = True
-    result.rendered_events.append(build_answer_sse(delta_text, False))
+    result.rendered_responses.append(build_answer_response(delta_text, False))
     return result
 
 
@@ -697,7 +731,7 @@ def _process_stream_event(
             else:
                 return result
 
-        result.rendered_events.append(serialize_sse(emitted_response))
+        result.rendered_responses.append(emitted_response)
         return result
 
     if event_type == EVENT_GRAPH:
@@ -709,7 +743,7 @@ def _process_stream_event(
         message = map_exception(payload)
         delta_text = _append_answer_text(runtime_state, message)
         if delta_text:
-            result.rendered_events.append(build_answer_sse(delta_text, False))
+            result.rendered_responses.append(build_answer_response(delta_text, False))
         return result
 
     if event_type == EVENT_DONE:
@@ -750,8 +784,8 @@ async def drain_pending_events(
             hide_node_types=hide_node_types,
             map_exception=map_exception,
         )
-        for rendered_item in pending_result.rendered_events:
-            result.rendered_events.append(rendered_item)
+        for rendered_item in pending_result.rendered_responses:
+            result.rendered_responses.append(rendered_item)
 
     return result
 
@@ -796,6 +830,8 @@ async def _produce_workflow_events(
                 await queue.put((EVENT_GRAPH, (mode, chunk)))
         else:
             runtime_state.latest_state = await run_in_threadpool(config.invoke_sync, state)
+    except asyncio.CancelledError:
+        raise
     except Exception as exc:
         logger.opt(exception=exc).error("Assistant workflow execution failed")
         await queue.put((EVENT_ERROR, exc))
@@ -803,7 +839,12 @@ async def _produce_workflow_events(
         await queue.put((EVENT_DONE, None))
 
 
-async def _finalize_stream(emitter_token: Any, producer_task: asyncio.Task[Any]) -> str:
+async def _finalize_stream(
+        emitter_token: Any,
+        producer_task: asyncio.Task[Any],
+        *,
+        finish_status: AssistantRunStatus,
+) -> AssistantResponse:
     """
     统一收尾逻辑：重置 emitter、取消后台任务、输出结束包。
 
@@ -817,21 +858,77 @@ async def _finalize_stream(emitter_token: Any, producer_task: asyncio.Task[Any])
         producer_task.cancel()
         with suppress(asyncio.CancelledError):
             await producer_task
-    return build_answer_sse("", True)
+    return build_answer_response(
+        "",
+        True,
+        state=finish_status.value,
+        message=(
+            "已停止生成"
+            if finish_status == AssistantRunStatus.CANCELLED
+            else None
+        ),
+        meta={"run_status": finish_status.value},
+    )
 
 
-def _render_final_sse_responses() -> list[str]:
+def _drain_final_sse_responses() -> list[AssistantResponse]:
     """
-    取出并序列化所有最终 SSE 响应。
+    取出所有最终 SSE 响应对象。
+
+    用途：
+    - 在流式主体输出完成后，统一获取“流尾响应队列”中的内容；
+    - 保留事件总线已经排好的最终发送顺序；
+    - 为后续 SSE 序列化和历史卡片持久化提供同一份源数据。
 
     Returns:
-        list[str]: 按优先级排序后的 SSE 文本列表。
+        list[AssistantResponse]: 按最终发送顺序返回的响应对象列表。
     """
 
-    return [
-        serialize_sse(response)
-        for response in drain_final_sse_responses()
-    ]
+    return drain_final_sse_responses()
+
+
+def _extract_persistable_cards(
+        final_responses: list[AssistantResponse],
+) -> list[dict[str, Any]] | None:
+    """
+    从最终 SSE 响应中提取可落库的卡片。
+
+    仅提取 `type=card` 的响应，且要求：
+    - 存在合法 `card_uuid`；
+    - `meta.persist_card is True`。
+    action 等其他最终响应不会进入消息持久化结构。
+
+    Args:
+        final_responses: 流尾阶段准备发送给前端的最终 SSE 响应列表。
+
+    Returns:
+        list[dict[str, Any]] | None:
+            可持久化的卡片列表，结构固定为 `id + type + data`；
+            若不存在合法卡片则返回 `None`。
+    """
+
+    cards: list[dict[str, Any]] = []
+    for response in final_responses:
+        if response.type != MessageType.CARD or response.card is None:
+            continue
+
+        meta = response.meta if isinstance(response.meta, dict) else {}
+        if meta.get("persist_card") is not True:
+            continue
+
+        card_id = str(meta.get("card_uuid") or "").strip()
+        if not card_id:
+            continue
+
+        cards.append(
+            {
+                "id": card_id,
+                "type": response.card.type,
+                "data": dict(response.card.data),
+            }
+        )
+
+    return cards or None
 
 
 async def _invoke_answer_completed_callback(
@@ -841,6 +938,8 @@ async def _invoke_answer_completed_callback(
         token_usage: dict[str, Any] | None,
         has_error: bool,
         thinking_text: str,
+        final_cards: list[dict[str, Any]] | None,
+        finish_status: AssistantRunStatus,
 ) -> None:
     """
     执行“回答完成”回调。
@@ -854,6 +953,8 @@ async def _invoke_answer_completed_callback(
         token_usage: 汇总后的消息级 token 使用信息。
         has_error: 本次流式执行是否出现错误。
         thinking_text: 聚合后的完整思考文本。
+        final_cards: 流尾阶段已过滤出的可持久化卡片列表。
+        finish_status: 当前运行的最终状态。
     """
 
     if callback is None:
@@ -875,9 +976,30 @@ async def _invoke_answer_completed_callback(
     )
     supports_four_args = accepts_variadic or len(positional_parameters) >= 4
     supports_five_args = accepts_variadic or len(positional_parameters) >= 5
+    supports_six_args = accepts_variadic or len(positional_parameters) >= 6
+    supports_seven_args = accepts_variadic or len(positional_parameters) >= 7
     supports_three_args = accepts_variadic or len(positional_parameters) >= 3
 
-    if supports_five_args:
+    if supports_seven_args:
+        callback_result = callback(
+            answer_text,
+            execution_trace,
+            token_usage,
+            has_error,
+            thinking_text,
+            final_cards,
+            finish_status,
+        )
+    elif supports_six_args:
+        callback_result = callback(
+            answer_text,
+            execution_trace,
+            token_usage,
+            has_error,
+            thinking_text,
+            final_cards,
+        )
+    elif supports_five_args:
         callback_result = callback(answer_text, execution_trace, token_usage, has_error, thinking_text)
     elif supports_four_args:
         callback_result = callback(answer_text, execution_trace, token_usage, has_error)
@@ -889,11 +1011,13 @@ async def _invoke_answer_completed_callback(
         await callback_result
 
 
-async def _event_stream(
-        *, question: str, config: AssistantStreamConfig
-) -> AsyncIterable[str]:
+async def iterate_assistant_responses(
+        *,
+        question: str,
+        config: AssistantStreamConfig,
+) -> AsyncIterable[AssistantResponse]:
     """
-    核心事件流生成器。
+    核心响应流生成器。
 
     这是通用流式引擎的主循环：
     - 从 workflow 与状态发射器接收事件
@@ -905,6 +1029,8 @@ async def _event_stream(
 
     state = config.build_initial_state(question)
     runtime_state = StreamRuntimeState(latest_state=state)
+    final_responses: list[AssistantResponse] = []
+    finish_status = AssistantRunStatus.SUCCESS
 
     queue: asyncio.Queue[StreamEvent] = asyncio.Queue()
     loop = asyncio.get_running_loop()
@@ -932,7 +1058,37 @@ async def _event_stream(
 
     try:
         while True:
-            event_type, payload = await queue.get()
+            if config.is_cancel_requested is not None and config.is_cancel_requested():
+                finish_status = AssistantRunStatus.CANCELLED
+                if not producer_task.done():
+                    producer_task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await producer_task
+                await asyncio.sleep(0)
+                drained_result = await drain_pending_events(
+                    queue=queue,
+                    runtime_state=runtime_state,
+                    should_stream_token=config.should_stream_token,
+                    hide_node_types=config.hide_node_types,
+                    map_exception=config.map_exception,
+                )
+                for drained_item in drained_result.rendered_responses:
+                    yield drained_item
+                break
+
+            wait_timeout_seconds = None
+            if config.is_cancel_requested is not None:
+                wait_timeout_seconds = max(config.cancel_check_interval_ms, 1) / 1000
+            try:
+                if wait_timeout_seconds is None:
+                    event_type, payload = await queue.get()
+                else:
+                    event_type, payload = await asyncio.wait_for(
+                        queue.get(),
+                        timeout=wait_timeout_seconds,
+                    )
+            except asyncio.TimeoutError:
+                continue
 
             event_result = _process_stream_event(
                 event_type=event_type,
@@ -942,7 +1098,10 @@ async def _event_stream(
                 hide_node_types=config.hide_node_types,
                 map_exception=config.map_exception,
             )
-            for rendered_item in event_result.rendered_events:
+            if event_type == EVENT_ERROR:
+                finish_status = AssistantRunStatus.ERROR
+
+            for rendered_item in event_result.rendered_responses:
                 yield rendered_item
 
             if event_result.should_break:
@@ -955,21 +1114,27 @@ async def _event_stream(
                     hide_node_types=config.hide_node_types,
                     map_exception=config.map_exception,
                 )
-                for drained_item in drained_result.rendered_events:
+                for drained_item in drained_result.rendered_responses:
                     yield drained_item
                 break
 
         # 当没有 token 输出且没有错误时，回退到业务侧最终内容提取。
         # 若业务侧返回空字符串，则视为“无兜底内容”，不输出额外 answer 包。
-        if not runtime_state.has_emitted_error and not runtime_state.has_streamed_output:
+        if (
+                finish_status == AssistantRunStatus.SUCCESS
+                and not runtime_state.has_emitted_error
+                and not runtime_state.has_streamed_output
+        ):
             fallback_text = config.extract_final_content(runtime_state.latest_state)
             if isinstance(fallback_text, str) and fallback_text:
                 delta_text = _append_answer_text(runtime_state, fallback_text)
                 if delta_text:
-                    yield build_answer_sse(delta_text, False)
+                    yield build_answer_response(delta_text, False)
 
-        for final_response in _render_final_sse_responses():
-            yield final_response
+        if finish_status != AssistantRunStatus.CANCELLED:
+            final_responses = _drain_final_sse_responses()
+            for final_response in final_responses:
+                yield final_response
     finally:
         try:
             execution_trace = _build_execution_trace_summary(runtime_state.latest_state)
@@ -979,14 +1144,43 @@ async def _event_stream(
                 runtime_state.aggregated_answer_text,
                 execution_trace,
                 token_usage,
-                runtime_state.has_emitted_error,
+                finish_status == AssistantRunStatus.ERROR,
                 runtime_state.aggregated_thinking_text,
+                _extract_persistable_cards(final_responses),
+                finish_status,
             )
         except Exception as exc:  # pragma: no cover - 防御性兜底
             logger.opt(exception=exc).warning("Assistant stream finalize callback failed")
         reset_final_response_queue(final_response_queue_token)
-        end_event = await _finalize_stream(emitter_token, producer_task)
+        end_event = await _finalize_stream(
+            emitter_token,
+            producer_task,
+            finish_status=finish_status,
+        )
         yield end_event
+
+
+async def _event_stream(
+        *,
+        question: str,
+        config: AssistantStreamConfig,
+) -> AsyncIterable[str]:
+    """
+    核心 SSE 文本流生成器。
+
+    Args:
+        question: 用户问题文本。
+        config: 助手流式配置。
+
+    Returns:
+        AsyncIterable[str]: 标准 SSE 文本迭代器。
+    """
+
+    async for payload in iterate_assistant_responses(
+            question=question,
+            config=config,
+    ):
+        yield serialize_sse(payload)
 
 
 def create_streaming_response(

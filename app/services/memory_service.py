@@ -8,7 +8,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException
 from app.core.llms.provider import LlmProvider, resolve_provider
-from app.schemas.document.message import MessageRole
+from app.schemas.document.message import MessageRole, MessageStatus
 from app.schemas.memory import Memory
 from app.services.conversation_service import get_conversation
 from app.services.message_service import list_messages, list_summarizable_tail_messages
@@ -308,6 +308,7 @@ def load_memory(
         conversation_uuid: str,
         user_id: int,
         limit: int = _DEFAULT_ASSISTANT_MEMORY_WINDOW_LIMIT,
+        include_history_hidden: bool = True,
 ) -> Memory:
     """
     功能描述：
@@ -347,9 +348,14 @@ def load_memory(
                 conversation_uuid=conversation_uuid,
                 user_id=user_id,
                 limit=effective_window_limit,
+                include_history_hidden=include_history_hidden,
             )
         case "summary":
-            return load_memory_by_summary(conversation_uuid=conversation_uuid, user_id=user_id)
+            return load_memory_by_summary(
+                conversation_uuid=conversation_uuid,
+                user_id=user_id,
+                include_history_hidden=include_history_hidden,
+            )
         case _:
             raise ValueError(f"Invalid memory type: {effective_mode}")
 
@@ -359,6 +365,7 @@ def load_memory_by_window(
         conversation_uuid: str,
         user_id: int,
         limit: int = _DEFAULT_ASSISTANT_MEMORY_WINDOW_LIMIT,
+        include_history_hidden: bool = True,
 ) -> Memory:
     """
     功能描述：
@@ -391,6 +398,8 @@ def load_memory_by_window(
         conversation_id=str(conversation_id),
         limit=limit,
         ascending=False,
+        history_hidden=(None if include_history_hidden else False),
+        statuses=[MessageStatus.SUCCESS],
     )
 
     history_messages = _to_chat_memory_messages(
@@ -403,6 +412,7 @@ def load_memory_by_summary(
         *,
         conversation_uuid: str,
         user_id: int,
+        include_history_hidden: bool = True,
 ) -> Memory:
     """
     功能描述：
@@ -441,6 +451,7 @@ def load_memory_by_summary(
     tail_documents = list_summarizable_tail_messages(
         conversation_id=conversation_id,
         limit=resolve_assistant_summary_tail_window(),
+        history_hidden=(None if include_history_hidden else False),
     )
     memory_messages = _to_chat_memory_messages(
         include_system_summary=summary_content,
