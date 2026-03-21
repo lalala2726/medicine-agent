@@ -7,7 +7,7 @@ from app.agent.services.card_render_service import ProductPurchaseCardRequestIte
 from app.core.exception.exceptions import ServiceException
 
 
-def test_render_product_card_requests_purchase_cards_endpoint(monkeypatch):
+def test_render_product_card_requests_product_card_endpoint(monkeypatch):
     captured: dict = {}
 
     class _FakeHttpClient:
@@ -57,10 +57,9 @@ def test_render_product_card_requests_purchase_cards_endpoint(monkeypatch):
     card = asyncio.run(card_render_service_module.render_product_card([102, 101]))
 
     assert captured == {
-        "url": "/agent/client/purchase_cards/102,101",
+        "url": "/agent/client/card/product/102,101",
         "kwargs": {
             "response_format": "json",
-            "use_system_signature": True,
         },
     }
     assert card is not None
@@ -185,7 +184,7 @@ def test_render_product_purchase_card_posts_purchase_items(monkeypatch):
     )
 
     assert captured == {
-        "url": "/agent/client/purchase_cards",
+        "url": "/agent/client/card/purchase_cards",
         "kwargs": {
             "json": {
                 "items": [
@@ -194,7 +193,6 @@ def test_render_product_purchase_card_posts_purchase_items(monkeypatch):
                 ]
             },
             "response_format": "json",
-            "use_system_signature": True,
         },
     }
     assert card is not None

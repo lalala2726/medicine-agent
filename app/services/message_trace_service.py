@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import datetime
-import os
 from typing import Annotated, Any
 
 from bson import ObjectId
 from pydantic import Field
 
 from app.core.codes import ResponseCode
-from app.core.database.mongodb import DEFAULT_MESSAGE_TRACES_COLLECTION, get_mongo_database
+from app.core.database.mongodb import MONGODB_MESSAGE_TRACES_COLLECTION, get_mongo_database
 from app.core.exception.exceptions import ServiceException
 from app.core.llms.provider import LlmProvider, resolve_provider
 from app.schemas.document.message_trace import (
@@ -29,7 +28,7 @@ _ALLOWED_WORKFLOW_STATUSES = {"success", "error", "cancelled"}
 def _resolve_collection_name() -> str:
     """
     功能描述：
-        解析 message_traces 集合名，支持通过环境变量覆盖默认值。
+        返回 `message_traces` 集合固定名称常量。
 
     参数说明：
         无。
@@ -41,10 +40,7 @@ def _resolve_collection_name() -> str:
         无。
     """
 
-    return (
-            (os.getenv("MONGODB_MESSAGE_TRACES_COLLECTION") or DEFAULT_MESSAGE_TRACES_COLLECTION).strip()
-            or DEFAULT_MESSAGE_TRACES_COLLECTION
-    )
+    return MONGODB_MESSAGE_TRACES_COLLECTION
 
 
 def _to_object_id(raw_conversation_id: str) -> ObjectId:

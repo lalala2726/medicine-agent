@@ -205,6 +205,7 @@ async def render_product_card(product_ids: list[int]) -> Card | None:
         return None
 
     async with HttpClient() as client:
+        # TODO(Chuang): 业务端卡片接口完成系统内部认证改造后，这里补充 use_system_signature=True。
         payload: Any = await client.get(
             _build_product_card_url(product_ids),
             response_format="json",
@@ -253,6 +254,7 @@ async def render_product_purchase_card(
         return None
 
     async with HttpClient() as client:
+        # TODO(Chuang): 业务端卡片接口完成系统内部认证改造后，这里补充 use_system_signature=True。
         payload: Any = await client.post(
             "/agent/client/card/purchase_cards",
             json={

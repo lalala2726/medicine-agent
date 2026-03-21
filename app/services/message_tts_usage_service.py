@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import datetime
-import os
 import uuid
 from functools import lru_cache
 from typing import Annotated
@@ -12,8 +11,8 @@ from pymongo import DESCENDING
 
 from app.core.codes import ResponseCode
 from app.core.database.mongodb import (
-    DEFAULT_MESSAGE_TTS_USAGES_COLLECTION,
     get_mongo_database,
+    MONGODB_MESSAGE_TTS_USAGES_COLLECTION,
 )
 from app.core.exception.exceptions import ServiceException
 from app.schemas.document.message_tts_usage import (
@@ -24,12 +23,9 @@ from app.schemas.document.message_tts_usage import (
 
 
 def _resolve_collection_name() -> str:
-    """解析 message_tts_usages 集合名，支持环境变量覆盖。"""
+    """返回 message_tts_usages 集合固定名称常量。"""
 
-    return (
-            (os.getenv("MONGODB_MESSAGE_TTS_USAGES_COLLECTION") or DEFAULT_MESSAGE_TTS_USAGES_COLLECTION).strip()
-            or DEFAULT_MESSAGE_TTS_USAGES_COLLECTION
-    )
+    return MONGODB_MESSAGE_TTS_USAGES_COLLECTION
 
 
 def _to_object_id(raw_conversation_id: str) -> ObjectId:

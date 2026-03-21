@@ -1,5 +1,4 @@
 import datetime
-import os
 from typing import Annotated, Any, Mapping
 
 from bson import ObjectId
@@ -7,7 +6,7 @@ from bson.int64 import Int64
 from pydantic import Field
 from pymongo import DESCENDING
 
-from app.core.database.mongodb import DEFAULT_CONVERSATIONS_COLLECTION, get_mongo_database
+from app.core.database.mongodb import MONGODB_CONVERSATIONS_COLLECTION, get_mongo_database
 from app.schemas.document.conversation import (
     ConversationCreate,
     ConversationDocument,
@@ -16,10 +15,7 @@ from app.schemas.document.conversation import (
     ConversationUpdateSet,
 )
 
-_TABLE_NAME: str = (
-        (os.getenv("MONGODB_CONVERSATIONS_COLLECTION") or DEFAULT_CONVERSATIONS_COLLECTION).strip()
-        or DEFAULT_CONVERSATIONS_COLLECTION
-)
+_TABLE_NAME: str = MONGODB_CONVERSATIONS_COLLECTION
 """数据库中会话集合的名称"""
 
 _ADMIN_MARK: str = "admin"

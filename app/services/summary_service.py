@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import datetime
-import os
 from typing import Annotated, Literal
 
 from bson import ObjectId
@@ -10,8 +9,8 @@ from pymongo import ReturnDocument
 
 from app.core.codes import ResponseCode
 from app.core.database.mongodb import (
-    DEFAULT_CONVERSATION_SUMMARIES_COLLECTION,
     get_mongo_database,
+    MONGODB_CONVERSATION_SUMMARIES_COLLECTION,
 )
 from app.core.exception.exceptions import ServiceException
 from app.schemas.document.conversation_summary import (
@@ -25,7 +24,7 @@ from app.schemas.document.conversation_summary import (
 def _resolve_collection_name() -> str:
     """
     功能描述：
-        解析 `conversation_summaries` 集合名，支持环境变量覆盖。
+        返回 `conversation_summaries` 集合固定名称常量。
 
     参数说明：
         无。
@@ -37,11 +36,7 @@ def _resolve_collection_name() -> str:
         无。
     """
 
-    return (
-            (os.getenv(
-                "MONGODB_CONVERSATION_SUMMARIES_COLLECTION") or DEFAULT_CONVERSATION_SUMMARIES_COLLECTION).strip()
-            or DEFAULT_CONVERSATION_SUMMARIES_COLLECTION
-    )
+    return MONGODB_CONVERSATION_SUMMARIES_COLLECTION
 
 
 def _to_object_id(raw_conversation_id: str) -> ObjectId:

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import datetime
-import os
 import uuid
 from functools import lru_cache
 from typing import Annotated, Any, Mapping
@@ -12,7 +11,7 @@ from pydantic import Field
 from pymongo import ASCENDING, DESCENDING
 
 from app.core.codes import ResponseCode
-from app.core.database.mongodb import DEFAULT_MESSAGES_COLLECTION, get_mongo_database
+from app.core.database.mongodb import MONGODB_MESSAGES_COLLECTION, get_mongo_database
 from app.core.exception.exceptions import ServiceException
 from app.schemas.document.message import (
     MessageCard,
@@ -25,12 +24,9 @@ from app.schemas.document.message import (
 
 
 def _resolve_collection_name() -> str:
-    """解析 messages 集合名，支持环境变量覆盖。"""
+    """返回 messages 集合固定名称常量。"""
 
-    return (
-            (os.getenv("MONGODB_MESSAGES_COLLECTION") or DEFAULT_MESSAGES_COLLECTION).strip()
-            or DEFAULT_MESSAGES_COLLECTION
-    )
+    return MONGODB_MESSAGES_COLLECTION
 
 
 def _get_collection():

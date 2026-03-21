@@ -84,12 +84,10 @@
   `MILVUS_TIMEOUT`.
 - MongoDB configuration (optional): `MONGODB_URI` (defaults to `mongodb://localhost:27017`),
   `MONGODB_DB_NAME` (defaults to `medicine_ai_agent`), `MONGODB_TIMEOUT_MS` (defaults to `3000`),
-  `MONGODB_CONVERSATIONS_COLLECTION` (defaults to `conversations`), `MONGODB_MESSAGES_COLLECTION`
-  (defaults to `messages`), `MONGODB_MESSAGE_TRACES_COLLECTION` (defaults to `message_traces`),
-  `MONGODB_MESSAGE_TTS_USAGES_COLLECTION` (defaults to `message_tts_usages`),
-  `MONGODB_CONVERSATION_SUMMARIES_COLLECTION` (defaults to `conversation_summaries`),
   `MONGODB_STARTUP_PING_ENABLED` (default false, set true to fail fast
   on startup when MongoDB is unreachable/unauthorized).
+  MongoDB 集合名固定在 `app/core/database/mongodb/config.py` 常量中，
+  不支持通过环境变量修改。
 - Redis configuration (optional): `REDIS_URL`, `REDIS_HOST`, `REDIS_PORT`, `REDIS_DB`, `REDIS_PASSWORD`, `REDIS_SSL`.
   Redis connection/config entry is `app/core/database/redis/config.py`.
 - Assistant run streaming configuration (optional):
