@@ -83,6 +83,31 @@ class _DummyAsyncTask:
         self.callbacks.append(callback)
 
 
+async def _collect_sse_payloads(response: StreamingResponse) -> list[dict[str, Any]]:
+    """
+    功能描述:
+        消费 StreamingResponse 并提取其中的 SSE `data:` 负载。
+
+    参数说明:
+        response (StreamingResponse): 待消费的流式响应对象。
+
+    返回值:
+        list[dict[str, Any]]: 解析后的 JSON 负载列表。
+
+    异常说明:
+        json.JSONDecodeError: 当 SSE 载荷不是合法 JSON 时抛出。
+    """
+
+    payloads: list[dict[str, Any]] = []
+    async for chunk in response.body_iterator:
+        chunk_text = chunk.decode("utf-8") if isinstance(chunk, bytes) else str(chunk)
+        for line in chunk_text.splitlines():
+            if not line.startswith("data: "):
+                continue
+            payloads.append(json.loads(line[len("data: "):]))
+    return payloads
+
+
 def test_assistant_message_tts_stream_returns_chunked_audio_with_expected_headers(monkeypatch):
     captured: dict = {}
     monkeypatch.setattr(service_module, "get_user_id", lambda: 101)
@@ -1081,6 +1106,71 @@ def test_assistant_chat_submit_uses_new_conversation_context(monkeypatch):
         }
     ]
     assert register_calls[-1]["conversation_uuid"] == "new-conv-uuid"
+
+
+def test_build_attach_streaming_response_replays_terminal_card_and_end_after_snapshot(monkeypatch):
+    """测试目标：终态 attach 在发送 snapshot 后仍会补发卡片与结束包；成功标准：刷新后前端可重新拿到 card 和 is_end=true。"""
+
+    monkeypatch.setattr(
+        service_module,
+        "RUN_EVENT_STORE",
+        SimpleNamespace(
+            get_snapshot=lambda *, conversation_uuid: service_module.AssistantRunSnapshot(
+                answer_text="阶段性回复",
+                thinking_text="",
+                status=AssistantRunStatus.WAITING_INPUT,
+                assistant_message_uuid="msg-1",
+                last_event_id="3-0",
+            ),
+            read_events=lambda *, conversation_uuid, last_event_id, block_ms: [
+                SimpleNamespace(
+                    event_id="1-0",
+                    payload=service_module.AssistantResponse(
+                        content=service_module.Content(text="阶段性回复"),
+                        type=service_module.MessageType.ANSWER,
+                    ),
+                ),
+                SimpleNamespace(
+                    event_id="2-0",
+                    payload=service_module.AssistantResponse(
+                        type=service_module.MessageType.CARD,
+                        card={
+                            "type": "consultation-followup-card",
+                            "data": {
+                                "title": "现在体温是多少？",
+                                "options": ["未测量", "37.3以下", "37.3以上"],
+                            },
+                        },
+                        meta={"message_uuid": "msg-1"},
+                    ),
+                ),
+                SimpleNamespace(
+                    event_id="3-0",
+                    payload=service_module.build_answer_response(
+                        "",
+                        True,
+                        state=AssistantRunStatus.WAITING_INPUT.value,
+                        meta={"run_status": AssistantRunStatus.WAITING_INPUT.value},
+                    ),
+                ),
+            ],
+            get_run_meta=lambda *, conversation_uuid: None,
+        ),
+    )
+
+    response = service_module._build_attach_streaming_response(
+        conversation_uuid="conv-1",
+    )
+    payloads = asyncio.run(_collect_sse_payloads(response))
+
+    assert payloads[0]["type"] == "answer"
+    assert payloads[0]["content"]["text"] == "阶段性回复"
+    assert payloads[0]["content"]["state"] == "replace"
+    assert payloads[0]["is_end"] is False
+    assert payloads[1]["type"] == "card"
+    assert payloads[1]["card"]["type"] == "consultation-followup-card"
+    assert payloads[2]["is_end"] is True
+    assert payloads[2]["meta"]["run_status"] == "waiting_input"
 
 
 def test_load_history_reads_latest_window_and_returns_chronological(monkeypatch):

@@ -942,6 +942,65 @@ def _build_snapshot_attach_events(
     return tuple(events)
 
 
+def _should_replay_terminal_event_after_snapshot(
+        *,
+        response: AssistantResponse,
+) -> bool:
+    """
+    判断终态 attach 场景下，某条历史事件是否需要在 snapshot 之后再次补发。
+
+    设计原因：
+    1. snapshot 已经用 replace 语义补齐了最新 answer/thinking 文本；
+    2. 若再完整回放历史 stream，会导致文本重复；
+    3. 但卡片、notice 以及最终 `is_end=true` 结束包仍需要补发，保证刷新后前端状态完整。
+
+    Args:
+        response: Redis Stream 中读取到的原始事件。
+
+    Returns:
+        bool: `True` 表示该事件需要在 snapshot 之后补发；否则跳过。
+    """
+
+    if response.is_end:
+        return True
+    return response.type not in {
+        MessageType.ANSWER,
+        MessageType.THINKING,
+    }
+
+
+def _build_terminal_attach_end_event(
+        *,
+        finish_status: AssistantRunStatus,
+) -> AssistantResponse:
+    """
+    为终态 attach 场景构造兜底结束包。
+
+    触发时机：
+    - Redis snapshot 已存在；
+    - 但事件流中未读到终态 `is_end=true` 包；
+    - 需要主动补一个结束包，避免刷新后的前端一直停留在未结束状态。
+
+    Args:
+        finish_status: 当前运行终态。
+
+    Returns:
+        AssistantResponse: 标准 answer 结束包。
+    """
+
+    return build_answer_response(
+        "",
+        True,
+        state=finish_status.value,
+        message=(
+            "已停止生成"
+            if finish_status == AssistantRunStatus.CANCELLED
+            else None
+        ),
+        meta={"run_status": finish_status.value},
+    )
+
+
 async def _flush_stream_snapshot_if_due(
         *,
         conversation_id: str,
@@ -1183,6 +1242,30 @@ def _build_attach_streaming_response(
                         snapshot=snapshot,
                 ):
                     yield serialize_sse(snapshot_event)
+                if snapshot.status != AssistantRunStatus.RUNNING:
+                    terminal_events = await asyncio.to_thread(
+                        RUN_EVENT_STORE.read_events,
+                        conversation_uuid=conversation_uuid,
+                        last_event_id="0-0",
+                        block_ms=1,
+                    )
+                    emitted_end_event = False
+                    for event in terminal_events:
+                        if not _should_replay_terminal_event_after_snapshot(
+                                response=event.payload,
+                        ):
+                            continue
+                        yield serialize_sse(event.payload)
+                        if event.payload.is_end:
+                            emitted_end_event = True
+                            return
+                    if not emitted_end_event:
+                        yield serialize_sse(
+                            _build_terminal_attach_end_event(
+                                finish_status=snapshot.status,
+                            )
+                        )
+                        return
                 if snapshot.last_event_id is not None:
                     current_event_id = snapshot.last_event_id
 
