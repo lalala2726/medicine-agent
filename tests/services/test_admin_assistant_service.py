@@ -2,6 +2,7 @@ import asyncio
 import datetime
 import json
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from bson import ObjectId
@@ -12,6 +13,7 @@ from app.core.agent.agent_orchestrator import AssistantStreamConfig
 from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException
 from app.core.speech.tts.client import MessageTtsStream
+from app.schemas.assistant_run import AssistantRunStatus
 from app.schemas.base_request import PageRequest
 from app.schemas.document.conversation import ConversationDocument, ConversationListItem, ConversationType
 from app.schemas.document.message import MessageRole, MessageStatus
@@ -27,6 +29,58 @@ class _DummyGraph:
     def invoke(self, _state: dict, config: dict | None = None) -> dict:
         self.captured_config = config
         return self.final_state
+
+
+class _DummyAsyncTask:
+    """
+    功能描述:
+        模拟 `asyncio.create_task` 返回对象，用于同步测试场景下捕获完成回调。
+
+    参数说明:
+        coroutine (Any): 被调度的协程对象。
+
+    返回值:
+        None
+
+    异常说明:
+        无。
+    """
+
+    def __init__(self, coroutine: Any) -> None:
+        """
+        功能描述:
+            初始化模拟 task 并关闭未执行协程，避免测试中的未 await 告警。
+
+        参数说明:
+            coroutine (Any): 待调度协程。
+
+        返回值:
+            None
+
+        异常说明:
+            无。
+        """
+
+        self.coroutine = coroutine
+        self.callbacks: list[Any] = []
+        coroutine.close()
+
+    def add_done_callback(self, callback: Any) -> None:
+        """
+        功能描述:
+            记录 task 完成回调。
+
+        参数说明:
+            callback (Any): 完成回调函数。
+
+        返回值:
+            None
+
+        异常说明:
+            无。
+        """
+
+        self.callbacks.append(callback)
 
 
 def test_assistant_message_tts_stream_returns_chunked_audio_with_expected_headers(monkeypatch):
@@ -432,129 +486,110 @@ def test_prepare_conversation_context_routes_by_conversation_uuid(monkeypatch):
     ]
 
 
-def test_assistant_chat_schedules_user_persist_without_blocking_main_flow(monkeypatch):
-    """测试目标：user 消息走后台调度；成功标准：主流程只触发调度，不依赖同步落库。"""
+def test_assistant_chat_submit_creates_run_and_placeholder_message(monkeypatch):
+    """测试目标：提交接口创建运行态并注册后台任务；成功标准：run、user 消息和 AI 占位消息均被正确创建。"""
 
     captured: dict = {}
-    background_calls: list[dict] = []
-    saved_messages: list[dict] = []
-    call_order: list[str] = []
+    persist_calls: list[dict] = []
+    placeholder_calls: list[dict] = []
+    create_run_calls: list[dict] = []
+    register_calls: list[dict] = []
+    prepared_context = service_module.ConversationContext(
+        conversation_uuid="conv-1",
+        conversation_id="507f1f77bcf86cd799439011",
+        assistant_message_uuid="assistant-msg-uuid",
+        history_messages=[HumanMessage(content="历史问题"), AIMessage(content="历史回答"),
+                          HumanMessage(content="代理测试")],
+        initial_emitted_events=(),
+        is_new_conversation=False,
+    )
 
-    def _fake_create_streaming_response(question: str, config: AssistantStreamConfig):
-        captured["question"] = question
-        captured["config"] = config
-
-        async def _stream():
-            yield (
-                    "data: "
-                    + json.dumps(
-                {
-                    "content": {"text": ""},
-                    "type": "answer",
-                    "is_end": True,
-                    "timestamp": 1,
-                },
-                ensure_ascii=False,
-            )
-                    + "\n\n"
-            )
-
-        return StreamingResponse(_stream(), media_type="text/event-stream")
-
-    monkeypatch.setattr(service_module, "create_streaming_response", _fake_create_streaming_response)
     monkeypatch.setattr(service_module, "get_user_id", lambda: 100)
     monkeypatch.setattr(service_module.uuid, "uuid4", lambda: "assistant-msg-uuid")
     monkeypatch.setattr(
         service_module,
-        "get_admin_conversation",
-        lambda *, conversation_uuid, user_id: ConversationDocument(
-            _id=ObjectId("507f1f77bcf86cd799439011"),
-            uuid=conversation_uuid,
-            conversation_type=ConversationType.ADMIN,
-            user_id=user_id,
-            title="会话标题",
-            create_time=datetime.datetime(2026, 1, 1, 10, 0, 0),
-            update_time=datetime.datetime(2026, 1, 1, 10, 0, 0),
-            is_deleted=0,
-        ),
+        "_prepare_conversation_context",
+        lambda **kwargs: (captured.setdefault("prepare_kwargs", kwargs), prepared_context)[1],
+    )
+    monkeypatch.setattr(
+        service_module.RUN_EVENT_STORE,
+        "create_run",
+        lambda **kwargs: create_run_calls.append(kwargs) or object(),
     )
     monkeypatch.setattr(
         service_module,
-        "resolve_assistant_memory_mode",
-        lambda: "window",
+        "_persist_user_message",
+        lambda **kwargs: persist_calls.append(kwargs),
     )
     monkeypatch.setattr(
         service_module,
-        "load_memory",
-        lambda *, memory_type, conversation_uuid, user_id: (
-            call_order.append("load_memory"),
-            SimpleNamespace(messages=[HumanMessage(content="历史问题"), AIMessage(content="历史回答")]),
-        )[-1],
+        "_create_placeholder_assistant_message",
+        lambda **kwargs: placeholder_calls.append(kwargs),
     )
     monkeypatch.setattr(
         service_module,
-        "add_message",
+        "_build_run_stream_config",
         lambda **kwargs: (
-            saved_messages.append(kwargs),
-            call_order.append(f"add_{kwargs['role']}"),
-            "507f1f77bcf86cd799439012",
-        )[-1],
+            captured.setdefault("build_run_stream_config_kwargs", kwargs),
+            SimpleNamespace(name="stream-config"),
+        )[1],
     )
     monkeypatch.setattr(
-        service_module,
-        "_schedule_background_task",
-        lambda *, task_name, func, kwargs: (
-            background_calls.append({"task_name": task_name, "kwargs": kwargs}),
-            func(**kwargs) if task_name == "persist_user_message" else None,
-        )[-1] if task_name == "persist_user_message" else None,
+        service_module.asyncio,
+        "create_task",
+        lambda coroutine: captured.setdefault("background_task", _DummyAsyncTask(coroutine)),
+    )
+    monkeypatch.setattr(
+        service_module.RUN_EVENT_STORE,
+        "register_local_handle",
+        lambda **kwargs: register_calls.append(kwargs),
     )
 
-    response = service_module.assistant_chat(question="代理测试", conversation_uuid="conv-1")
+    response = service_module.assistant_chat_submit(
+        question="代理测试",
+        conversation_uuid="conv-1",
+    )
 
-    assert isinstance(response, StreamingResponse)
-    assert captured["question"] == "代理测试"
-    stream_config = captured["config"]
-    initial_state = stream_config.build_initial_state("x")
-    assert "context" in initial_state
-    assert "messages" in initial_state
-    assert [message.content for message in initial_state["history_messages"]] == [
-        "历史问题",
-        "历史回答",
-        "代理测试",
-    ]
-    assert [message.content for message in initial_state["messages"]] == [
-        "历史问题",
-        "历史回答",
-        "代理测试",
-    ]
-    assert len(stream_config.initial_emitted_events) == 1
-    assert stream_config.initial_emitted_events[0].type == MessageType.NOTICE
-    assert stream_config.initial_emitted_events[0].content.state is None
-    assert stream_config.initial_emitted_events[0].meta == {"message_uuid": "assistant-msg-uuid"}
-    assert call_order == ["load_memory", "add_user"]
-    assert background_calls == [
+    assert response.conversation_uuid == "conv-1"
+    assert response.message_uuid == "assistant-msg-uuid"
+    assert response.run_status == AssistantRunStatus.RUNNING
+    assert captured["prepare_kwargs"] == {
+        "question": "代理测试",
+        "user_id": 100,
+        "conversation_uuid": "conv-1",
+        "assistant_message_uuid": "assistant-msg-uuid",
+    }
+    assert create_run_calls == [
         {
-            "task_name": "persist_user_message",
-            "kwargs": {
-                "conversation_id": "507f1f77bcf86cd799439011",
-                "question": "代理测试",
-            },
+            "conversation_uuid": "conv-1",
+            "user_id": 100,
+            "conversation_type": ConversationType.ADMIN.value,
+            "assistant_message_uuid": "assistant-msg-uuid",
         }
     ]
-    assert saved_messages == [
+    assert persist_calls == [
         {
             "conversation_id": "507f1f77bcf86cd799439011",
-            "role": "user",
-            "content": "代理测试",
+            "question": "代理测试",
         }
     ]
+    assert placeholder_calls == [
+        {
+            "conversation_id": "507f1f77bcf86cd799439011",
+            "message_uuid": "assistant-msg-uuid",
+        }
+    ]
+    assert captured["build_run_stream_config_kwargs"]["question"] == "代理测试"
+    assert captured["build_run_stream_config_kwargs"]["context"] is prepared_context
+    assert register_calls and register_calls[-1]["conversation_uuid"] == "conv-1"
+    assert register_calls[-1]["handle"].task is captured["background_task"]
 
 
 def test_answer_completed_schedules_async_persist_with_execution_trace(monkeypatch):
     """测试目标：assistant 完成回调仅调度后台任务；成功标准：调度参数含 execution_trace。"""
 
     background_calls: list[dict] = []
-    saved_messages: list[dict] = []
+    updated_messages: list[dict] = []
     saved_traces: list[dict] = []
     resolve_calls: list[dict] = []
 
@@ -568,8 +603,8 @@ def test_answer_completed_schedules_async_persist_with_execution_trace(monkeypat
     )
     monkeypatch.setattr(
         service_module,
-        "add_message",
-        lambda **kwargs: saved_messages.append(kwargs) or "507f1f77bcf86cd799439012",
+        "update_assistant_message",
+        lambda **kwargs: updated_messages.append(kwargs) or True,
     )
     monkeypatch.setattr(
         service_module,
@@ -589,6 +624,19 @@ def test_answer_completed_schedules_async_persist_with_execution_trace(monkeypat
                 "node_breakdown": [],
             },
         )[-1],
+    )
+    monkeypatch.setattr(
+        service_module,
+        "resolve_persistable_trace_token_usage",
+        lambda token_usage, execution_trace: (
+            {
+                "prompt_tokens": 1,
+                "completion_tokens": 1,
+                "total_tokens": 2,
+                "is_complete": False,
+                "node_breakdown": [],
+            }
+        ),
     )
 
     callback = service_module._build_assistant_message_callback(
@@ -624,10 +672,10 @@ def test_answer_completed_schedules_async_persist_with_execution_trace(monkeypat
     assert background_calls[0]["kwargs"]["message_uuid"] == "msg-uuid-1"
     assert background_calls[0]["kwargs"]["answer_text"] == "AI回复"
     assert background_calls[0]["kwargs"]["status"] == MessageStatus.SUCCESS
-    assert saved_messages[-1]["status"] == MessageStatus.SUCCESS
-    assert saved_messages[-1]["message_uuid"] == "msg-uuid-1"
-    assert saved_messages[-1]["token_usage"]["total_tokens"] == 2
-    assert "execution_trace" not in saved_messages[-1]
+    assert updated_messages[-1]["status"] == MessageStatus.SUCCESS
+    assert updated_messages[-1]["message_uuid"] == "msg-uuid-1"
+    assert updated_messages[-1]["token_usage"]["total_tokens"] == 2
+    assert "execution_trace" not in updated_messages[-1]
     assert saved_traces[-1]["message_uuid"] == "msg-uuid-1"
     assert saved_traces[-1]["execution_trace"][0]["node_name"] == "chat_agent"
     assert saved_traces[-1]["token_usage"]["is_complete"] is False
@@ -637,7 +685,7 @@ def test_answer_completed_schedules_async_persist_with_execution_trace(monkeypat
 def test_answer_completed_marks_error_status_when_stream_failed(monkeypatch):
     """测试目标：流式执行报错时，assistant 消息落库状态为 error。"""
 
-    saved_messages: list[dict] = []
+    updated_messages: list[dict] = []
     saved_traces: list[dict] = []
 
     monkeypatch.setattr(
@@ -649,8 +697,8 @@ def test_answer_completed_marks_error_status_when_stream_failed(monkeypatch):
     )
     monkeypatch.setattr(
         service_module,
-        "add_message",
-        lambda **kwargs: saved_messages.append(kwargs) or "507f1f77bcf86cd799439012",
+        "update_assistant_message",
+        lambda **kwargs: updated_messages.append(kwargs) or True,
     )
     monkeypatch.setattr(
         service_module,
@@ -660,6 +708,11 @@ def test_answer_completed_marks_error_status_when_stream_failed(monkeypatch):
     monkeypatch.setattr(
         service_module,
         "resolve_persistable_token_usage",
+        lambda _token_usage, _execution_trace: None,
+    )
+    monkeypatch.setattr(
+        service_module,
+        "resolve_persistable_trace_token_usage",
         lambda _token_usage, _execution_trace: None,
     )
 
@@ -675,15 +728,15 @@ def test_answer_completed_marks_error_status_when_stream_failed(monkeypatch):
         )
     )
 
-    assert saved_messages[-1]["status"] == MessageStatus.ERROR
-    assert saved_messages[-1]["message_uuid"] == "msg-uuid-error"
+    assert updated_messages[-1]["status"] == MessageStatus.ERROR
+    assert updated_messages[-1]["message_uuid"] == "msg-uuid-error"
     assert saved_traces[-1]["message_uuid"] == "msg-uuid-error"
 
 
 def test_answer_completed_persists_thinking_text(monkeypatch):
     """测试目标：流结束回调携带 thinking 时会写入主消息；成功标准：add_message 收到 thinking 字段。"""
 
-    saved_messages: list[dict] = []
+    updated_messages: list[dict] = []
     saved_traces: list[dict] = []
 
     monkeypatch.setattr(
@@ -695,8 +748,8 @@ def test_answer_completed_persists_thinking_text(monkeypatch):
     )
     monkeypatch.setattr(
         service_module,
-        "add_message",
-        lambda **kwargs: saved_messages.append(kwargs) or "507f1f77bcf86cd799439012",
+        "update_assistant_message",
+        lambda **kwargs: updated_messages.append(kwargs) or True,
     )
     monkeypatch.setattr(
         service_module,
@@ -706,6 +759,11 @@ def test_answer_completed_persists_thinking_text(monkeypatch):
     monkeypatch.setattr(
         service_module,
         "resolve_persistable_token_usage",
+        lambda _token_usage, _execution_trace: None,
+    )
+    monkeypatch.setattr(
+        service_module,
+        "resolve_persistable_trace_token_usage",
         lambda _token_usage, _execution_trace: None,
     )
 
@@ -723,15 +781,15 @@ def test_answer_completed_persists_thinking_text(monkeypatch):
         )
     )
 
-    assert saved_messages[-1]["message_uuid"] == "msg-uuid-thinking"
-    assert saved_messages[-1]["thinking"] == "这是完整思考文本"
+    assert updated_messages[-1]["message_uuid"] == "msg-uuid-thinking"
+    assert updated_messages[-1]["thinking"] == "这是完整思考文本"
     assert saved_traces[-1]["message_uuid"] == "msg-uuid-thinking"
 
 
 def test_answer_completed_persists_fallback_when_answer_empty(monkeypatch):
     """测试目标：空输出也要落库；成功标准：写入兜底文案且状态为 error。"""
 
-    saved_messages: list[dict] = []
+    updated_messages: list[dict] = []
     saved_traces: list[dict] = []
 
     monkeypatch.setattr(
@@ -743,8 +801,8 @@ def test_answer_completed_persists_fallback_when_answer_empty(monkeypatch):
     )
     monkeypatch.setattr(
         service_module,
-        "add_message",
-        lambda **kwargs: saved_messages.append(kwargs) or "507f1f77bcf86cd799439012",
+        "update_assistant_message",
+        lambda **kwargs: updated_messages.append(kwargs) or True,
     )
     monkeypatch.setattr(
         service_module,
@@ -754,6 +812,11 @@ def test_answer_completed_persists_fallback_when_answer_empty(monkeypatch):
     monkeypatch.setattr(
         service_module,
         "resolve_persistable_token_usage",
+        lambda _token_usage, _execution_trace: None,
+    )
+    monkeypatch.setattr(
+        service_module,
+        "resolve_persistable_trace_token_usage",
         lambda _token_usage, _execution_trace: None,
     )
 
@@ -770,16 +833,16 @@ def test_answer_completed_persists_fallback_when_answer_empty(monkeypatch):
         )
     )
 
-    assert saved_messages[-1]["status"] == MessageStatus.ERROR
-    assert saved_messages[-1]["content"] == service_module.EMPTY_ASSISTANT_ANSWER_FALLBACK
-    assert saved_messages[-1]["message_uuid"] == "msg-uuid-empty"
+    assert updated_messages[-1]["status"] == MessageStatus.ERROR
+    assert updated_messages[-1]["content"] == service_module.EMPTY_ASSISTANT_ANSWER_FALLBACK
+    assert updated_messages[-1]["message_uuid"] == "msg-uuid-empty"
     assert saved_traces[-1]["message_uuid"] == "msg-uuid-empty"
 
 
 def test_answer_completed_persists_cards_when_callback_receives_persistable_cards(monkeypatch):
     """测试目标：回调收到已过滤的可持久化 cards 时会随消息入库。"""
 
-    saved_messages: list[dict] = []
+    updated_messages: list[dict] = []
     saved_traces: list[dict] = []
 
     monkeypatch.setattr(
@@ -791,8 +854,8 @@ def test_answer_completed_persists_cards_when_callback_receives_persistable_card
     )
     monkeypatch.setattr(
         service_module,
-        "add_message",
-        lambda **kwargs: saved_messages.append(kwargs) or "507f1f77bcf86cd799439012",
+        "update_assistant_message",
+        lambda **kwargs: updated_messages.append(kwargs) or True,
     )
     monkeypatch.setattr(
         service_module,
@@ -802,6 +865,11 @@ def test_answer_completed_persists_cards_when_callback_receives_persistable_card
     monkeypatch.setattr(
         service_module,
         "resolve_persistable_token_usage",
+        lambda _token_usage, _execution_trace: None,
+    )
+    monkeypatch.setattr(
+        service_module,
+        "resolve_persistable_trace_token_usage",
         lambda _token_usage, _execution_trace: None,
     )
 
@@ -830,23 +898,23 @@ def test_answer_completed_persists_cards_when_callback_receives_persistable_card
         )
     )
 
-    assert saved_messages[-1]["status"] == MessageStatus.SUCCESS
-    assert saved_messages[-1]["content"] == ""
-    assert saved_messages[-1]["cards"] == cards
-    assert saved_messages[-1]["message_uuid"] == "msg-uuid-card-only"
+    assert updated_messages[-1]["status"] == MessageStatus.SUCCESS
+    assert updated_messages[-1]["content"] == ""
+    assert updated_messages[-1]["cards"] == cards
+    assert updated_messages[-1]["message_uuid"] == "msg-uuid-card-only"
     assert saved_traces[-1]["message_uuid"] == "msg-uuid-card-only"
 
 
 def test_persist_assistant_message_trace_failure_only_logs_warning(monkeypatch):
     """测试目标：trace 持久化失败仅告警；成功标准：主消息已保存且无异常抛出。"""
 
-    saved_messages: list[dict] = []
+    updated_messages: list[dict] = []
     warning_calls: list[dict] = []
 
     monkeypatch.setattr(
         service_module,
-        "add_message",
-        lambda **kwargs: saved_messages.append(kwargs) or "507f1f77bcf86cd799439012",
+        "update_assistant_message",
+        lambda **kwargs: updated_messages.append(kwargs) or True,
     )
     monkeypatch.setattr(
         service_module,
@@ -861,6 +929,17 @@ def test_persist_assistant_message_trace_failure_only_logs_warning(monkeypatch):
             "completion_tokens": 1,
             "total_tokens": 2,
             "is_complete": True,
+            "node_breakdown": [],
+        },
+    )
+    monkeypatch.setattr(
+        service_module,
+        "resolve_persistable_trace_token_usage",
+        lambda _token_usage, _execution_trace: {
+            "prompt_tokens": 1,
+            "completion_tokens": 1,
+            "total_tokens": 2,
+            "is_complete": False,
             "node_breakdown": [],
         },
     )
@@ -893,8 +972,8 @@ def test_persist_assistant_message_trace_failure_only_logs_warning(monkeypatch):
         status=MessageStatus.SUCCESS,
     )
 
-    assert saved_messages[-1]["message_uuid"] == "msg-uuid-2"
-    assert saved_messages[-1]["token_usage"]["total_tokens"] == 2
+    assert updated_messages[-1]["message_uuid"] == "msg-uuid-2"
+    assert updated_messages[-1]["token_usage"]["total_tokens"] == 2
     assert warning_calls
     assert warning_calls[0]["kwargs"]["message_uuid"] == "msg-uuid-2"
 
@@ -930,69 +1009,78 @@ def test_persist_failure_only_logs_warning(monkeypatch):
     assert warning_calls[0]["kwargs"]["task_name"] == "broken_task"
 
 
-def test_assistant_chat_new_conversation_injects_created_session_event(monkeypatch):
-    """测试目标：新会话路径注入创建事件；成功标准：事件正确且 user 消息经后台调度。"""
+def test_assistant_chat_submit_uses_new_conversation_context(monkeypatch):
+    """测试目标：新会话提交路径沿用准备后的新会话上下文；成功标准：返回值与运行态、占位消息均使用新会话标识。"""
 
-    captured: dict = {}
-    scheduled_title_calls: list[dict] = []
-    background_calls: list[dict] = []
+    create_run_calls: list[dict] = []
+    persist_calls: list[dict] = []
+    placeholder_calls: list[dict] = []
+    register_calls: list[dict] = []
+    prepared_context = service_module.ConversationContext(
+        conversation_uuid="new-conv-uuid",
+        conversation_id="db-new-conv-uuid-100",
+        assistant_message_uuid="assistant-msg-uuid",
+        history_messages=[HumanMessage(content="新建会话")],
+        initial_emitted_events=(),
+        is_new_conversation=True,
+    )
 
-    def _fake_create_streaming_response(question: str, config: AssistantStreamConfig):
-        captured["question"] = question
-        captured["config"] = config
-
-        async def _stream():
-            yield (
-                    "data: "
-                    + json.dumps(
-                {
-                    "content": {"text": ""},
-                    "type": "answer",
-                    "is_end": True,
-                    "timestamp": 1,
-                },
-                ensure_ascii=False,
-            )
-                    + "\n\n"
-            )
-
-        return StreamingResponse(_stream(), media_type="text/event-stream")
-
-    monkeypatch.setattr(service_module, "create_streaming_response", _fake_create_streaming_response)
     monkeypatch.setattr(service_module, "get_user_id", lambda: 100)
-    uuid_values = iter(["assistant-msg-uuid", "new-conv-uuid"])
-    monkeypatch.setattr(service_module.uuid, "uuid4", lambda: next(uuid_values))
+    monkeypatch.setattr(service_module.uuid, "uuid4", lambda: "assistant-msg-uuid")
     monkeypatch.setattr(
         service_module,
-        "add_admin_conversation",
-        lambda *, conversation_uuid, user_id: f"db-{conversation_uuid}-{user_id}",
+        "_prepare_conversation_context",
+        lambda **_kwargs: prepared_context,
+    )
+    monkeypatch.setattr(
+        service_module.RUN_EVENT_STORE,
+        "create_run",
+        lambda **kwargs: create_run_calls.append(kwargs) or object(),
     )
     monkeypatch.setattr(
         service_module,
-        "_schedule_title_generation",
-        lambda **kwargs: scheduled_title_calls.append(kwargs),
+        "_persist_user_message",
+        lambda **kwargs: persist_calls.append(kwargs),
     )
     monkeypatch.setattr(
         service_module,
-        "_schedule_background_task",
-        lambda *, task_name, func, kwargs: background_calls.append({"task_name": task_name, "kwargs": kwargs}),
+        "_create_placeholder_assistant_message",
+        lambda **kwargs: placeholder_calls.append(kwargs),
+    )
+    monkeypatch.setattr(
+        service_module,
+        "_build_run_stream_config",
+        lambda **_kwargs: SimpleNamespace(name="stream-config"),
+    )
+    monkeypatch.setattr(
+        service_module.asyncio,
+        "create_task",
+        lambda coroutine: _DummyAsyncTask(coroutine),
+    )
+    monkeypatch.setattr(
+        service_module.RUN_EVENT_STORE,
+        "register_local_handle",
+        lambda **kwargs: register_calls.append(kwargs),
     )
 
-    response = service_module.assistant_chat(question="新建会话")
+    response = service_module.assistant_chat_submit(question="新建会话")
 
-    assert isinstance(response, StreamingResponse)
-    assert captured["question"] == "新建会话"
-    stream_config = captured["config"]
-    assert len(stream_config.initial_emitted_events) == 1
-    session_event = stream_config.initial_emitted_events[0]
-    assert session_event.type == MessageType.NOTICE
-    assert session_event.content.state == "created"
-    assert session_event.meta == {
-        "conversation_uuid": "new-conv-uuid",
-        "message_uuid": "assistant-msg-uuid",
-    }
-    assert scheduled_title_calls == [{"conversation_uuid": "new-conv-uuid", "question": "新建会话"}]
-    assert background_calls[0]["task_name"] == "persist_user_message"
+    assert response.conversation_uuid == "new-conv-uuid"
+    assert response.message_uuid == "assistant-msg-uuid"
+    assert create_run_calls[-1]["conversation_uuid"] == "new-conv-uuid"
+    assert persist_calls == [
+        {
+            "conversation_id": "db-new-conv-uuid-100",
+            "question": "新建会话",
+        }
+    ]
+    assert placeholder_calls == [
+        {
+            "conversation_id": "db-new-conv-uuid-100",
+            "message_uuid": "assistant-msg-uuid",
+        }
+    ]
+    assert register_calls[-1]["conversation_uuid"] == "new-conv-uuid"
 
 
 def test_load_history_reads_latest_window_and_returns_chronological(monkeypatch):

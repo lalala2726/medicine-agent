@@ -149,24 +149,24 @@ def test_build_llm_agent_uses_route_slot_defaults(monkeypatch):
 def test_route_functions_return_expected_next_node():
     assert consultation_graph_module._route_after_consultation_route(
         {"consultation_route": {"next_action": "reply_only"}}
-    ) == "consultation_response_node"
+    ) == "response_node"
     assert consultation_graph_module._route_after_consultation_route(
         {"consultation_route": {"next_action": "ask_followup"}}
-    ) == "consultation_collecting_fanout_node"
+    ) == "collecting_fanout_node"
     assert consultation_graph_module._route_after_consultation_route(
         {"consultation_route": {"next_action": "final_diagnosis"}}
-    ) == "consultation_final_diagnosis_node"
+    ) == "final_diagnosis_node"
     assert consultation_graph_module._route_after_consultation_response(
         {"consultation_route": {"next_action": "reply_only"}}
     ) == END
     assert consultation_graph_module._route_after_consultation_response(
         {"consultation_route": {"next_action": "ask_followup"}}
-    ) == "consultation_parallel_merge_node"
+    ) == "parallel_merge_node"
     assert consultation_graph_module._route_after_parallel_merge({"diagnosis_ready": True}) == (
-        "consultation_final_diagnosis_node"
+        "final_diagnosis_node"
     )
     assert consultation_graph_module._route_after_parallel_merge({"diagnosis_ready": False}) == (
-        "consultation_question_interrupt_node"
+        "question_interrupt_node"
     )
 
 

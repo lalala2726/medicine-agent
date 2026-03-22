@@ -40,10 +40,10 @@ def _route_after_consultation_route(state: ConsultationState) -> str:
     consultation_route = resolve_consultation_route(state)
     next_action = str(consultation_route.get("next_action") or "").strip()
     if next_action == "reply_only":
-        return "consultation_response_node"
+        return "response_node"
     if next_action == "final_diagnosis":
-        return "consultation_final_diagnosis_node"
-    return "consultation_collecting_fanout_node"
+        return "final_diagnosis_node"
+    return "collecting_fanout_node"
 
 
 def _route_after_consultation_response(state: ConsultationState) -> str:
@@ -64,7 +64,7 @@ def _route_after_consultation_response(state: ConsultationState) -> str:
     consultation_route = resolve_consultation_route(state)
     if str(consultation_route.get("next_action") or "").strip() == "reply_only":
         return END
-    return "consultation_parallel_merge_node"
+    return "parallel_merge_node"
 
 
 def _route_after_parallel_merge(state: ConsultationState) -> str:
@@ -83,8 +83,8 @@ def _route_after_parallel_merge(state: ConsultationState) -> str:
     """
 
     if bool(state.get("diagnosis_ready")):
-        return "consultation_final_diagnosis_node"
-    return "consultation_question_interrupt_node"
+        return "final_diagnosis_node"
+    return "question_interrupt_node"
 
 
 def consultation_collecting_fanout_node(_state: ConsultationState) -> dict[str, Any]:
@@ -157,45 +157,45 @@ def build_consultation_graph() -> Any:
     """
 
     graph = StateGraph(ConsultationState)
-    graph.add_node("consultation_route_node", consultation_route_node)
-    graph.add_node("consultation_collecting_fanout_node", consultation_collecting_fanout_node)
-    graph.add_node("consultation_response_node", consultation_response_node)
-    graph.add_node("consultation_question_node", consultation_question_node)
-    graph.add_node("consultation_parallel_merge_node", consultation_parallel_merge_node)
-    graph.add_node("consultation_question_interrupt_node", consultation_question_interrupt_node)
-    graph.add_node("consultation_final_diagnosis_node", consultation_final_diagnosis_node)
+    graph.add_node("route_node", consultation_route_node)
+    graph.add_node("collecting_fanout_node", consultation_collecting_fanout_node)
+    graph.add_node("response_node", consultation_response_node)
+    graph.add_node("question_node", consultation_question_node)
+    graph.add_node("parallel_merge_node", consultation_parallel_merge_node)
+    graph.add_node("question_interrupt_node", consultation_question_interrupt_node)
+    graph.add_node("final_diagnosis_node", consultation_final_diagnosis_node)
 
-    graph.add_edge(START, "consultation_route_node")
+    graph.add_edge(START, "route_node")
     graph.add_conditional_edges(
-        "consultation_route_node",
+        "route_node",
         _route_after_consultation_route,
         {
-            "consultation_response_node": "consultation_response_node",
-            "consultation_collecting_fanout_node": "consultation_collecting_fanout_node",
-            "consultation_final_diagnosis_node": "consultation_final_diagnosis_node",
+            "response_node": "response_node",
+            "collecting_fanout_node": "collecting_fanout_node",
+            "final_diagnosis_node": "final_diagnosis_node",
         },
     )
     graph.add_conditional_edges(
-        "consultation_response_node",
+        "response_node",
         _route_after_consultation_response,
         {
             END: END,
-            "consultation_parallel_merge_node": "consultation_parallel_merge_node",
+            "parallel_merge_node": "parallel_merge_node",
         },
     )
-    graph.add_edge("consultation_collecting_fanout_node", "consultation_response_node")
-    graph.add_edge("consultation_collecting_fanout_node", "consultation_question_node")
-    graph.add_edge("consultation_question_node", "consultation_parallel_merge_node")
+    graph.add_edge("collecting_fanout_node", "response_node")
+    graph.add_edge("collecting_fanout_node", "question_node")
+    graph.add_edge("question_node", "parallel_merge_node")
     graph.add_conditional_edges(
-        "consultation_parallel_merge_node",
+        "parallel_merge_node",
         _route_after_parallel_merge,
         {
-            "consultation_question_interrupt_node": "consultation_question_interrupt_node",
-            "consultation_final_diagnosis_node": "consultation_final_diagnosis_node",
+            "question_interrupt_node": "question_interrupt_node",
+            "final_diagnosis_node": "final_diagnosis_node",
         },
     )
-    graph.add_edge("consultation_question_interrupt_node", "consultation_route_node")
-    graph.add_edge("consultation_final_diagnosis_node", END)
+    graph.add_edge("question_interrupt_node", "route_node")
+    graph.add_edge("final_diagnosis_node", END)
     return graph.compile(checkpointer=_REDIS_CHECKPOINT_SAVER)
 
 

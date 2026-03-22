@@ -52,3 +52,6 @@ include-package-data = true
 where = ["."]
 include = ["app", "app.*"]
 exclude = ["tests", "tests.*", "docs", "docs.*", "doc", "doc.*", "resources", "resources.*"]
+
+[tool.pytest.ini_options]
+addopts = "--import-mode=importlib"
