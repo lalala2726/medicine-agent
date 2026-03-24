@@ -1151,7 +1151,7 @@ def append_resume_messages(
     return history_messages
 
 
-def build_consultation_graph_config(config: RunnableConfig | None) -> RunnableConfig:
+def build_consultation_graph_config(config: RunnableConfig | None) -> dict[str, Any]:
     """
     功能描述：
         基于上游 RunnableConfig 构造 consultation 子图专用 config。

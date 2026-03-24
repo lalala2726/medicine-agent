@@ -255,11 +255,12 @@ def test_consultation_route_node_outputs_structured_route(monkeypatch):
 def test_consultation_response_node_streams_reply_only_text(monkeypatch):
     answer_deltas: list[str] = []
     thinking_deltas: list[str] = []
+    captured_build_llm_kwargs: dict[str, object] = {}
 
     monkeypatch.setattr(
         response_node_module,
         "build_llm_agent",
-        lambda **_kwargs: (object(), "response-model"),
+        lambda **kwargs: captured_build_llm_kwargs.update(kwargs) or (object(), "response-model"),
     )
 
     def _fake_agent_stream(_agent, _messages, on_model_delta=None, on_thinking_delta=None):
@@ -307,6 +308,11 @@ def test_consultation_response_node_streams_reply_only_text(monkeypatch):
 
     assert answer_deltas == ["先多喝温水，今天先别吃辛辣刺激。"]
     assert thinking_deltas == ["先分析缓解动作"]
+    assert [tool.name for tool in captured_build_llm_kwargs["tools"]] == [
+        "search_symptom_candidates",
+        "query_disease_candidates_by_symptoms",
+        "query_disease_detail",
+    ]
     assert result["consultation_status"] == CONSULTATION_STATUS_COMPLETED
     assert result["consultation_outputs"]["response"]["text"] == "先多喝温水，今天先别吃辛辣刺激。"
     assert result["result"] == "先多喝温水，今天先别吃辛辣刺激。"

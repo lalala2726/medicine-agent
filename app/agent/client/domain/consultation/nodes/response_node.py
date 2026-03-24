@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+from langchain.agents.middleware import ToolCallLimitMiddleware
+
+from app.agent.graph_tool import (
+    query_disease_candidates_by_symptoms,
+    query_disease_detail,
+    search_symptom_candidates,
+)
 from app.agent.client.domain.consultation.helpers import (
     CONSULTATION_RESPONSE_MODEL_SLOT,
     DEFAULT_RESPONSE_TEXT,
@@ -28,6 +35,14 @@ SIMPLE_MEDICAL_RESPONSE_PROMPT = load_prompt(
 DIAGNOSTIC_RESPONSE_PROMPT = load_prompt(
     "client/consultation/diagnostic_response_system_prompt.md"
 )
+# consultation 医学回应节点可用的症状分析图谱工具。
+CONSULTATION_RESPONSE_TOOLS = [
+    search_symptom_candidates,
+    query_disease_candidates_by_symptoms,
+    query_disease_detail,
+]
+# consultation 医学回应节点单轮工具调用上限，避免单次回应做过多图谱检索。
+CONSULTATION_RESPONSE_TOOL_CALL_LIMIT = ToolCallLimitMiddleware(thread_limit=4, run_limit=4)
 
 
 @traceable(name="Client Consultation Response Node", run_type="chain")
@@ -62,6 +77,8 @@ def consultation_response_node(state: ConsultationState) -> dict[str, object]:
         slot=CONSULTATION_RESPONSE_MODEL_SLOT,
         temperature=1.0,
         prompt_text=prompt_text,
+        tools=CONSULTATION_RESPONSE_TOOLS,
+        extra_middleware=[CONSULTATION_RESPONSE_TOOL_CALL_LIMIT],
     )
     stream_result = agent_stream(
         agent,
@@ -121,6 +138,7 @@ def consultation_response_node(state: ConsultationState) -> dict[str, object]:
 
 
 __all__ = [
+    "CONSULTATION_RESPONSE_TOOLS",
     "DIAGNOSTIC_RESPONSE_PROMPT",
     "SIMPLE_MEDICAL_RESPONSE_PROMPT",
     "consultation_response_node",
