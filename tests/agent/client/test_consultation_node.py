@@ -144,6 +144,36 @@ def test_build_llm_agent_uses_route_slot_defaults(monkeypatch):
     assert captured_llm_kwargs["temperature"] == 0.0
     assert captured_llm_kwargs["think"] is False
     assert captured_agent_kwargs["model"].model_name == "consultation-route-model"
+    assert "tools" not in captured_agent_kwargs
+
+
+def test_build_llm_agent_passes_tools_and_extra_middleware(monkeypatch):
+    captured_agent_kwargs: dict[str, object] = {}
+    tool_marker = object()
+    middleware_marker = object()
+
+    monkeypatch.setattr(
+        consultation_helper_module,
+        "create_agent_chat_llm",
+        lambda **_kwargs: SimpleNamespace(model_name="consultation-question-model"),
+    )
+    monkeypatch.setattr(
+        consultation_helper_module,
+        "create_agent",
+        lambda **kwargs: captured_agent_kwargs.update(kwargs) or object(),
+    )
+
+    consultation_helper_module.build_llm_agent(
+        state={"task_difficulty": "normal"},
+        prompt_text="这是 consultation 测试提示词。",
+        temperature=0.2,
+        slot=AgentChatModelSlot.CLIENT_CONSULTATION_QUESTION,
+        tools=[tool_marker],
+        extra_middleware=[middleware_marker],
+    )
+
+    assert captured_agent_kwargs["tools"] == [tool_marker]
+    assert middleware_marker in captured_agent_kwargs["middleware"]
 
 
 def test_route_functions_return_expected_next_node():
@@ -283,6 +313,7 @@ def test_consultation_response_node_streams_reply_only_text(monkeypatch):
 
 
 def test_consultation_question_node_requests_followup_with_slot_key(monkeypatch):
+    captured_build_llm_kwargs: dict[str, object] = {}
     payload_text = json.dumps(
         {
             "diagnosis_ready": False,
@@ -297,7 +328,7 @@ def test_consultation_question_node_requests_followup_with_slot_key(monkeypatch)
     monkeypatch.setattr(
         question_node_module,
         "build_llm_agent",
-        lambda **_kwargs: (object(), "question-model"),
+        lambda **kwargs: captured_build_llm_kwargs.update(kwargs) or (object(), "question-model"),
     )
     monkeypatch.setattr(
         question_node_module,
@@ -336,6 +367,11 @@ def test_consultation_question_node_requests_followup_with_slot_key(monkeypatch)
     assert result["consultation_outputs"]["question"]["question_text"] == "咳嗽有痰吗？"
     assert result["consultation_outputs"]["question"]["options"] == ["没有痰", "白痰", "黄痰", "不确定"]
     assert result["consultation_progress"]["pending_slot_key"] == "cough_sputum"
+    assert [tool.name for tool in captured_build_llm_kwargs["tools"]] == [
+        "search_symptom_candidates",
+        "query_disease_candidates_by_symptoms",
+        "query_followup_symptom_candidates",
+    ]
 
 
 def test_consultation_question_node_avoids_duplicate_followup(monkeypatch):
@@ -570,6 +606,10 @@ def test_consultation_final_diagnosis_node_uses_tool_agent_and_thinking(monkeypa
     assert captured_llm_kwargs["temperature"] == 0.2
     assert captured_llm_kwargs["think"] is False
     assert tool_names == [
+        "search_symptom_candidates",
+        "query_disease_candidates_by_symptoms",
+        "query_disease_detail",
+        "query_followup_symptom_candidates",
         "search_products",
         "get_product_detail",
         "get_product_spec",

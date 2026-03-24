@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, LiteralString
 
 import pytest
 from neo4j.exceptions import DriverError
@@ -31,7 +31,7 @@ class _FakeTransaction:
         self._error = error
         self.run_calls: list[dict[str, Any]] = []
 
-    def run(self, query: str, parameters: dict[str, Any]) -> _FakeResult:
+    def run(self, query: LiteralString, parameters: dict[str, Any]) -> _FakeResult:
         self.run_calls.append(
             {
                 "query": query,

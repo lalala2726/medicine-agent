@@ -1,11 +1,15 @@
 from __future__ import annotations
 
-from typing import Any
-
 from langchain.agents import create_agent
 from langchain.agents.middleware import ToolCallLimitMiddleware
 from langchain_core.messages import SystemMessage
 
+from app.agent.graph_tool import (
+    query_disease_candidates_by_symptoms,
+    query_disease_detail,
+    query_followup_symptom_candidates,
+    search_symptom_candidates,
+)
 from app.agent.client.domain.consultation.helpers import (
     CONSULTATION_FINAL_DIAGNOSIS_MODEL_SLOT,
     append_trace_to_state,
@@ -35,6 +39,21 @@ from app.utils.prompt_utils import append_current_time_to_prompt, load_prompt
 CONSULTATION_FINAL_DIAGNOSIS_PROMPT = load_prompt("client/consultation/final_diagnosis_system_prompt.md")
 # consultation 最终诊断节点兜底文本。
 DEFAULT_FINAL_DIAGNOSIS_TEXT = "结合你目前提供的信息，更像是常见轻症方向；如果症状持续加重，请及时线下就医。"
+# consultation 最终诊断节点可用的完整医学图谱工具。
+CONSULTATION_FINAL_DIAGNOSIS_GRAPH_TOOLS = [
+    search_symptom_candidates,
+    query_disease_candidates_by_symptoms,
+    query_disease_detail,
+    query_followup_symptom_candidates,
+]
+# consultation 最终诊断节点最终可用的全部工具，包含图谱检索和商品推荐能力。
+CONSULTATION_FINAL_DIAGNOSIS_TOOLS = [
+    *CONSULTATION_FINAL_DIAGNOSIS_GRAPH_TOOLS,
+    search_products,
+    get_product_detail,
+    get_product_spec,
+    send_product_purchase_card,
+]
 
 
 @traceable(name="Client Consultation Final Diagnosis Node", run_type="chain")
@@ -65,12 +84,7 @@ def consultation_final_diagnosis_node(state: ConsultationState) -> dict[str, obj
     llm_model_name = str(getattr(llm, "model_name", "") or "").strip() or "unknown"
     diagnosis_agent = create_agent(
         model=llm,
-        tools=[
-            search_products,
-            get_product_detail,
-            get_product_spec,
-            send_product_purchase_card,
-        ],
+        tools=CONSULTATION_FINAL_DIAGNOSIS_TOOLS,
         system_prompt=SystemMessage(
             content=append_current_time_to_prompt(CONSULTATION_FINAL_DIAGNOSIS_PROMPT)
         ),
@@ -131,5 +145,7 @@ def consultation_final_diagnosis_node(state: ConsultationState) -> dict[str, obj
 
 __all__ = [
     "CONSULTATION_FINAL_DIAGNOSIS_PROMPT",
+    "CONSULTATION_FINAL_DIAGNOSIS_GRAPH_TOOLS",
+    "CONSULTATION_FINAL_DIAGNOSIS_TOOLS",
     "consultation_final_diagnosis_node",
 ]

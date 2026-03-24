@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 import uuid
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from langchain.agents import create_agent
@@ -745,16 +745,20 @@ def build_llm_agent(
         slot: AgentChatModelSlot,
         prompt_text: str,
         temperature: float = DEFAULT_TEMPERATURE,
+        tools: Sequence[Any] | None = None,
+        extra_middleware: Sequence[Any] | None = None,
 ) -> tuple[Any, str]:
     """
     功能描述：
-        构造 consultation 子节点使用的 agent。
+        构造 consultation 子节点使用的 agent，可按节点需要挂载工具与额外中间件。
 
     参数说明：
         state (ConsultationState): 当前 consultation 状态。
         slot (AgentChatModelSlot): 当前节点绑定的客户端助手模型槽位。
         prompt_text (str): 节点系统提示词。
         temperature (float): 模型温度。
+        tools (Sequence[Any] | None): 当前节点允许调用的工具列表。
+        extra_middleware (Sequence[Any] | None): 需要额外挂载的中间件列表。
 
     返回值：
         tuple[Any, str]:
@@ -772,13 +776,19 @@ def build_llm_agent(
         think=CONSULTATION_AGENT_DEFAULT_THINK,
     )
     llm_model_name = str(getattr(llm, "model_name", "") or "").strip() or "unknown"
-    agent = create_agent(
-        model=llm,
-        system_prompt=SystemMessage(content=append_current_time_to_prompt(prompt_text)),
-        middleware=[
-            BasePromptMiddleware(base_prompt_file="client/_client_base_prompt.md"),
-        ],
-    )
+    middleware = [
+        BasePromptMiddleware(base_prompt_file="client/_client_base_prompt.md"),
+        *(list(extra_middleware or [])),
+    ]
+    agent_kwargs: dict[str, Any] = {
+        "model": llm,
+        "system_prompt": SystemMessage(content=append_current_time_to_prompt(prompt_text)),
+        "middleware": middleware,
+    }
+    normalized_tools = list(tools or [])
+    if normalized_tools:
+        agent_kwargs["tools"] = normalized_tools
+    agent = create_agent(**agent_kwargs)
     return agent, llm_model_name
 
 

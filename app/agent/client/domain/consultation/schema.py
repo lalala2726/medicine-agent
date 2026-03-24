@@ -6,6 +6,7 @@ from app.agent.client.domain.consultation.state import (
     ConsultationModeValue,
     ConsultationNextActionValue,
 )
+from app.utils.list_utils import TextListUtils
 
 
 class ConsultationRouteSchema(BaseModel):
@@ -88,15 +89,7 @@ class ConsultationQuestionSchema(BaseModel):
             无。
         """
 
-        normalized_options: list[str] = []
-        seen: set[str] = set()
-        for raw_option in value:
-            normalized = str(raw_option or "").strip()
-            if not normalized or normalized in seen:
-                continue
-            seen.add(normalized)
-            normalized_options.append(normalized)
-        return normalized_options
+        return TextListUtils.normalize(value)
 
     @model_validator(mode="after")
     def _validate_shape(self) -> "ConsultationQuestionSchema":

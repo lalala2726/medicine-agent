@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+from langchain.agents.middleware import ToolCallLimitMiddleware
+
+from app.agent.graph_tool import (
+    query_disease_candidates_by_symptoms,
+    query_followup_symptom_candidates,
+    search_symptom_candidates,
+)
 from app.agent.client.domain.consultation.helpers import (
     CONSULTATION_QUESTION_MODEL_SLOT,
     DEFAULT_QUESTION_OPTIONS,
@@ -24,6 +31,14 @@ from app.utils.prompt_utils import load_prompt
 
 # consultation 追问判断节点提示词。
 CONSULTATION_QUESTION_PROMPT = load_prompt("client/consultation/question_system_prompt.md")
+# consultation 追问节点可用的基础医学图谱工具。
+CONSULTATION_QUESTION_TOOLS = [
+    search_symptom_candidates,
+    query_disease_candidates_by_symptoms,
+    query_followup_symptom_candidates,
+]
+# consultation 追问节点单轮工具调用上限，避免为单个追问做过多图谱检索。
+CONSULTATION_QUESTION_TOOL_CALL_LIMIT = ToolCallLimitMiddleware(thread_limit=4, run_limit=4)
 
 
 @traceable(name="Client Consultation Question Node", run_type="chain")
@@ -50,6 +65,8 @@ def consultation_question_node(state: ConsultationState) -> dict[str, object]:
         state=state,
         slot=CONSULTATION_QUESTION_MODEL_SLOT,
         prompt_text=CONSULTATION_QUESTION_PROMPT,
+        tools=CONSULTATION_QUESTION_TOOLS,
+        extra_middleware=[CONSULTATION_QUESTION_TOOL_CALL_LIMIT],
     )
     result = agent_invoke(agent, input_messages)
     question_result = resolve_question_result(result.payload)
@@ -167,5 +184,6 @@ def consultation_question_node(state: ConsultationState) -> dict[str, object]:
 
 __all__ = [
     "CONSULTATION_QUESTION_PROMPT",
+    "CONSULTATION_QUESTION_TOOLS",
     "consultation_question_node",
 ]
