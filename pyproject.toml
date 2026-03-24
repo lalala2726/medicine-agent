@@ -43,6 +43,7 @@ dependencies = [
     "starlette>=0.40.0",
     "uvicorn>=0.41.0",
     "websockets>=14.0",
+    "neo4j>=6.1.0",
 ]
 
 [tool.setuptools]

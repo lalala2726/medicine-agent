@@ -88,6 +88,12 @@
   on startup when MongoDB is unreachable/unauthorized).
   MongoDB 集合名固定在 `app/core/database/mongodb/config.py` 常量中，
   不支持通过环境变量修改。
+- Neo4j configuration (optional): `NEO4J_URI` (defaults to `bolt://localhost:7687`),
+  `NEO4J_USER` (defaults to `neo4j`), `NEO4J_PASSWORD` (required when using Neo4j),
+  `NEO4J_DATABASE` (defaults to `neo4j`), `NEO4J_TIMEOUT_SECONDS` (defaults to `3.0`),
+  `NEO4J_STARTUP_PING_ENABLED` (default false, set true to verify Neo4j connectivity on startup).
+  Neo4j connection/config entry is `app/core/database/neo4j/config.py`;
+  reusable query client entry is `app/core/database/neo4j/client.py`.
 - Redis configuration (optional): `REDIS_URL`, `REDIS_HOST`, `REDIS_PORT`, `REDIS_DB`, `REDIS_PASSWORD`, `REDIS_SSL`.
   Redis connection/config entry is `app/core/database/redis/config.py`.
 - Assistant run streaming configuration (optional):
