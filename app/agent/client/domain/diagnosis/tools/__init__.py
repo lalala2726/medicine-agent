@@ -20,7 +20,6 @@ from app.agent.client.domain.diagnosis.tools.schemas import (
 )
 from app.agent.client.domain.diagnosis.tools.questionnaire_card_tool import (
     CONSULTATION_QUESTIONNAIRE_CARD_TYPE,
-    CONSULTATION_QUESTIONNAIRE_OPTION_MODEL_NAME,
     ConsultationQuestionnaireCardData,
     ConsultationQuestionnaireQuestionItem,
     MAX_CONSULTATION_QUESTIONNAIRE_COUNT,
@@ -53,7 +52,6 @@ __all__ = [
     "DEFAULT_DISEASE_CANDIDATE_LIMIT",
     "DEFAULT_GRAPH_QUERY_LIMIT",
     "CONSULTATION_QUESTIONNAIRE_CARD_TYPE",
-    "CONSULTATION_QUESTIONNAIRE_OPTION_MODEL_NAME",
     "ConsultationQuestionnaireCardData",
     "ConsultationQuestionnaireQuestionItem",
     "DiseaseCandidate",
