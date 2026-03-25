@@ -283,6 +283,7 @@ def _resolve_slot_runtime_model_name(
 def create_agent_chat_llm(
         *,
         slot: AgentChatModelSlot | str,
+        model_name: str | None = None,
         temperature: float | None = None,
         think: bool = False,
         max_tokens: int | None = None,
@@ -293,6 +294,7 @@ def create_agent_chat_llm(
 
     Args:
         slot: 目标聊天槽位。
+        model_name: 显式指定的模型名称；传入后优先级高于 Redis 槽位模型名。
         temperature: 本地默认温度；Redis 槽位有值时会被覆盖。
         think: 本地默认思考开关；Redis 槽位有值时会被覆盖。
         max_tokens: 本地默认最大输出 token；Redis 槽位有值时会被覆盖。
@@ -315,7 +317,11 @@ def create_agent_chat_llm(
         kwargs=kwargs,
     )
 
-    resolved_model = _resolve_slot_runtime_model_name(slot_config)
+    resolved_model = (
+        str(model_name).strip()
+        if model_name is not None and str(model_name).strip()
+        else _resolve_slot_runtime_model_name(slot_config)
+    )
     if resolved_model is None and _is_gateway_route_slot(normalized_slot):
         resolved_model = _resolve_gateway_router_fallback_model_name()
 

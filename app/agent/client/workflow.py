@@ -7,6 +7,7 @@ from langgraph.graph import StateGraph
 
 from app.agent.client.domain.after_sale import after_sale_agent
 from app.agent.client.domain.chat import chat_agent
+from app.agent.client.domain.diagnosis import diagnosis_agent
 from app.agent.client.domain.order import order_agent
 from app.agent.client.domain.product import product_agent
 from app.agent.client.domain.router import gateway_router
@@ -25,6 +26,7 @@ def _route_from_gateway(state: AgentState) -> str:
         normalized_targets: list[str] = []
         allowed_targets = {
             "chat_agent",
+            "diagnosis_agent",
             "order_agent",
             "product_agent",
             "after_sale_agent",
@@ -53,6 +55,7 @@ def build_graph() -> Any:
 
     graph.add_node("gateway_router", gateway_router)
     graph.add_node("chat_agent", chat_agent)
+    graph.add_node("diagnosis_agent", diagnosis_agent)
     graph.add_node("order_agent", order_agent)
     graph.add_node("product_agent", product_agent)
     graph.add_node("after_sale_agent", after_sale_agent)
@@ -63,12 +66,14 @@ def build_graph() -> Any:
         _route_from_gateway,
         {
             "chat_agent": "chat_agent",
+            "diagnosis_agent": "diagnosis_agent",
             "order_agent": "order_agent",
             "product_agent": "product_agent",
             "after_sale_agent": "after_sale_agent",
         },
     )
     graph.add_edge("chat_agent", END)
+    graph.add_edge("diagnosis_agent", END)
     graph.add_edge("order_agent", END)
     graph.add_edge("product_agent", END)
     graph.add_edge("after_sale_agent", END)

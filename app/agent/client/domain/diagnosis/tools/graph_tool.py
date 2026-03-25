@@ -1,27 +1,70 @@
 from __future__ import annotations
 
+import json
 from typing import Any, LiteralString
 
+from langchain_core.prompts import SystemMessagePromptTemplate
 from langchain_core.tools import tool
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field
 
+from app.core.config_sync import AgentChatModelSlot, create_agent_chat_llm
 from app.core.database.neo4j.client import get_neo4j_client
 from app.utils.list_utils import TextListUtils
 
 # 医学图谱工具固定查询的业务数据库名称。
 MEDICAL_GRAPH_DATABASE = "medicine"
+# 图谱症状关键词规范化阶段固定使用的模型名称。
+GRAPH_KEYWORD_MODEL_NAME = "qwen-flash"
 # 图谱工具默认返回条数。
 DEFAULT_GRAPH_QUERY_LIMIT = 10
+# 首轮候选疾病召回默认返回条数。
+DEFAULT_DISEASE_CANDIDATE_LIMIT = 5
 # 图谱工具允许的最大返回条数。
 MAX_GRAPH_QUERY_LIMIT = 50
+# 批量查询疾病详情时允许的最大疾病数量。
+MAX_BATCH_DISEASE_DETAIL_COUNT = 5
+# 图谱症状关键词规范化的系统提示词模板。
+GRAPH_KEYWORD_SYSTEM_PROMPT_TEMPLATE = SystemMessagePromptTemplate.from_template(
+    """
+        你是医学症状检索词标准化助手。
+        
+        你的唯一任务是把输入中的口语化症状、非标准描述或重复表达，改写为适合医学图谱检索的短关键词。
+        
+        处理规则：
+        1. 只保留症状、部位、医学近义词，不要输出病因、建议、解释、诊断结论。
+        2. 尽量输出短词，优先使用医学检索常见表达，例如“喉咙疼”可改写为“喉咙”“咽喉”“咽痛”。
+        3. 去重后输出 3 到 8 个关键词。
+        4. 每行只输出一个关键词。
+        5. 不要输出序号、标题、说明、标点包裹或任何额外文本。
+        
+        你需要输出的为JSON 数组，例如：["喉咙", "咽喉", "咽痛"] 除此以外禁止输出其他内容。
+        
+        待标准化输入 JSON 数组：
+        {input_text}
+    """.strip()
+)
 
 # 症状候选检索的固定 Cypher 查询语句。
 SEARCH_SYMPTOM_CANDIDATES_CYPHER: LiteralString = """
+    UNWIND $keywords AS keyword
     MATCH (s:Symptom)
-    WHERE s.name CONTAINS $keyword
+    WHERE s.name CONTAINS keyword
+    WITH
+      s,
+      collect(DISTINCT keyword) AS matched_keywords,
+      min(
+        CASE
+          WHEN s.name = keyword THEN 0
+          WHEN s.name STARTS WITH keyword THEN 1
+          ELSE 2
+        END
+      ) AS match_priority,
+      max(size(keyword)) AS matched_keyword_length
     RETURN s.name AS symptom
     ORDER BY
-      CASE WHEN s.name = $keyword THEN 0 ELSE 1 END ASC,
+      match_priority ASC,
+      size(matched_keywords) DESC,
+      matched_keyword_length DESC,
       size(s.name) ASC,
       s.name ASC
     LIMIT toInteger($limit)
@@ -77,6 +120,48 @@ QUERY_DISEASE_DETAIL_CYPHER: LiteralString = """
       collect(DISTINCT comp.name) AS complications
 """
 
+# 疾病详情批量快照查询的固定 Cypher 查询语句。
+QUERY_DISEASE_DETAILS_CYPHER: LiteralString = """
+    UNWIND range(0, size($disease_names) - 1) AS idx
+    WITH idx, $disease_names[idx] AS disease_name
+    MATCH (d:Disease {name: disease_name})
+    OPTIONAL MATCH (d)-[:has_symptom]->(s:Symptom)
+    OPTIONAL MATCH (d)-[:need_check]->(c:Check)
+    OPTIONAL MATCH (d)-[:common_drug]->(cd:Drug)
+    OPTIONAL MATCH (d)-[:recommand_drug]->(rd:Drug)
+    OPTIONAL MATCH (d)-[:do_eat]->(food_ok:Food)
+    OPTIONAL MATCH (d)-[:no_eat]->(food_bad:Food)
+    OPTIONAL MATCH (d)-[:recommand_eat]->(recipe:Food)
+    OPTIONAL MATCH (d)-[:belongs_to]->(dep:Department)
+    OPTIONAL MATCH (d)-[:acompany_with]->(comp:Disease)
+    RETURN
+      idx AS order_index,
+      d.name AS disease,
+      d.desc AS desc,
+      d.cause AS cause,
+      d.prevent AS prevent,
+      d.easy_get AS easy_get,
+      d.cure_way AS cure_way,
+      d.cure_lasttime AS cure_lasttime,
+      d.cured_prob AS cured_prob,
+      d.get_prob AS get_prob,
+      d.get_way AS get_way,
+      d.cost_money AS cost_money,
+      d.yibao_status AS yibao_status,
+      d.category AS category,
+      d.cure_department AS cure_department,
+      collect(DISTINCT s.name) AS symptoms,
+      collect(DISTINCT c.name) AS checks,
+      collect(DISTINCT cd.name) AS common_drugs,
+      collect(DISTINCT rd.name) AS recommended_drugs,
+      collect(DISTINCT food_ok.name) AS should_eat,
+      collect(DISTINCT food_bad.name) AS avoid_eat,
+      collect(DISTINCT recipe.name) AS recipes,
+      collect(DISTINCT dep.name) AS departments,
+      collect(DISTINCT comp.name) AS complications
+    ORDER BY order_index ASC
+"""
+
 # 候选疾病差异症状查询的固定 Cypher 查询语句。
 QUERY_FOLLOWUP_SYMPTOM_CANDIDATES_CYPHER: LiteralString = """
     MATCH (d:Disease)-[:has_symptom]->(s:Symptom)
@@ -122,15 +207,50 @@ def _normalize_required_text(value: str, *, field_name: str) -> str:
     return normalized_value
 
 
+def _rewrite_graph_keywords(keywords: list[str]) -> list[str]:
+    """使用诊断模型将口语化症状改写为图谱检索词。
+
+    Args:
+        keywords: 上游传入的原始症状关键词列表。
+
+    Returns:
+        list[str]: 适合图谱检索的标准化关键词列表。
+    """
+
+    normalized_keywords = TextListUtils.normalize_required(
+        keywords,
+        field_name="keywords",
+    )
+    llm = create_agent_chat_llm(
+        slot=AgentChatModelSlot.CLIENT_CONSULTATION_FINAL_DIAGNOSIS,
+        model_name=GRAPH_KEYWORD_MODEL_NAME,
+        temperature=0.0,
+        think=False,
+    )
+    system_message = GRAPH_KEYWORD_SYSTEM_PROMPT_TEMPLATE.format(
+        input_text=json.dumps(normalized_keywords, ensure_ascii=False),
+    )
+    response = llm.invoke([system_message])
+    response_text = str(getattr(response, "content", "") or "").strip()
+    parsed_keywords = json.loads(response_text)
+    return TextListUtils.normalize_required(
+        parsed_keywords,
+        field_name="keywords",
+    )
+
+
 class SearchSymptomCandidatesRequest(BaseModel):
     """症状候选检索工具入参。"""
 
     model_config = ConfigDict(extra="forbid")
 
-    keyword: str = Field(
+    keywords: list[str] = Field(
         ...,
         min_length=1,
-        description="用户口语症状关键词，例如 '喉咙疼' 或 '咽痛'。",
+        description=(
+            "用于检索标准症状的关键词列表。"
+            "要求先把用户原始描述拆成多个短词、近义词或标准化候选后再传入，"
+        ),
     )
     limit: int = Field(
         default=DEFAULT_GRAPH_QUERY_LIMIT,
@@ -138,20 +258,6 @@ class SearchSymptomCandidatesRequest(BaseModel):
         le=MAX_GRAPH_QUERY_LIMIT,
         description="最多返回的候选症状数量。",
     )
-
-    @field_validator("keyword")
-    @classmethod
-    def _validate_keyword(cls, value: str) -> str:
-        """规范化症状关键词。
-
-        Args:
-            value: 原始关键词。
-
-        Returns:
-            str: 归一化后的关键词。
-        """
-
-        return _normalize_required_text(value, field_name="keyword")
 
 
 class QueryDiseaseCandidatesBySymptomsRequest(BaseModel):
@@ -165,25 +271,11 @@ class QueryDiseaseCandidatesBySymptomsRequest(BaseModel):
         description="标准症状列表，例如 ['喉咙痛', '咽痛', '咽喉疼痛']。",
     )
     limit: int = Field(
-        default=DEFAULT_GRAPH_QUERY_LIMIT,
+        default=DEFAULT_DISEASE_CANDIDATE_LIMIT,
         ge=1,
         le=MAX_GRAPH_QUERY_LIMIT,
         description="最多返回的候选疾病数量。",
     )
-
-    @field_validator("symptoms")
-    @classmethod
-    def _validate_symptoms(cls, value: list[str]) -> list[str]:
-        """规范化标准症状列表。
-
-        Args:
-            value: 原始症状列表。
-
-        Returns:
-            list[str]: 归一化后的症状列表。
-        """
-
-        return TextListUtils.normalize_required(value, field_name="symptoms")
 
 
 class QueryDiseaseDetailRequest(BaseModel):
@@ -197,19 +289,18 @@ class QueryDiseaseDetailRequest(BaseModel):
         description="疾病名称，例如 '上呼吸道感染'。",
     )
 
-    @field_validator("disease_name")
-    @classmethod
-    def _validate_disease_name(cls, value: str) -> str:
-        """规范化疾病名称。
 
-        Args:
-            value: 原始疾病名称。
+class QueryDiseaseDetailsRequest(BaseModel):
+    """疾病详情批量查询工具入参。"""
 
-        Returns:
-            str: 归一化后的疾病名称。
-        """
+    model_config = ConfigDict(extra="forbid")
 
-        return _normalize_required_text(value, field_name="disease_name")
+    disease_names: list[str] = Field(
+        ...,
+        min_length=1,
+        max_length=MAX_BATCH_DISEASE_DETAIL_COUNT,
+        description="需要批量查询的疾病名称列表，建议传入 2 到 5 个候选疾病。",
+    )
 
 
 class QueryFollowupSymptomCandidatesRequest(BaseModel):
@@ -233,58 +324,36 @@ class QueryFollowupSymptomCandidatesRequest(BaseModel):
         description="最多返回的追问症状数量。",
     )
 
-    @field_validator("candidate_diseases")
-    @classmethod
-    def _validate_candidate_diseases(cls, value: list[str]) -> list[str]:
-        """规范化候选疾病列表。
-
-        Args:
-            value: 原始候选疾病列表。
-
-        Returns:
-            list[str]: 归一化后的候选疾病列表。
-        """
-
-        return TextListUtils.normalize_required(value, field_name="candidate_diseases")
-
-    @field_validator("known_symptoms")
-    @classmethod
-    def _validate_known_symptoms(cls, value: list[str]) -> list[str]:
-        """规范化已知症状列表。
-
-        Args:
-            value: 原始已知症状列表。
-
-        Returns:
-            list[str]: 归一化后的已知症状列表。
-        """
-
-        return TextListUtils.normalize(value)
-
 
 @tool(
     args_schema=SearchSymptomCandidatesRequest,
     description=(
             "检索医学图谱中的标准症状候选。"
-            "调用时机：用户先说口语化症状时，用于把自然语言症状映射成图谱标准症状。"
+            "调用前必须先把用户原始症状拆成多个可检索关键词列表，"
+            "不要直接把整句口语原样传入。"
+            "例如用户说“喉咙疼”，应优先拆成 ['喉', '喉咙', '咽喉', '咽痛', '嗓子疼'] 这类列表。"
+            "调用时机：用户给的是口语化症状，且你需要先把自然语言症状映射成图谱标准症状时。"
     ),
 )
-def search_symptom_candidates(keyword: str, limit: int = DEFAULT_GRAPH_QUERY_LIMIT) -> list[dict[str, Any]]:
+def search_symptom_candidates(
+        keywords: list[str],
+        limit: int = DEFAULT_GRAPH_QUERY_LIMIT,
+) -> list[dict[str, Any]]:
     """检索标准症状候选。
 
     Args:
-        keyword: 用户口语症状关键词。
+        keywords: 用户口语症状拆解后的关键词列表。
         limit: 最多返回的候选症状数量。
 
     Returns:
         list[dict[str, Any]]: 标准症状候选列表。
     """
 
-    normalized_keyword = _normalize_required_text(keyword, field_name="keyword")
+    normalized_keywords = _rewrite_graph_keywords(keywords)
     return get_neo4j_client().query_all(
         SEARCH_SYMPTOM_CANDIDATES_CYPHER,
         parameters={
-            "keyword": normalized_keyword,
+            "keywords": normalized_keywords,
             "limit": limit,
         },
         database=MEDICAL_GRAPH_DATABASE,
@@ -295,12 +364,15 @@ def search_symptom_candidates(keyword: str, limit: int = DEFAULT_GRAPH_QUERY_LIM
     args_schema=QueryDiseaseCandidatesBySymptomsRequest,
     description=(
             "按标准症状列表召回候选疾病。"
+            "调用前要先确认你手里已经是较可靠的标准症状，而不是原始口语。"
+            "如果当前信息还太少，优先继续追问，不要急着下结论。"
+            "第一轮候选疾病建议直接查询前 5 个。"
             "调用时机：已经把用户口语症状映射成标准症状后，用于生成候选疾病池。"
     ),
 )
 def query_disease_candidates_by_symptoms(
         symptoms: list[str],
-        limit: int = DEFAULT_GRAPH_QUERY_LIMIT,
+        limit: int = DEFAULT_DISEASE_CANDIDATE_LIMIT,
 ) -> list[dict[str, Any]]:
     """按标准症状查询候选疾病。
 
@@ -330,7 +402,8 @@ def query_disease_candidates_by_symptoms(
     args_schema=QueryDiseaseDetailRequest,
     description=(
             "查询疾病详情快照。"
-            "调用时机：候选疾病已经收敛或用户明确点名某个疾病时，用于一次性获取图谱详情。"
+            "仅适用于用户明确只问单个疾病，或你只需要查询单个疾病详情时。"
+            "如果你需要比较多个候选疾病，禁止重复多次调用本工具，必须优先使用“批量查询疾病详情快照”。"
     ),
 )
 def query_disease_detail(disease_name: str) -> dict[str, Any] | None:
@@ -355,10 +428,40 @@ def query_disease_detail(disease_name: str) -> dict[str, Any] | None:
 
 
 @tool(
+    args_schema=QueryDiseaseDetailsRequest,
+    description=(
+            "批量查询多个候选疾病的详情快照。"
+            "调用时机：你已经把候选疾病收敛到 2 到 5 个，需要一次性比较这些疾病的症状、检查、药物、饮食、科室、并发症等信息时。"
+            "如果需要比较多个候选疾病，禁止逐个调用单疾病详情工具，必须优先使用本工具一次性查询。"
+    ),
+)
+def query_disease_details(disease_names: list[str]) -> list[dict[str, Any]]:
+    """批量查询多个候选疾病的详情快照。
+
+    Args:
+        disease_names: 需要批量查询的疾病名称列表。
+
+    Returns:
+        list[dict[str, Any]]: 按输入顺序返回的疾病详情列表。
+    """
+
+    normalized_disease_names = TextListUtils.normalize_required(
+        disease_names,
+        field_name="disease_names",
+    )
+    return get_neo4j_client().query_all(
+        QUERY_DISEASE_DETAILS_CYPHER,
+        parameters={"disease_names": normalized_disease_names},
+        database=MEDICAL_GRAPH_DATABASE,
+    )
+
+
+@tool(
     args_schema=QueryFollowupSymptomCandidatesRequest,
     description=(
             "基于候选疾病列表生成下一轮追问症状候选。"
-            "调用时机：已有候选疾病池，且需要继续追问时，用它找最能区分候选疾病的症状。"
+            "这个工具是为了继续提问缩小范围，不是为了直接给出诊断。"
+            "调用时机：已有前 5 个左右候选疾病，但当前还不能稳定判断时，用它找最能区分这些候选疾病的症状。"
     ),
 )
 def query_followup_symptom_candidates(
@@ -395,18 +498,23 @@ def query_followup_symptom_candidates(
 
 __all__ = [
     "DEFAULT_GRAPH_QUERY_LIMIT",
+    "DEFAULT_DISEASE_CANDIDATE_LIMIT",
+    "MAX_BATCH_DISEASE_DETAIL_COUNT",
     "MAX_GRAPH_QUERY_LIMIT",
     "MEDICAL_GRAPH_DATABASE",
     "QUERY_DISEASE_CANDIDATES_BY_SYMPTOMS_CYPHER",
     "QUERY_DISEASE_DETAIL_CYPHER",
+    "QUERY_DISEASE_DETAILS_CYPHER",
     "QUERY_FOLLOWUP_SYMPTOM_CANDIDATES_CYPHER",
     "QueryDiseaseCandidatesBySymptomsRequest",
     "QueryDiseaseDetailRequest",
+    "QueryDiseaseDetailsRequest",
     "QueryFollowupSymptomCandidatesRequest",
     "SEARCH_SYMPTOM_CANDIDATES_CYPHER",
     "SearchSymptomCandidatesRequest",
-    "search_symptom_candidates",
     "query_disease_candidates_by_symptoms",
     "query_disease_detail",
+    "query_disease_details",
     "query_followup_symptom_candidates",
+    "search_symptom_candidates",
 ]
