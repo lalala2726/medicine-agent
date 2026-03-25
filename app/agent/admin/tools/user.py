@@ -9,8 +9,8 @@ from typing import Optional
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
-from app.agent.admin.tools.cache import save_current_admin_tool_cache_entry
 from app.core.agent.agent_tool_events import tool_call_status
+from app.core.agent.tool_cache import ADMIN_TOOL_CACHE_PROFILE, tool_cacheable
 from app.schemas.http_response import HttpResponse
 from app.utils.http_client import HttpClient
 
@@ -88,6 +88,56 @@ class UserIdPageRequest(UserIdRequest):
     page_size: int = Field(default=10, ge=1, le=200, description="每页数量，范围 1-200")
 
 
+def _build_user_list_cache_input(arguments: dict[str, object]) -> dict[str, object]:
+    """
+    功能描述：
+        构造用户列表缓存入参。
+
+    参数说明：
+        arguments (dict[str, object]): 绑定后的函数参数映射。
+
+    返回值：
+        dict[str, object]: 与真实 HTTP 查询参数一致的结构。
+
+    异常说明：
+        无。
+    """
+
+    return {
+        "pageNum": arguments.get("page_num"),
+        "pageSize": arguments.get("page_size"),
+        "id": arguments.get("id"),
+        "username": arguments.get("username"),
+        "nickname": arguments.get("nickname"),
+        "avatar": arguments.get("avatar"),
+        "roles": arguments.get("roles"),
+        "status": arguments.get("status"),
+        "createBy": arguments.get("create_by"),
+    }
+
+
+def _build_user_page_cache_input(arguments: dict[str, object]) -> dict[str, object]:
+    """
+    功能描述：
+        构造用户分页子资源缓存入参。
+
+    参数说明：
+        arguments (dict[str, object]): 绑定后的函数参数映射。
+
+    返回值：
+        dict[str, object]: 当前工具缓存入参。
+
+    异常说明：
+        无。
+    """
+
+    return {
+        "user_id": arguments.get("user_id"),
+        "page_num": arguments.get("page_num"),
+        "page_size": arguments.get("page_size"),
+    }
+
+
 @tool(
     args_schema=UserListRequest,
     description=(
@@ -100,6 +150,11 @@ class UserIdPageRequest(UserIdRequest):
     start_message="正在查询用户列表",
     error_message="查询用户列表失败",
     timely_message="用户列表正在持续处理中",
+)
+@tool_cacheable(
+    ADMIN_TOOL_CACHE_PROFILE,
+    tool_name="user_list",
+    input_builder=_build_user_list_cache_input,
 )
 async def user_list(
         page_num: int = 1,
@@ -150,13 +205,7 @@ async def user_list(
             url="/agent/admin/user/list",
             params=params,
         )
-        result = HttpResponse.parse_data(response)
-        save_current_admin_tool_cache_entry(
-            tool_name="user_list",
-            tool_input=params,
-            tool_output=result,
-        )
-        return result
+        return HttpResponse.parse_data(response)
 
 
 @tool(
@@ -171,6 +220,10 @@ async def user_list(
     start_message="正在查询用户详情",
     error_message="查询用户详情失败",
     timely_message="用户详情正在持续处理中",
+)
+@tool_cacheable(
+    ADMIN_TOOL_CACHE_PROFILE,
+    tool_name="user_detail",
 )
 async def user_detail(user_id: int) -> dict:
     """
@@ -189,13 +242,7 @@ async def user_detail(user_id: int) -> dict:
 
     async with HttpClient() as client:
         response = await client.get(url=f"/agent/admin/user/{user_id}/detail")
-        result = HttpResponse.parse_data(response)
-        save_current_admin_tool_cache_entry(
-            tool_name="user_detail",
-            tool_input={"user_id": user_id},
-            tool_output=result,
-        )
-        return result
+        return HttpResponse.parse_data(response)
 
 
 @tool(
@@ -210,6 +257,10 @@ async def user_detail(user_id: int) -> dict:
     start_message="正在查询用户钱包",
     error_message="查询用户钱包失败",
     timely_message="用户钱包正在持续处理中",
+)
+@tool_cacheable(
+    ADMIN_TOOL_CACHE_PROFILE,
+    tool_name="user_wallet",
 )
 async def user_wallet(user_id: int) -> dict:
     """
@@ -228,13 +279,7 @@ async def user_wallet(user_id: int) -> dict:
 
     async with HttpClient() as client:
         response = await client.get(url=f"/agent/admin/user/{user_id}/wallet")
-        result = HttpResponse.parse_data(response)
-        save_current_admin_tool_cache_entry(
-            tool_name="user_wallet",
-            tool_input={"user_id": user_id},
-            tool_output=result,
-        )
-        return result
+        return HttpResponse.parse_data(response)
 
 
 @tool(
@@ -249,6 +294,11 @@ async def user_wallet(user_id: int) -> dict:
     start_message="正在查询用户钱包流水",
     error_message="查询用户钱包流水失败",
     timely_message="用户钱包流水正在持续处理中",
+)
+@tool_cacheable(
+    ADMIN_TOOL_CACHE_PROFILE,
+    tool_name="user_wallet_flow",
+    input_builder=_build_user_page_cache_input,
 )
 async def user_wallet_flow(
         user_id: int,
@@ -280,13 +330,7 @@ async def user_wallet_flow(
             url=f"/agent/admin/user/{user_id}/wallet_flow",
             params=params,
         )
-        result = HttpResponse.parse_data(response)
-        save_current_admin_tool_cache_entry(
-            tool_name="user_wallet_flow",
-            tool_input={"user_id": user_id, "page_num": page_num, "page_size": page_size},
-            tool_output=result,
-        )
-        return result
+        return HttpResponse.parse_data(response)
 
 
 @tool(
@@ -301,6 +345,11 @@ async def user_wallet_flow(
     start_message="正在查询用户消费信息",
     error_message="查询用户消费信息失败",
     timely_message="用户消费信息正在持续处理中",
+)
+@tool_cacheable(
+    ADMIN_TOOL_CACHE_PROFILE,
+    tool_name="user_consume_info",
+    input_builder=_build_user_page_cache_input,
 )
 async def user_consume_info(
         user_id: int,
@@ -332,13 +381,7 @@ async def user_consume_info(
             url=f"/agent/admin/user/{user_id}/consume_info",
             params=params,
         )
-        result = HttpResponse.parse_data(response)
-        save_current_admin_tool_cache_entry(
-            tool_name="user_consume_info",
-            tool_input={"user_id": user_id, "page_num": page_num, "page_size": page_size},
-            tool_output=result,
-        )
-        return result
+        return HttpResponse.parse_data(response)
 
 
 __all__ = [

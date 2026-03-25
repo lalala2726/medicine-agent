@@ -1,6 +1,5 @@
-"""Client 售后域节点包。"""
+"""Client 售后领域工具包。"""
 
-from app.agent.client.domain.after_sale.node import after_sale_agent
 from app.agent.client.domain.after_sale.tools import (
     check_after_sale_eligibility,
     get_after_sale_detail,
@@ -11,7 +10,6 @@ from app.agent.client.domain.tools.action_tools import (
 )
 
 __all__ = [
-    "after_sale_agent",
     "check_after_sale_eligibility",
     "get_after_sale_detail",
     "open_user_after_sale_list",

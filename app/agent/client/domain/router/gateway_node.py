@@ -20,14 +20,11 @@ from app.utils.prompt_utils import load_prompt
 _GATEWAY_PROMPT = load_prompt("client/gateway_prompt.md")
 _GATEWAY_ROUTE_FALLBACK: dict[str, Any] = {
     "route_targets": ["chat_agent"],
-    "task_difficulty": "normal",
 }
 _ALLOWED_GATEWAY_TARGETS: tuple[str, ...] = (
     "chat_agent",
     "diagnosis_agent",
-    "order_agent",
-    "product_agent",
-    "after_sale_agent",
+    "commerce_agent",
 )
 
 
@@ -38,19 +35,14 @@ class GatewayRoutingSchema(BaseModel):
         Literal[
             "chat_agent",
             "diagnosis_agent",
-            "order_agent",
-            "product_agent",
-            "after_sale_agent",
+            "commerce_agent",
         ]
     ] = Field(
         min_length=1,
         description=(
             "路由目标数组，仅允许 "
-            "chat_agent/diagnosis_agent/order_agent/product_agent/after_sale_agent"
+            "chat_agent/diagnosis_agent/commerce_agent"
         ),
-    )
-    task_difficulty: Literal["normal", "high"] = Field(
-        description="任务难度，仅允许 normal 或 high",
     )
 
 
@@ -105,7 +97,6 @@ def _resolve_gateway_routing_result(raw_payload: Any) -> dict[str, Any]:
         return dict(_GATEWAY_ROUTE_FALLBACK)
     return {
         "route_targets": normalized_targets,
-        "task_difficulty": parsed.task_difficulty,
     }
 
 
@@ -144,7 +135,6 @@ def gateway_router(state: AgentState) -> dict[str, Any]:
         tool_calls=[],
         node_context={
             "route_targets": list(routing.get("route_targets") or []),
-            "task_difficulty": routing.get("task_difficulty"),
         },
     )
     execution_traces, token_usage = append_trace_and_refresh_token_usage(

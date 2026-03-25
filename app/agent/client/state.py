@@ -62,7 +62,6 @@ class GatewayRoutingState(TypedDict):
     """Gateway 路由结果结构。"""
 
     route_targets: list[str]
-    task_difficulty: str
 
 
 class AgentState(MessagesState, total=False):

@@ -50,7 +50,7 @@ class ExecutionTraceState(TypedDict, total=False):
     llm_token_usage: TokenCounterState | None
     # 节点下发生的工具调用轨迹。
     tool_calls: list[ToolCallTraceState]
-    # 节点扩展上下文（例如最终已授权工具数组）。
+    # 节点扩展上下文（例如最终已加载工具数组）。
     node_context: dict[str, Any] | None
 
 
@@ -92,7 +92,7 @@ class AgentState(MessagesState, total=False):
     1. `messages` 由 `MessagesState` 提供，兼容 LangGraph 内部消息流；
     2. `conversation_uuid` 用于会话级工具缓存隔离；
     3. `history_messages` 存储外层会话历史；
-    4. `granted_tool_keys` 用于记录当前一次运行中已授权的业务工具；
+    4. `loaded_tool_keys` 用于记录当前一次运行中已加载的业务工具；
     5. `execution_traces/token_usage/result` 用于外层持久化与流式落库。
     """
 
@@ -102,8 +102,8 @@ class AgentState(MessagesState, total=False):
     # 对话历史消息。
     history_messages: list[ChatHistoryMessage]
 
-    # 当前一次运行中已授权的业务工具 key 数组。
-    granted_tool_keys: list[str]
+    # 当前一次运行中已加载的业务工具 key 数组。
+    loaded_tool_keys: list[str]
 
     # 节点执行追踪（仅在 workflow 运行过程中暂存，流结束后统一落库）。
     execution_traces: list[ExecutionTraceState]

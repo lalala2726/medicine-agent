@@ -1,10 +1,6 @@
 ---
 name: chart
 description: 图表模板技能，提供 18 种图表类型的模板规范、字段说明与标准输出格式，基于 GPT-Vis (AntV) 规范。
-license: Apache-2.0
-metadata:
-  author: Chuang
-  version: "1.0"
 ---
 
 # Chart Skill（supervisor）

@@ -6,6 +6,7 @@ from app.agent.client.domain.after_sale.schema import (
     AfterSaleEligibilityRequest,
     AfterSaleNoRequest,
 )
+from app.core.agent.tool_cache import CLIENT_COMMERCE_TOOL_CACHE_PROFILE, tool_cacheable
 from app.schemas.http_response import HttpResponse
 from app.utils.http_client import HttpClient
 
@@ -16,6 +17,10 @@ from app.utils.http_client import HttpClient
             "获取售后详情。"
             "调用时机：用户已提供售后单号，想查看售后状态、退款金额、驳回原因或处理时间线时。"
     ),
+)
+@tool_cacheable(
+    CLIENT_COMMERCE_TOOL_CACHE_PROFILE,
+    tool_name="get_after_sale_detail",
 )
 async def get_after_sale_detail(after_sale_no: str) -> dict:
     """获取客户端售后详情。"""
@@ -33,6 +38,10 @@ async def get_after_sale_detail(after_sale_no: str) -> dict:
             "校验售后资格。"
             "调用时机：用户想确认某笔订单或订单项当前能不能申请退款、退货或换货时。"
     ),
+)
+@tool_cacheable(
+    CLIENT_COMMERCE_TOOL_CACHE_PROFILE,
+    tool_name="check_after_sale_eligibility",
 )
 async def check_after_sale_eligibility(
         order_no: str,

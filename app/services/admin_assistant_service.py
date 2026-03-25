@@ -246,7 +246,7 @@ def _build_initial_state(
         conversation_uuid: 当前会话 UUID，用于会话级工具缓存隔离。
         history_messages: 会话历史消息列表；为空时默认空列表。
     Returns:
-        dict[str, Any]: LangGraph 初始状态字典，包含会话、历史、授权工具与消息等字段。
+        dict[str, Any]: LangGraph 初始状态字典，包含会话、历史、已加载工具与消息等字段。
     """
 
     _ = question
@@ -255,7 +255,7 @@ def _build_initial_state(
     return {
         "conversation_uuid": str(conversation_uuid).strip(),
         "history_messages": base_history,
-        "granted_tool_keys": [],
+        "loaded_tool_keys": [],
         "execution_traces": [],
         "token_usage": None,
         "result": "",

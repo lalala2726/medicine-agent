@@ -138,7 +138,6 @@ def _build_client_initial_state(
         "conversation_uuid": conversation_uuid,
         "routing": {
             "route_targets": [],
-            "task_difficulty": "normal",
         },
         "context": "",
         "history_messages": base_history,

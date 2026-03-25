@@ -1,6 +1,5 @@
-"""Client 订单域节点包。"""
+"""Client 订单领域工具包。"""
 
-from app.agent.client.domain.order.node import order_agent
 from app.agent.client.domain.order.tools import (
     check_order_cancelable,
     get_order_detail,
@@ -15,5 +14,4 @@ __all__ = [
     "get_order_shipping",
     "get_order_timeline",
     "open_user_order_list",
-    "order_agent",
 ]

@@ -9,8 +9,8 @@ from typing import Optional
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
-from app.agent.admin.tools.cache import save_current_admin_tool_cache_entry
 from app.core.agent.agent_tool_events import tool_call_status
+from app.core.agent.tool_cache import ADMIN_TOOL_CACHE_PROFILE, tool_cacheable
 from app.schemas.http_response import HttpResponse
 from app.utils.http_client import HttpClient
 
@@ -63,6 +63,32 @@ class AfterSaleIdRequest(BaseModel):
     after_sale_id: int = Field(ge=1, description="售后申请 ID")
 
 
+def _build_after_sale_list_cache_input(arguments: dict[str, object]) -> dict[str, object]:
+    """
+    功能描述：
+        构造售后列表缓存入参。
+
+    参数说明：
+        arguments (dict[str, object]): 绑定后的函数参数映射。
+
+    返回值：
+        dict[str, object]: 与真实 HTTP 查询参数一致的结构。
+
+    异常说明：
+        无。
+    """
+
+    return {
+        "pageNum": arguments.get("page_num"),
+        "pageSize": arguments.get("page_size"),
+        "afterSaleType": arguments.get("after_sale_type"),
+        "afterSaleStatus": arguments.get("after_sale_status"),
+        "orderNo": arguments.get("order_no"),
+        "userId": arguments.get("user_id"),
+        "applyReason": arguments.get("apply_reason"),
+    }
+
+
 @tool(
     args_schema=AfterSaleListRequest,
     description=(
@@ -75,6 +101,11 @@ class AfterSaleIdRequest(BaseModel):
     start_message="正在查询售后列表",
     error_message="查询售后列表失败",
     timely_message="售后列表正在持续处理中",
+)
+@tool_cacheable(
+    ADMIN_TOOL_CACHE_PROFILE,
+    tool_name="after_sale_list",
+    input_builder=_build_after_sale_list_cache_input,
 )
 async def after_sale_list(
         page_num: int = 1,
@@ -119,13 +150,7 @@ async def after_sale_list(
             url="/agent/admin/after-sale/list",
             params=params,
         )
-        result = HttpResponse.parse_data(response)
-        save_current_admin_tool_cache_entry(
-            tool_name="after_sale_list",
-            tool_input=params,
-            tool_output=result,
-        )
-        return result
+        return HttpResponse.parse_data(response)
 
 
 @tool(
@@ -140,6 +165,10 @@ async def after_sale_list(
     start_message="正在查询售后详情",
     error_message="查询售后详情失败",
     timely_message="售后详情正在持续处理中",
+)
+@tool_cacheable(
+    ADMIN_TOOL_CACHE_PROFILE,
+    tool_name="after_sale_detail",
 )
 async def after_sale_detail(after_sale_id: int) -> dict:
     """
@@ -160,13 +189,7 @@ async def after_sale_detail(after_sale_id: int) -> dict:
         response = await client.get(
             url=f"/agent/admin/after-sale/detail/{after_sale_id}",
         )
-        result = HttpResponse.parse_data(response)
-        save_current_admin_tool_cache_entry(
-            tool_name="after_sale_detail",
-            tool_input={"after_sale_id": after_sale_id},
-            tool_output=result,
-        )
-        return result
+        return HttpResponse.parse_data(response)
 
 
 __all__ = [

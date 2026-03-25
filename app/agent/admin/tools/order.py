@@ -10,8 +10,8 @@ from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
 from app.agent.admin.tools.base import format_ids_to_string, normalize_id_list
-from app.agent.admin.tools.cache import save_current_admin_tool_cache_entry
 from app.core.agent.agent_tool_events import tool_call_status
+from app.core.agent.tool_cache import ADMIN_TOOL_CACHE_PROFILE, tool_cacheable
 from app.schemas.http_response import HttpResponse
 from app.utils.http_client import HttpClient
 
@@ -88,6 +88,53 @@ class OrderIdRequest(BaseModel):
     order_id: int = Field(ge=1, description="订单 ID")
 
 
+def _build_order_list_cache_input(arguments: dict[str, object]) -> dict[str, object]:
+    """
+    功能描述：
+        构造订单列表缓存入参。
+
+    参数说明：
+        arguments (dict[str, object]): 绑定后的函数参数映射。
+
+    返回值：
+        dict[str, object]: 与真实 HTTP 请求一致的查询参数结构。
+
+    异常说明：
+        无。
+    """
+
+    return {
+        "pageNum": arguments.get("page_num"),
+        "pageSize": arguments.get("page_size"),
+        "orderNo": arguments.get("order_no"),
+        "payType": arguments.get("pay_type"),
+        "orderStatus": arguments.get("order_status"),
+        "deliveryType": arguments.get("delivery_type"),
+        "receiverName": arguments.get("receiver_name"),
+        "receiverPhone": arguments.get("receiver_phone"),
+    }
+
+
+def _build_order_detail_cache_input(arguments: dict[str, object]) -> dict[str, object]:
+    """
+    功能描述：
+        构造订单详情缓存入参。
+
+    参数说明：
+        arguments (dict[str, object]): 绑定后的函数参数映射。
+
+    返回值：
+        dict[str, object]: 标准化后的订单 ID 数组。
+
+    异常说明：
+        ValueError: 当 `order_id` 非法时抛出。
+    """
+
+    raw_order_id = arguments.get("order_id")
+    normalized_ids = normalize_id_list(raw_order_id, field_name="order_id")
+    return {"order_id": normalized_ids}
+
+
 @tool(
     args_schema=OrderListRequest,
     description=(
@@ -100,6 +147,11 @@ class OrderIdRequest(BaseModel):
     start_message="正在查询订单列表",
     error_message="获取订单列表失败",
     timely_message="订单列表正在持续处理中",
+)
+@tool_cacheable(
+    ADMIN_TOOL_CACHE_PROFILE,
+    tool_name="order_list",
+    input_builder=_build_order_list_cache_input,
 )
 async def order_list(
         page_num: int = 1,
@@ -147,13 +199,7 @@ async def order_list(
             url="/agent/admin/order/list",
             params=params,
         )
-        result = HttpResponse.parse_data(response)
-        save_current_admin_tool_cache_entry(
-            tool_name="order_list",
-            tool_input=params,
-            tool_output=result,
-        )
-        return result
+        return HttpResponse.parse_data(response)
 
 
 @tool(
@@ -168,6 +214,11 @@ async def order_list(
     start_message="正在查询订单详情",
     error_message="获取订单详情失败",
     timely_message="订单详情正在持续处理中",
+)
+@tool_cacheable(
+    ADMIN_TOOL_CACHE_PROFILE,
+    tool_name="order_detail",
+    input_builder=_build_order_detail_cache_input,
 )
 async def order_detail(order_id: list[str]) -> dict:
     """
@@ -188,13 +239,7 @@ async def order_detail(order_id: list[str]) -> dict:
     ids_str = format_ids_to_string(normalized_ids)
     async with HttpClient() as client:
         response = await client.get(url=f"/agent/admin/order/{ids_str}")
-        result = HttpResponse.parse_data(response)
-        save_current_admin_tool_cache_entry(
-            tool_name="order_detail",
-            tool_input={"order_id": normalized_ids},
-            tool_output=result,
-        )
-        return result
+        return HttpResponse.parse_data(response)
 
 
 @tool(
@@ -209,6 +254,10 @@ async def order_detail(order_id: list[str]) -> dict:
     start_message="正在查询订单流程",
     error_message="获取订单流程失败",
     timely_message="订单流程正在持续处理中",
+)
+@tool_cacheable(
+    ADMIN_TOOL_CACHE_PROFILE,
+    tool_name="order_timeline",
 )
 async def order_timeline(order_id: int) -> dict:
     """
@@ -227,13 +276,7 @@ async def order_timeline(order_id: int) -> dict:
 
     async with HttpClient() as client:
         response = await client.get(url=f"/agent/admin/order/timeline/{order_id}")
-        result = HttpResponse.parse_data(response)
-        save_current_admin_tool_cache_entry(
-            tool_name="order_timeline",
-            tool_input={"order_id": order_id},
-            tool_output=result,
-        )
-        return result
+        return HttpResponse.parse_data(response)
 
 
 @tool(
@@ -248,6 +291,10 @@ async def order_timeline(order_id: int) -> dict:
     start_message="正在查询发货记录",
     error_message="获取发货记录失败",
     timely_message="发货记录正在持续处理中",
+)
+@tool_cacheable(
+    ADMIN_TOOL_CACHE_PROFILE,
+    tool_name="order_shipping",
 )
 async def order_shipping(order_id: int) -> dict:
     """
@@ -266,13 +313,7 @@ async def order_shipping(order_id: int) -> dict:
 
     async with HttpClient() as client:
         response = await client.get(url=f"/agent/admin/order/shipping/{order_id}")
-        result = HttpResponse.parse_data(response)
-        save_current_admin_tool_cache_entry(
-            tool_name="order_shipping",
-            tool_input={"order_id": order_id},
-            tool_output=result,
-        )
-        return result
+        return HttpResponse.parse_data(response)
 
 
 __all__ = [

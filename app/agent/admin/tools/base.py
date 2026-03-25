@@ -3,7 +3,7 @@
 
 说明：
 1. 基础工具默认直接暴露给 admin 单 Agent；
-2. 业务工具授权逻辑也从本模块提供，避免节点层分散控制；
+2. 业务工具动态加载逻辑也从本模块提供，避免节点层分散控制；
 3. 共享的 ID 规范化函数放在此处，供各领域工具复用。
 """
 
@@ -67,17 +67,17 @@ def normalize_id_list(ids: list[str], *, field_name: str) -> list[str]:
     return normalized
 
 
-def merge_unique_tool_keys(
+def merge_unique_loaded_tool_keys(
         existing_tool_keys: list[str],
         requested_tool_keys: list[str],
 ) -> list[str]:
     """
     功能描述：
-        合并已授权工具与本次申请工具，并保持顺序去重。
+        合并已加载工具与本次新加载工具，并保持顺序去重。
 
     参数说明：
         existing_tool_keys (list[str]): 当前状态中已有的工具 key 数组。
-        requested_tool_keys (list[str]): 本次新申请的工具 key 数组。
+        requested_tool_keys (list[str]): 本次新加载的工具 key 数组。
 
     返回值：
         list[str]: 合并后的稳定顺序工具 key 数组。
@@ -180,14 +180,14 @@ class KnowledgeSearchToolRequest(BaseModel):
         return normalized
 
 
-class RequestToolAccessRequest(BaseModel):
+class LoadToolsRequest(BaseModel):
     """
     功能描述：
-        工具授权申请入参模型。
+        工具加载入参模型。
 
     参数说明：
-        tool_keys (list[str]): 本次申请的业务工具 key 数组。
-        reason (str): 申请原因。
+        tool_keys (list[str]): 本次需要加载的业务工具 key 数组。
+        reason (str): 加载原因。
 
     返回值：
         无（数据模型定义）。
@@ -200,12 +200,12 @@ class RequestToolAccessRequest(BaseModel):
 
     tool_keys: list[str] = Field(
         min_length=1,
-        description="需要授权的业务工具 key 数组，只允许 snake_case 工具名",
+        description="需要加载的业务工具 key 数组，只允许 snake_case 工具名",
     )
     reason: str = Field(
         ...,
         min_length=1,
-        description="本次申请工具的业务原因说明",
+        description="本次加载工具的业务原因说明",
     )
 
     @field_validator("tool_keys")
@@ -242,10 +242,10 @@ class RequestToolAccessRequest(BaseModel):
     def normalize_reason(cls, value: str) -> str:
         """
         功能描述：
-            规范化工具申请原因文本。
+            规范化工具加载原因文本。
 
         参数说明：
-            value (str): 原始申请原因。
+            value (str): 原始加载原因。
 
         返回值：
             str: 去除首尾空白后的原因文本。
@@ -258,6 +258,42 @@ class RequestToolAccessRequest(BaseModel):
         if not normalized:
             raise ValueError("reason 不能为空")
         return normalized
+
+
+class LoadableToolsCatalog(BaseModel):
+    """
+    功能描述：
+        可加载业务工具目录模型。
+
+    参数说明：
+        exact_tool_names (list[str]): 当前可加载业务工具的精确工具名数组。
+        tools_by_domain (dict[str, list[str]]): 按领域分组后的工具名映射。
+        supports_multi_load (bool): 是否支持单次同时加载多个工具。
+        usage_tip (str): 工具目录使用提示。
+
+    返回值：
+        无（数据模型定义）。
+
+    异常说明：
+        无。
+    """
+
+    exact_tool_names: list[str] = Field(
+        ...,
+        description="当前可加载业务工具的精确工具名数组",
+    )
+    tools_by_domain: dict[str, list[str]] = Field(
+        ...,
+        description="按领域分组后的工具名映射",
+    )
+    supports_multi_load: bool = Field(
+        ...,
+        description="是否支持单次同时加载多个工具",
+    )
+    usage_tip: str = Field(
+        ...,
+        description="调用加载工具时的使用提示",
+    )
 
 
 @tool(
@@ -327,64 +363,137 @@ def search_knowledge_context(query: str) -> str:
     return format_knowledge_search_hits(hits)
 
 
-def create_request_tool_access_tool(
+def create_list_loadable_tools_tool(
+        *,
+        get_tool_catalog: Callable[[], dict[str, list[str]]],
+) -> Any:
+    """
+    功能描述：
+        创建查看可加载业务工具目录的基础工具。
+
+    参数说明：
+        get_tool_catalog (Callable[[], dict[str, list[str]]]):
+            返回按领域分组的业务工具目录回调函数。
+
+    返回值：
+        Any: LangChain Tool 对象，请求名固定为 `list_loadable_tools`。
+
+    异常说明：
+        无。
+    """
+
+    @tool(
+        description=(
+                "查看当前可加载的业务工具精确名称目录。"
+                "当你不确定工具名、需要确认多个工具该怎么写，或准备一次加载多个工具时，先调用本工具。"
+        ),
+    )
+    @tool_call_status(
+        tool_name="查看可加载工具目录",
+        start_message="正在查看可加载工具目录",
+        error_message="查看可加载工具目录失败",
+        timely_message="可加载工具目录正在持续整理中",
+    )
+    def list_loadable_tools() -> LoadableToolsCatalog:
+        """
+        功能描述：
+            返回当前允许加载的业务工具精确名称目录。
+
+        参数说明：
+            无。
+
+        返回值：
+            LoadableToolsCatalog: 可加载工具目录结构。
+
+        异常说明：
+            无。
+        """
+
+        tools_by_domain = get_tool_catalog()
+        exact_tool_names: list[str] = []
+        for domain_tool_names in tools_by_domain.values():
+            for raw_tool_name in domain_tool_names:
+                tool_name = str(raw_tool_name or "").strip()
+                if not tool_name:
+                    continue
+                if tool_name in exact_tool_names:
+                    continue
+                exact_tool_names.append(tool_name)
+
+        return LoadableToolsCatalog(
+            exact_tool_names=exact_tool_names,
+            tools_by_domain=tools_by_domain,
+            supports_multi_load=True,
+            usage_tip=(
+                "调用 load_tools 时，tool_keys 必须使用 exact_tool_names 中的精确值；"
+                "支持一次传入多个工具名同时加载。"
+            ),
+        )
+
+    return list_loadable_tools
+
+
+def create_load_tools_tool(
         *,
         get_allowed_tool_keys: Callable[[], set[str]],
 ) -> Any:
     """
     功能描述：
-        创建运行时工具授权申请工具。
+        创建运行时工具动态加载工具。
 
     参数说明：
         get_allowed_tool_keys (Callable[[], set[str]]):
-            返回当前允许授权的业务工具 key 集合的回调函数。
+            返回当前允许加载的业务工具 key 集合的回调函数。
 
     返回值：
-        Any: LangChain Tool 对象，请求名固定为 `request_tool_access`。
+        Any: LangChain Tool 对象，请求名固定为 `load_tools`。
 
     异常说明：
-        ValueError: 当申请的工具 key 不存在于允许集合中时由内部函数抛出。
+        ValueError: 当加载的工具 key 不存在于允许集合中时由内部函数抛出。
     """
 
     @tool(
         description=(
-                "申请当前任务所需的业务工具权限。"
-                "当你需要调用未暴露的订单、商品、售后、用户或分析工具时，必须先调用本工具。"
+                "加载当前任务所需的业务工具。"
+                "当你需要调用当前不可见的订单、商品、售后、用户或分析工具时，必须先调用本工具。"
+                "这是工具加载步骤，不需要等待用户确认。"
                 "参数必须传 tool_keys 数组和简短 reason。"
+                "tool_keys 支持一次传入多个精确工具名同时加载。"
         ),
     )
     @tool_call_status(
-        tool_name="申请工具权限",
-        start_message="正在申请业务工具权限",
-        error_message="申请业务工具权限失败",
-        timely_message="业务工具权限正在持续处理中",
+        tool_name="加载业务工具",
+        start_message="正在加载业务工具",
+        error_message="加载业务工具失败",
+        timely_message="业务工具正在持续加载中",
     )
-    def request_tool_access(
+    def load_tools(
             tool_keys: list[str],
             reason: str,
             runtime: ToolRuntime[None, AgentState],
     ) -> Command:
         """
         功能描述：
-            为当前 agent 运行申请额外业务工具，并把授权结果写入状态。
+            为当前 agent 运行加载额外业务工具，并把加载结果写入状态。
 
         参数说明：
-            tool_keys (list[str]): 需要授权的业务工具 key 数组。
-            reason (str): 申请原因。
+            tool_keys (list[str]): 需要加载的业务工具 key 数组。
+            reason (str): 加载原因。
             runtime (ToolRuntime[None, AgentState]): 当前工具运行时上下文。
 
         返回值：
             Command:
-                更新 `granted_tool_keys` 与一条 ToolMessage。
-                当前实现已允许全部业务工具直接使用，因此该工具主要用于记录申请动作。
+                更新 `loaded_tool_keys` 与一条 ToolMessage，
+                使后续模型调用可以看到本次已加载的业务工具。
 
         异常说明：
             ValueError:
                 - 当 `tool_keys/reason` 入参结构非法时由模型校验抛出；
-                - 当状态中的 `granted_tool_keys` 结构非法时不会抛错，仅按空数组处理。
+                - 当加载了未注册的业务工具 key 时抛出；
+                - 当状态中的 `loaded_tool_keys` 结构非法时不会抛错，仅按空数组处理。
         """
 
-        validated_request = RequestToolAccessRequest.model_validate(
+        validated_request = LoadToolsRequest.model_validate(
             {
                 "tool_keys": tool_keys,
                 "reason": reason,
@@ -398,31 +507,31 @@ def create_request_tool_access_tool(
             for tool_key in normalized_tool_keys
             if tool_key not in allowed_tool_keys
         ]
+        if unresolved_tool_keys:
+            raise ValueError(
+                "不允许加载以下工具: " + ", ".join(unresolved_tool_keys)
+            )
 
         current_state = runtime.state if isinstance(runtime.state, Mapping) else {}
-        current_granted_tool_keys = current_state.get("granted_tool_keys", [])
-        if not isinstance(current_granted_tool_keys, list):
-            current_granted_tool_keys = []
+        current_loaded_tool_keys = current_state.get("loaded_tool_keys", [])
+        if not isinstance(current_loaded_tool_keys, list):
+            current_loaded_tool_keys = []
 
-        merged_tool_keys = merge_unique_tool_keys(
+        merged_tool_keys = merge_unique_loaded_tool_keys(
             existing_tool_keys=[
                 str(item).strip()
-                for item in current_granted_tool_keys
+                for item in current_loaded_tool_keys
                 if str(item).strip()
             ],
-            requested_tool_keys=sorted(allowed_tool_keys),
+            requested_tool_keys=normalized_tool_keys,
         )
 
         tool_message_lines = [
-            "当前已允许全部业务工具直接使用，无需额外授权。",
-            f"本次申请原因：{normalized_reason}",
+            "已加载以下业务工具，可继续直接调用："
+            + ", ".join(normalized_tool_keys),
+            f"本次加载原因：{normalized_reason}",
         ]
-        if unresolved_tool_keys:
-            tool_message_lines.append(
-                "以下名称不是实际注册工具名，已忽略："
-                + ", ".join(unresolved_tool_keys)
-            )
-        tool_message_lines.append("请直接调用实际工具名继续完成任务。")
+        tool_message_lines.append("这些工具无需用户确认；你可以继续直接调用已加载的实际工具名完成任务。")
         tool_message = ToolMessage(
             content="\n".join(tool_message_lines),
             tool_call_id=runtime.tool_call_id,
@@ -430,21 +539,23 @@ def create_request_tool_access_tool(
         return Command(
             update={
                 "messages": [tool_message],
-                "granted_tool_keys": merged_tool_keys,
+                "loaded_tool_keys": merged_tool_keys,
             }
         )
 
-    return request_tool_access
+    return load_tools
 
 
 __all__ = [
     "KnowledgeSearchToolRequest",
-    "RequestToolAccessRequest",
+    "LoadableToolsCatalog",
+    "LoadToolsRequest",
     "UserInfo",
-    "create_request_tool_access_tool",
+    "create_list_loadable_tools_tool",
+    "create_load_tools_tool",
     "format_ids_to_string",
     "get_safe_user_info",
-    "merge_unique_tool_keys",
+    "merge_unique_loaded_tool_keys",
     "normalize_id_list",
     "search_knowledge_context",
 ]

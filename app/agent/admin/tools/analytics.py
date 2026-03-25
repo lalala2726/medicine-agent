@@ -9,8 +9,8 @@ from collections.abc import Mapping
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
-from app.agent.admin.tools.cache import save_current_admin_tool_cache_entry
 from app.core.agent.agent_tool_events import tool_call_status
+from app.core.agent.tool_cache import ADMIN_TOOL_CACHE_PROFILE, tool_cacheable
 from app.schemas.http_response import HttpResponse
 from app.utils.http_client import HttpClient
 
@@ -59,10 +59,7 @@ class AnalyticsRankRequest(AnalyticsDaysRequest):
 
 
 async def request_analytics_data(
-        *,
-        tool_name: str,
         url: str,
-        tool_input: Mapping[str, object] | None = None,
         params: Mapping[str, object] | None = None,
 ) -> dict:
     """
@@ -70,9 +67,7 @@ async def request_analytics_data(
         发送运营分析查询请求并统一解析响应数据。
 
     参数说明：
-        tool_name (str): 当前工具名称。
         url (str): 请求路径。
-        tool_input (Mapping[str, object] | None): 写入缓存的工具入参。
         params (Mapping[str, object] | None): 查询参数。
 
     返回值：
@@ -83,16 +78,9 @@ async def request_analytics_data(
     """
 
     normalized_params = dict(params or {})
-    normalized_tool_input = dict(tool_input or normalized_params)
     async with HttpClient() as client:
         response = await client.get(url=url, params=normalized_params)
-        result = HttpResponse.parse_data(response)
-        save_current_admin_tool_cache_entry(
-            tool_name=tool_name,
-            tool_input=normalized_tool_input,
-            tool_output=result,
-        )
-        return result
+        return HttpResponse.parse_data(response)
 
 
 @tool(
@@ -106,6 +94,10 @@ async def request_analytics_data(
     start_message="正在查询实时运营总览",
     error_message="获取实时运营总览失败",
     timely_message="实时运营总览正在持续处理中",
+)
+@tool_cacheable(
+    ADMIN_TOOL_CACHE_PROFILE,
+    tool_name="analytics_realtime_overview",
 )
 async def analytics_realtime_overview() -> dict:
     """
@@ -123,9 +115,7 @@ async def analytics_realtime_overview() -> dict:
     """
 
     return await request_analytics_data(
-        tool_name="analytics_realtime_overview",
         url="/agent/admin/analytics/realtime-overview",
-        tool_input={},
     )
 
 
@@ -143,6 +133,10 @@ async def analytics_realtime_overview() -> dict:
     error_message="获取经营结果汇总失败",
     timely_message="经营结果汇总正在持续处理中",
 )
+@tool_cacheable(
+    ADMIN_TOOL_CACHE_PROFILE,
+    tool_name="analytics_range_summary",
+)
 async def analytics_range_summary(days: int = 30) -> dict:
     """
     功能描述：
@@ -159,9 +153,7 @@ async def analytics_range_summary(days: int = 30) -> dict:
     """
 
     return await request_analytics_data(
-        tool_name="analytics_range_summary",
         url="/agent/admin/analytics/range-summary",
-        tool_input={"days": days},
         params={"days": days},
     )
 
@@ -180,6 +172,10 @@ async def analytics_range_summary(days: int = 30) -> dict:
     error_message="获取支付转化汇总失败",
     timely_message="支付转化汇总正在持续处理中",
 )
+@tool_cacheable(
+    ADMIN_TOOL_CACHE_PROFILE,
+    tool_name="analytics_conversion_summary",
+)
 async def analytics_conversion_summary(days: int = 30) -> dict:
     """
     功能描述：
@@ -196,9 +192,7 @@ async def analytics_conversion_summary(days: int = 30) -> dict:
     """
 
     return await request_analytics_data(
-        tool_name="analytics_conversion_summary",
         url="/agent/admin/analytics/conversion-summary",
-        tool_input={"days": days},
         params={"days": days},
     )
 
@@ -217,6 +211,10 @@ async def analytics_conversion_summary(days: int = 30) -> dict:
     error_message="获取履约时效汇总失败",
     timely_message="履约时效汇总正在持续处理中",
 )
+@tool_cacheable(
+    ADMIN_TOOL_CACHE_PROFILE,
+    tool_name="analytics_fulfillment_summary",
+)
 async def analytics_fulfillment_summary(days: int = 30) -> dict:
     """
     功能描述：
@@ -233,9 +231,7 @@ async def analytics_fulfillment_summary(days: int = 30) -> dict:
     """
 
     return await request_analytics_data(
-        tool_name="analytics_fulfillment_summary",
         url="/agent/admin/analytics/fulfillment-summary",
-        tool_input={"days": days},
         params={"days": days},
     )
 
@@ -254,6 +250,10 @@ async def analytics_fulfillment_summary(days: int = 30) -> dict:
     error_message="获取售后处理时效汇总失败",
     timely_message="售后处理时效汇总正在持续处理中",
 )
+@tool_cacheable(
+    ADMIN_TOOL_CACHE_PROFILE,
+    tool_name="analytics_after_sale_efficiency_summary",
+)
 async def analytics_after_sale_efficiency_summary(days: int = 30) -> dict:
     """
     功能描述：
@@ -270,9 +270,7 @@ async def analytics_after_sale_efficiency_summary(days: int = 30) -> dict:
     """
 
     return await request_analytics_data(
-        tool_name="analytics_after_sale_efficiency_summary",
         url="/agent/admin/analytics/after-sale-efficiency-summary",
-        tool_input={"days": days},
         params={"days": days},
     )
 
@@ -291,6 +289,10 @@ async def analytics_after_sale_efficiency_summary(days: int = 30) -> dict:
     error_message="获取售后状态分布失败",
     timely_message="售后状态分布正在持续处理中",
 )
+@tool_cacheable(
+    ADMIN_TOOL_CACHE_PROFILE,
+    tool_name="analytics_after_sale_status_distribution",
+)
 async def analytics_after_sale_status_distribution(days: int = 30) -> dict:
     """
     功能描述：
@@ -307,9 +309,7 @@ async def analytics_after_sale_status_distribution(days: int = 30) -> dict:
     """
 
     return await request_analytics_data(
-        tool_name="analytics_after_sale_status_distribution",
         url="/agent/admin/analytics/after-sale-status-distribution",
-        tool_input={"days": days},
         params={"days": days},
     )
 
@@ -328,6 +328,10 @@ async def analytics_after_sale_status_distribution(days: int = 30) -> dict:
     error_message="获取售后原因分布失败",
     timely_message="售后原因分布正在持续处理中",
 )
+@tool_cacheable(
+    ADMIN_TOOL_CACHE_PROFILE,
+    tool_name="analytics_after_sale_reason_distribution",
+)
 async def analytics_after_sale_reason_distribution(days: int = 30) -> dict:
     """
     功能描述：
@@ -344,9 +348,7 @@ async def analytics_after_sale_reason_distribution(days: int = 30) -> dict:
     """
 
     return await request_analytics_data(
-        tool_name="analytics_after_sale_reason_distribution",
         url="/agent/admin/analytics/after-sale-reason-distribution",
-        tool_input={"days": days},
         params={"days": days},
     )
 
@@ -365,6 +367,10 @@ async def analytics_after_sale_reason_distribution(days: int = 30) -> dict:
     error_message="获取热销商品排行失败",
     timely_message="热销商品排行正在持续处理中",
 )
+@tool_cacheable(
+    ADMIN_TOOL_CACHE_PROFILE,
+    tool_name="analytics_top_selling_products",
+)
 async def analytics_top_selling_products(days: int = 30, limit: int = 10) -> dict:
     """
     功能描述：
@@ -382,9 +388,7 @@ async def analytics_top_selling_products(days: int = 30, limit: int = 10) -> dic
     """
 
     return await request_analytics_data(
-        tool_name="analytics_top_selling_products",
         url="/agent/admin/analytics/top-selling-products",
-        tool_input={"days": days, "limit": limit},
         params={"days": days, "limit": limit},
     )
 
@@ -403,6 +407,10 @@ async def analytics_top_selling_products(days: int = 30, limit: int = 10) -> dic
     error_message="获取退货退款风险商品排行失败",
     timely_message="退货退款风险商品排行正在持续处理中",
 )
+@tool_cacheable(
+    ADMIN_TOOL_CACHE_PROFILE,
+    tool_name="analytics_return_refund_risk_products",
+)
 async def analytics_return_refund_risk_products(days: int = 30, limit: int = 10) -> dict:
     """
     功能描述：
@@ -420,9 +428,7 @@ async def analytics_return_refund_risk_products(days: int = 30, limit: int = 10)
     """
 
     return await request_analytics_data(
-        tool_name="analytics_return_refund_risk_products",
         url="/agent/admin/analytics/return-refund-risk-products",
-        tool_input={"days": days, "limit": limit},
         params={"days": days, "limit": limit},
     )
 
@@ -441,6 +447,10 @@ async def analytics_return_refund_risk_products(days: int = 30, limit: int = 10)
     error_message="获取成交趋势失败",
     timely_message="成交趋势正在持续处理中",
 )
+@tool_cacheable(
+    ADMIN_TOOL_CACHE_PROFILE,
+    tool_name="analytics_sales_trend",
+)
 async def analytics_sales_trend(days: int = 30) -> dict:
     """
     功能描述：
@@ -457,9 +467,7 @@ async def analytics_sales_trend(days: int = 30) -> dict:
     """
 
     return await request_analytics_data(
-        tool_name="analytics_sales_trend",
         url="/agent/admin/analytics/sales-trend",
-        tool_input={"days": days},
         params={"days": days},
     )
 
@@ -478,6 +486,10 @@ async def analytics_sales_trend(days: int = 30) -> dict:
     error_message="获取售后趋势失败",
     timely_message="售后趋势正在持续处理中",
 )
+@tool_cacheable(
+    ADMIN_TOOL_CACHE_PROFILE,
+    tool_name="analytics_after_sale_trend",
+)
 async def analytics_after_sale_trend(days: int = 30) -> dict:
     """
     功能描述：
@@ -494,9 +506,7 @@ async def analytics_after_sale_trend(days: int = 30) -> dict:
     """
 
     return await request_analytics_data(
-        tool_name="analytics_after_sale_trend",
         url="/agent/admin/analytics/after-sale-trend",
-        tool_input={"days": days},
         params={"days": days},
     )
 

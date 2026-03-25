@@ -15,7 +15,7 @@ from app.agent.admin.tools.registry import AdminToolRegistry
 class AdminDynamicToolMiddleware(AgentMiddleware):
     """
     功能描述：
-        根据 state 中的 `granted_tool_keys` 动态过滤 admin 管理工具。
+        根据 state 中的 `loaded_tool_keys` 动态过滤 admin 管理工具。
 
     参数说明：
         registry (AdminToolRegistry): 工具注册中心。
@@ -45,10 +45,10 @@ class AdminDynamicToolMiddleware(AgentMiddleware):
         self._registry = registry
 
     @staticmethod
-    def _normalize_granted_tool_keys(state: Any) -> list[str] | None:
+    def _normalize_loaded_tool_keys(state: Any) -> list[str] | None:
         """
         功能描述：
-            从请求状态中读取并规范化已授权工具数组。
+            从请求状态中读取并规范化已加载工具数组。
 
         参数说明：
             state (Any): 请求状态对象。
@@ -63,12 +63,12 @@ class AdminDynamicToolMiddleware(AgentMiddleware):
         if not isinstance(state, Mapping):
             return None
 
-        raw_granted_tool_keys = state.get("granted_tool_keys")
-        if not isinstance(raw_granted_tool_keys, list):
+        raw_loaded_tool_keys = state.get("loaded_tool_keys")
+        if not isinstance(raw_loaded_tool_keys, list):
             return None
 
         normalized_tool_keys: list[str] = []
-        for raw_tool_key in raw_granted_tool_keys:
+        for raw_tool_key in raw_loaded_tool_keys:
             tool_key = str(raw_tool_key or "").strip()
             if not tool_key:
                 continue
@@ -94,10 +94,10 @@ class AdminDynamicToolMiddleware(AgentMiddleware):
 
         request_tools = list(request.tools)
         state_dict = request.state if isinstance(request.state, Mapping) else {}
-        granted_tool_keys = self._normalize_granted_tool_keys(state_dict)
+        loaded_tool_keys = self._normalize_loaded_tool_keys(state_dict)
         visible_tools = self._registry.filter_visible_tools(
             request_tools=request_tools,
-            granted_tool_keys=granted_tool_keys,
+            loaded_tool_keys=loaded_tool_keys,
         )
         return request.override(tools=visible_tools)
 

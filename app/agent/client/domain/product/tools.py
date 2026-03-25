@@ -3,6 +3,7 @@ from __future__ import annotations
 from langchain_core.tools import tool
 
 from app.agent.client.domain.product.schema import ProductIdRequest, ProductSearchRequest
+from app.core.agent.tool_cache import CLIENT_COMMERCE_TOOL_CACHE_PROFILE, tool_cacheable
 from app.schemas.http_response import HttpResponse
 from app.utils.http_client import HttpClient
 
@@ -13,6 +14,10 @@ from app.utils.http_client import HttpClient
             "搜索商品。"
             "调用时机：用户想找某类商品、按用途挑选商品、按关键词搜索商品时。"
     ),
+)
+@tool_cacheable(
+    CLIENT_COMMERCE_TOOL_CACHE_PROFILE,
+    tool_name="search_products",
 )
 async def search_products(
         keyword: str | None = None,
@@ -44,6 +49,10 @@ async def search_products(
             "调用时机：用户明确询问某个商品的价格、库存、分类、图片或药品说明信息时。"
     ),
 )
+@tool_cacheable(
+    CLIENT_COMMERCE_TOOL_CACHE_PROFILE,
+    tool_name="get_product_detail",
+)
 async def get_product_detail(product_id: int) -> dict:
     """获取客户端商品详情。"""
 
@@ -60,6 +69,10 @@ async def get_product_detail(product_id: int) -> dict:
             "获取商品规格属性。"
             "调用时机：用户询问商品成分、包装、有效期、注意事项、禁忌、说明书等更细的属性时。"
     ),
+)
+@tool_cacheable(
+    CLIENT_COMMERCE_TOOL_CACHE_PROFILE,
+    tool_name="get_product_spec",
 )
 async def get_product_spec(product_id: int) -> dict:
     """获取客户端商品规格属性。"""

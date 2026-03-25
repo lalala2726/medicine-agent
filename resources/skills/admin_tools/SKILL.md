@@ -1,21 +1,20 @@
 ---
 name: admin_tools
 description: 管理端单 Agent 工具总目录，提供通用返回规则、领域入口与子技能资源索引。
-license: Apache-2.0
-metadata:
-  author: Chuang
-  version: "2.0"
 ---
 
 # Admin Tools Skill
 
 ## 使用原则
 
-1. 当前全部业务工具都允许直接调用，无需先申请权限。
-2. `request_tool_access` 仍可用，但仅用于记录申请动作或确认工具目录，不再是权限开关。
-3. 工具名统一使用精确的 `snake_case`，不要自造工具名。
-4. 主 skill 只负责告诉你“有哪些工具、每个领域大概能拿到什么”；需要字段级返回结构时，继续读取 `references/` 下面对应领域说明文件。
-5. 回答制度、字段定义、规则说明、配置说明等知识型问题时，优先调用 `search_knowledge_context`，不要把业务工具当知识库。
+1. 默认只有基础工具可直接调用；订单、商品、售后、用户、分析等业务工具都需要先通过 `load_tools` 加载。
+2. `load_tools` 是加载步骤，不是说明性工具，也不是向用户申请；加载时必须传精确的 `tool_keys`，不要传模糊领域名。
+3. `load_tools` 支持一次同时加载多个工具；如果一个问题要查订单和用户，就把多个工具名一起放进 `tool_keys`。
+4. 如果你不确定精确工具名，先调用 `list_loadable_tools` 拿完整工具目录，再调用 `load_tools`。
+5. 加载工具是你自己的内部步骤，不需要等待用户确认；只要任务需要，就直接自行调用。
+6. 工具名统一使用精确的 `snake_case`，不要自造工具名。
+7. 主 skill 只负责告诉你“有哪些工具、每个领域大概能拿到什么”；需要字段级返回结构时，继续读取 `references/` 下面对应领域说明文件。
+8. 回答制度、字段定义、规则说明、配置说明等知识型问题时，优先调用 `search_knowledge_context`，不要把业务工具当知识库。
 
 ## 通用返回规则
 
@@ -37,7 +36,8 @@ metadata:
 
 | 工具名                        | 能拿到什么             | 何时使用           |
 |----------------------------|-------------------|----------------|
-| `request_tool_access`      | 工具目录确认结果          | 不确定工具名时使用      |
+| `list_loadable_tools`      | 可加载业务工具完整目录       | 不确定精确工具名时      |
+| `load_tools`               | 业务工具加载结果          | 需要调用未暴露业务工具时   |
 | `search_knowledge_context` | 知识库检索片段           | 制度、规则、FAQ、字段解释 |
 | `get_safe_user_info`       | 当前登录人的用户名、昵称等基础信息 | 需要当前操作人上下文时    |
 
@@ -147,7 +147,9 @@ metadata:
 ## 使用建议
 
 1. 先用本主 skill 找到正确领域和工具名。
-2. 如果只需要知道“这个工具能查什么”，主 skill 已经足够。
-3. 如果要精确理解返回字段、嵌套对象、分页结构或趋势点结构，再读取 `references/` 下对应领域文件。
-4. 如果要做图表，优先读取 [references/ANALYTICS.md](references/ANALYTICS.md) 里的“适合图表”说明，再结合 `chart` skill
+2. 如果你不确定精确工具名，先调用 `list_loadable_tools` 获取完整工具目录。
+3. 确认工具名后，如果当前工具列表里看不到该业务工具，先调用 `load_tools` 加载该工具；需要多个工具时，一次传多个 `tool_keys`。
+4. 如果只需要知道“这个工具能查什么”，主 skill 已经足够。
+5. 如果要精确理解返回字段、嵌套对象、分页结构或趋势点结构，再读取 `references/` 下对应领域文件。
+6. 如果要做图表，优先读取 [references/ANALYTICS.md](references/ANALYTICS.md) 里的“适合图表”说明，再结合 `chart` skill
    输出图表方案。
