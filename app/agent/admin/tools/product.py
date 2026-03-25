@@ -10,6 +10,7 @@ from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
 from app.agent.admin.tools.base import format_ids_to_string, normalize_id_list
+from app.agent.admin.tools.cache import save_current_admin_tool_cache_entry
 from app.core.agent.agent_tool_events import tool_call_status
 from app.schemas.http_response import HttpResponse
 from app.utils.http_client import HttpClient
@@ -147,7 +148,13 @@ async def product_list(
             "maxPrice": max_price,
         }
         response = await client.get(url="/agent/admin/product/list", params=params)
-        return HttpResponse.parse_data(response)
+        result = HttpResponse.parse_data(response)
+        save_current_admin_tool_cache_entry(
+            tool_name="product_list",
+            tool_input=params,
+            tool_output=result,
+        )
+        return result
 
 
 @tool(
@@ -182,7 +189,13 @@ async def product_detail(product_id: list[str]) -> dict:
     ids_str = format_ids_to_string(normalized_ids)
     async with HttpClient() as client:
         response = await client.get(url=f"/agent/admin/product/{ids_str}")
-        return HttpResponse.parse_data(response)
+        result = HttpResponse.parse_data(response)
+        save_current_admin_tool_cache_entry(
+            tool_name="product_detail",
+            tool_input={"product_id": normalized_ids},
+            tool_output=result,
+        )
+        return result
 
 
 @tool(
@@ -217,7 +230,13 @@ async def drug_detail(product_id: list[str]) -> dict:
     ids_str = format_ids_to_string(normalized_ids)
     async with HttpClient() as client:
         response = await client.get(url=f"/agent/admin/product/drug/{ids_str}")
-        return HttpResponse.parse_data(response)
+        result = HttpResponse.parse_data(response)
+        save_current_admin_tool_cache_entry(
+            tool_name="drug_detail",
+            tool_input={"product_id": normalized_ids},
+            tool_output=result,
+        )
+        return result
 
 
 __all__ = [

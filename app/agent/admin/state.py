@@ -90,10 +90,14 @@ class AgentState(MessagesState, total=False):
 
     字段说明：
     1. `messages` 由 `MessagesState` 提供，兼容 LangGraph 内部消息流；
-    2. `history_messages` 存储外层会话历史；
-    3. `granted_tool_keys` 用于记录当前一次运行中已授权的业务工具；
-    4. `execution_traces/token_usage/result` 用于外层持久化与流式落库。
+    2. `conversation_uuid` 用于会话级工具缓存隔离；
+    3. `history_messages` 存储外层会话历史；
+    4. `granted_tool_keys` 用于记录当前一次运行中已授权的业务工具；
+    5. `execution_traces/token_usage/result` 用于外层持久化与流式落库。
     """
+
+    # 当前会话 UUID。
+    conversation_uuid: str
 
     # 对话历史消息。
     history_messages: list[ChatHistoryMessage]

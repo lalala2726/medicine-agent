@@ -8,10 +8,17 @@ from typing import Any, Mapping, cast
 
 from langchain.agents import create_agent
 from langchain.agents.middleware import ToolCallLimitMiddleware
+from langchain_core.prompts import SystemMessagePromptTemplate
 from langchain_core.messages import AIMessage, SystemMessage
 
 from app.agent.admin.state import AgentState, ExecutionTraceState
-from app.agent.admin.tools import ADMIN_TOOL_REGISTRY, AdminDynamicToolMiddleware
+from app.agent.admin.tools import (
+    ADMIN_TOOL_REGISTRY,
+    AdminDynamicToolMiddleware,
+    bind_current_admin_tool_cache_conversation,
+    render_admin_tool_cache_prompt,
+    reset_current_admin_tool_cache_conversation,
+)
 from app.core.agent.agent_event_bus import emit_answer_delta, emit_thinking_delta
 from app.core.agent.agent_runtime import agent_stream
 from app.core.agent.agent_tool_events import build_tool_status_middleware
@@ -23,8 +30,10 @@ from app.core.langsmith import traceable
 from app.services.token_usage_service import append_trace_and_refresh_token_usage
 from app.utils.prompt_utils import append_current_time_to_prompt, load_prompt
 
-# 单 admin agent 的系统提示词路径。
-_ADMIN_AGENT_SYSTEM_PROMPT = load_prompt("admin/admin_agent_system_prompt.md")
+# 单 admin agent 的系统提示词模板。
+_ADMIN_AGENT_SYSTEM_PROMPT_TEMPLATE = SystemMessagePromptTemplate.from_template(
+    load_prompt("admin/admin_agent_system_prompt.md"),
+)
 # admin agent 的状态 schema。
 # 部分类型检查器不会把 `MessagesState` 子类识别为 `TypedDict` 类型，这里显式收窄以消除 IDE 误报。
 _ADMIN_AGENT_STATE_SCHEMA = cast(Any, AgentState)
@@ -81,7 +90,12 @@ def admin_agent(state: AgentState) -> dict[str, Any]:
         不主动吞掉模型或工具异常；异常由上层流式主链路统一处理。
     """
 
+    conversation_uuid = str(state.get("conversation_uuid") or "").strip()
     history_messages = list(state.get("history_messages") or [])
+    admin_tool_cache_prompt = render_admin_tool_cache_prompt(conversation_uuid)
+    admin_system_message = _ADMIN_AGENT_SYSTEM_PROMPT_TEMPLATE.format(
+        tool_cache=admin_tool_cache_prompt,
+    )
     llm = create_agent_chat_llm(
         slot=AgentChatModelSlot.ADMIN_BUSINESS_COMPLEX,
         temperature=1.0,
@@ -92,7 +106,9 @@ def admin_agent(state: AgentState) -> dict[str, Any]:
         model=llm,
         tools=ADMIN_TOOL_REGISTRY.all_tools,
         system_prompt=SystemMessage(
-            content=append_current_time_to_prompt(_ADMIN_AGENT_SYSTEM_PROMPT)
+            content=append_current_time_to_prompt(
+                str(admin_system_message.content or "")
+            )
         ),
         state_schema=_ADMIN_AGENT_STATE_SCHEMA,
         middleware=[
@@ -103,12 +119,16 @@ def admin_agent(state: AgentState) -> dict[str, Any]:
             ToolCallLimitMiddleware(thread_limit=20, run_limit=10),
         ],
     )
-    stream_result = agent_stream(
-        agent,
-        history_messages,
-        on_model_delta=emit_answer_delta,
-        on_thinking_delta=emit_thinking_delta,
-    )
+    cache_token = bind_current_admin_tool_cache_conversation(conversation_uuid)
+    try:
+        stream_result = agent_stream(
+            agent,
+            history_messages,
+            on_model_delta=emit_answer_delta,
+            on_thinking_delta=emit_thinking_delta,
+        )
+    finally:
+        reset_current_admin_tool_cache_conversation(cache_token)
     trace = record_agent_trace(
         payload=stream_result,
         input_messages=history_messages,

@@ -233,6 +233,7 @@ def _build_stream_config() -> dict | None:
 def _build_initial_state(
         question: str,
         *,
+        conversation_uuid: str,
         history_messages: list[ChatHistoryMessage] | None = None,
 ) -> dict[str, Any]:
     """
@@ -242,15 +243,17 @@ def _build_initial_state(
 
     Args:
         question: 当前用户问题文本；当前实现仅用于接口语义占位，不参与状态构造。
+        conversation_uuid: 当前会话 UUID，用于会话级工具缓存隔离。
         history_messages: 会话历史消息列表；为空时默认空列表。
     Returns:
-        dict[str, Any]: LangGraph 初始状态字典，包含历史、授权工具与消息等字段。
+        dict[str, Any]: LangGraph 初始状态字典，包含会话、历史、授权工具与消息等字段。
     """
 
     _ = question
     base_history = list(history_messages or [])
 
     return {
+        "conversation_uuid": str(conversation_uuid).strip(),
         "history_messages": base_history,
         "granted_tool_keys": [],
         "execution_traces": [],
@@ -1179,6 +1182,7 @@ def _build_run_stream_config(
         workflow=workflow,
         build_initial_state=lambda q: _build_initial_state(
             q,
+            conversation_uuid=context.conversation_uuid,
             history_messages=context.history_messages,
         ),
         extract_final_content=lambda state: str(state.get("result") or ""),

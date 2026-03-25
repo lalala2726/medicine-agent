@@ -10,6 +10,7 @@ from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
 from app.agent.admin.tools.base import format_ids_to_string, normalize_id_list
+from app.agent.admin.tools.cache import save_current_admin_tool_cache_entry
 from app.core.agent.agent_tool_events import tool_call_status
 from app.schemas.http_response import HttpResponse
 from app.utils.http_client import HttpClient
@@ -146,7 +147,13 @@ async def order_list(
             url="/agent/admin/order/list",
             params=params,
         )
-        return HttpResponse.parse_data(response)
+        result = HttpResponse.parse_data(response)
+        save_current_admin_tool_cache_entry(
+            tool_name="order_list",
+            tool_input=params,
+            tool_output=result,
+        )
+        return result
 
 
 @tool(
@@ -181,7 +188,13 @@ async def order_detail(order_id: list[str]) -> dict:
     ids_str = format_ids_to_string(normalized_ids)
     async with HttpClient() as client:
         response = await client.get(url=f"/agent/admin/order/{ids_str}")
-        return HttpResponse.parse_data(response)
+        result = HttpResponse.parse_data(response)
+        save_current_admin_tool_cache_entry(
+            tool_name="order_detail",
+            tool_input={"order_id": normalized_ids},
+            tool_output=result,
+        )
+        return result
 
 
 @tool(
@@ -214,7 +227,13 @@ async def order_timeline(order_id: int) -> dict:
 
     async with HttpClient() as client:
         response = await client.get(url=f"/agent/admin/order/timeline/{order_id}")
-        return HttpResponse.parse_data(response)
+        result = HttpResponse.parse_data(response)
+        save_current_admin_tool_cache_entry(
+            tool_name="order_timeline",
+            tool_input={"order_id": order_id},
+            tool_output=result,
+        )
+        return result
 
 
 @tool(
@@ -247,7 +266,13 @@ async def order_shipping(order_id: int) -> dict:
 
     async with HttpClient() as client:
         response = await client.get(url=f"/agent/admin/order/shipping/{order_id}")
-        return HttpResponse.parse_data(response)
+        result = HttpResponse.parse_data(response)
+        save_current_admin_tool_cache_entry(
+            tool_name="order_shipping",
+            tool_input={"order_id": order_id},
+            tool_output=result,
+        )
+        return result
 
 
 __all__ = [

@@ -9,6 +9,7 @@ from typing import Optional
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
+from app.agent.admin.tools.cache import save_current_admin_tool_cache_entry
 from app.core.agent.agent_tool_events import tool_call_status
 from app.schemas.http_response import HttpResponse
 from app.utils.http_client import HttpClient
@@ -118,7 +119,13 @@ async def after_sale_list(
             url="/agent/admin/after-sale/list",
             params=params,
         )
-        return HttpResponse.parse_data(response)
+        result = HttpResponse.parse_data(response)
+        save_current_admin_tool_cache_entry(
+            tool_name="after_sale_list",
+            tool_input=params,
+            tool_output=result,
+        )
+        return result
 
 
 @tool(
@@ -153,7 +160,13 @@ async def after_sale_detail(after_sale_id: int) -> dict:
         response = await client.get(
             url=f"/agent/admin/after-sale/detail/{after_sale_id}",
         )
-        return HttpResponse.parse_data(response)
+        result = HttpResponse.parse_data(response)
+        save_current_admin_tool_cache_entry(
+            tool_name="after_sale_detail",
+            tool_input={"after_sale_id": after_sale_id},
+            tool_output=result,
+        )
+        return result
 
 
 __all__ = [

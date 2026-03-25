@@ -9,6 +9,7 @@ from typing import Optional
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
+from app.agent.admin.tools.cache import save_current_admin_tool_cache_entry
 from app.core.agent.agent_tool_events import tool_call_status
 from app.schemas.http_response import HttpResponse
 from app.utils.http_client import HttpClient
@@ -149,7 +150,13 @@ async def user_list(
             url="/agent/admin/user/list",
             params=params,
         )
-        return HttpResponse.parse_data(response)
+        result = HttpResponse.parse_data(response)
+        save_current_admin_tool_cache_entry(
+            tool_name="user_list",
+            tool_input=params,
+            tool_output=result,
+        )
+        return result
 
 
 @tool(
@@ -182,7 +189,13 @@ async def user_detail(user_id: int) -> dict:
 
     async with HttpClient() as client:
         response = await client.get(url=f"/agent/admin/user/{user_id}/detail")
-        return HttpResponse.parse_data(response)
+        result = HttpResponse.parse_data(response)
+        save_current_admin_tool_cache_entry(
+            tool_name="user_detail",
+            tool_input={"user_id": user_id},
+            tool_output=result,
+        )
+        return result
 
 
 @tool(
@@ -215,7 +228,13 @@ async def user_wallet(user_id: int) -> dict:
 
     async with HttpClient() as client:
         response = await client.get(url=f"/agent/admin/user/{user_id}/wallet")
-        return HttpResponse.parse_data(response)
+        result = HttpResponse.parse_data(response)
+        save_current_admin_tool_cache_entry(
+            tool_name="user_wallet",
+            tool_input={"user_id": user_id},
+            tool_output=result,
+        )
+        return result
 
 
 @tool(
@@ -261,7 +280,13 @@ async def user_wallet_flow(
             url=f"/agent/admin/user/{user_id}/wallet_flow",
             params=params,
         )
-        return HttpResponse.parse_data(response)
+        result = HttpResponse.parse_data(response)
+        save_current_admin_tool_cache_entry(
+            tool_name="user_wallet_flow",
+            tool_input={"user_id": user_id, "page_num": page_num, "page_size": page_size},
+            tool_output=result,
+        )
+        return result
 
 
 @tool(
@@ -307,7 +332,13 @@ async def user_consume_info(
             url=f"/agent/admin/user/{user_id}/consume_info",
             params=params,
         )
-        return HttpResponse.parse_data(response)
+        result = HttpResponse.parse_data(response)
+        save_current_admin_tool_cache_entry(
+            tool_name="user_consume_info",
+            tool_input={"user_id": user_id, "page_num": page_num, "page_size": page_size},
+            tool_output=result,
+        )
+        return result
 
 
 __all__ = [
