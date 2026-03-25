@@ -24,7 +24,6 @@ _GATEWAY_ROUTE_FALLBACK: dict[str, Any] = {
 }
 _ALLOWED_GATEWAY_TARGETS: tuple[str, ...] = (
     "chat_agent",
-    "consultation_agent",
     "order_agent",
     "product_agent",
     "after_sale_agent",
@@ -37,7 +36,6 @@ class GatewayRoutingSchema(BaseModel):
     route_targets: list[
         Literal[
             "chat_agent",
-            "consultation_agent",
             "order_agent",
             "product_agent",
             "after_sale_agent",
@@ -46,7 +44,7 @@ class GatewayRoutingSchema(BaseModel):
         min_length=1,
         description=(
             "路由目标数组，仅允许 "
-            "chat_agent/consultation_agent/order_agent/product_agent/after_sale_agent"
+            "chat_agent/order_agent/product_agent/after_sale_agent"
         ),
     )
     task_difficulty: Literal["normal", "high"] = Field(

@@ -5,16 +5,8 @@ import uuid
 from typing import Any
 
 from fastapi.responses import StreamingResponse
-from langgraph.types import Command
 from langchain_core.messages import HumanMessage
 
-from app.agent.client.domain.consultation.agent import has_pending_consultation_interrupt
-from app.agent.client.domain.consultation.graph import _CONSULTATION_GRAPH
-from app.agent.client.domain.consultation.helpers import (
-    build_consultation_followup_card_response,
-    resolve_consultation_result_text,
-    resolve_interrupt_payload,
-)
 from app.agent.client.workflow import build_graph
 from app.core.agent.agent_orchestrator import AssistantStreamConfig
 from app.core.agent.run_event_store import LocalRunHandle
@@ -61,9 +53,6 @@ from app.services.message_service import count_messages, hide_visible_cards_in_c
 CLIENT_WORKFLOW_NAME = "client_assistant_graph"
 CLIENT_WORKFLOW = build_graph()
 
-CONSULTATION_WORKFLOW_NAME = "client_consultation_graph"
-"""consultation resume 直连子图时使用的内部 workflow 名称。"""
-
 
 def _merge_runnable_config(
         *,
@@ -109,7 +98,7 @@ def _invoke_workflow_with_config(
 
     参数说明：
         workflow (Any): 已编译的 workflow。
-        workflow_input (Any): workflow 输入，可以是 state 或 `Command`。
+        workflow_input (Any): workflow 输入，通常为状态字典。
         runnable_config (dict[str, Any] | None): runnable config。
 
     返回值：
@@ -155,43 +144,6 @@ def _build_client_initial_state(
         "result": "",
         "messages": list(base_history),
     }
-
-
-def _build_consultation_interrupt_responses(state: dict[str, Any]) -> list[Any]:
-    """
-    功能描述：
-        将 consultation 的 interrupt state 转换为即时 SSE 响应。
-
-    参数说明：
-        state (dict[str, Any]): workflow 最新状态。
-
-    返回值：
-        list[Any]: 需要立即发送给前端的响应列表。
-
-    异常说明：
-        无；不命中 consultation interrupt 时返回空列表。
-    """
-
-    interrupt_payload = resolve_interrupt_payload(state)
-    if interrupt_payload is None:
-        return []
-    reply_text = str(
-        interrupt_payload.get("reply_text")
-        or interrupt_payload.get("question_text")
-        or ""
-    ).strip()
-    question_text = str(interrupt_payload.get("question_text") or "").strip()
-    options = list(interrupt_payload.get("options") or [])
-    if not reply_text or not question_text:
-        return []
-    return [
-        build_consultation_followup_card_response(
-            title=question_text,
-            description=reply_text,
-            options=options,
-        )
-    ]
-
 
 def _load_client_conversation(
         *,
@@ -284,50 +236,6 @@ def _prepare_existing_conversation(
         is_new_conversation=False,
     )
 
-
-def _prepare_existing_resume_conversation(
-        *,
-        conversation_uuid: str,
-        user_id: int,
-        assistant_message_uuid: str,
-) -> ConversationContext:
-    """
-    功能描述：
-        为 consultation resume 场景准备会话上下文。
-
-    参数说明：
-        conversation_uuid (str): 会话 UUID。
-        user_id (int): 当前用户 ID。
-        assistant_message_uuid (str): 本轮 AI 消息 UUID。
-
-    返回值：
-        ConversationContext: resume 专用会话上下文。
-
-    异常说明：
-        ServiceException: 会话不存在或数据库异常时抛出。
-    """
-
-    conversation_id = _load_client_conversation(
-        conversation_uuid=conversation_uuid,
-        user_id=user_id,
-    )
-    _hide_visible_conversation_cards(
-        conversation_id=conversation_id,
-    )
-    return ConversationContext(
-        conversation_uuid=conversation_uuid,
-        conversation_id=conversation_id,
-        assistant_message_uuid=assistant_message_uuid,
-        history_messages=[],
-        initial_emitted_events=(
-            _build_message_prepared_event(
-                message_uuid=assistant_message_uuid,
-            ),
-        ),
-        is_new_conversation=False,
-    )
-
-
 def _prepare_conversation_context(
         *,
         question: str,
@@ -371,23 +279,12 @@ def assistant_chat(
 
     current_user_id = get_user_id()
     assistant_message_uuid = str(uuid.uuid4())
-    should_resume_consultation = (
-            conversation_uuid is not None
-            and has_pending_consultation_interrupt(conversation_uuid=conversation_uuid)
+    context = _prepare_conversation_context(
+        question=question,
+        user_id=current_user_id,
+        conversation_uuid=conversation_uuid,
+        assistant_message_uuid=assistant_message_uuid,
     )
-    if should_resume_consultation:
-        context = _prepare_existing_resume_conversation(
-            conversation_uuid=str(conversation_uuid),
-            user_id=current_user_id,
-            assistant_message_uuid=assistant_message_uuid,
-        )
-    else:
-        context = _prepare_conversation_context(
-            question=question,
-            user_id=current_user_id,
-            conversation_uuid=conversation_uuid,
-            assistant_message_uuid=assistant_message_uuid,
-        )
 
     created_meta = RUN_EVENT_STORE.create_run(
         conversation_uuid=context.conversation_uuid,
@@ -424,12 +321,8 @@ def assistant_chat(
     )
 
     cancel_event = asyncio.Event()
-    resolved_workflow = _CONSULTATION_GRAPH if should_resume_consultation else CLIENT_WORKFLOW
-    resolved_run_name = (
-        CONSULTATION_WORKFLOW_NAME
-        if should_resume_consultation
-        else CLIENT_WORKFLOW_NAME
-    )
+    resolved_workflow = CLIENT_WORKFLOW
+    resolved_run_name = CLIENT_WORKFLOW_NAME
     runnable_config = _merge_runnable_config(
         run_name=resolved_run_name,
         conversation_uuid=context.conversation_uuid,
@@ -437,24 +330,12 @@ def assistant_chat(
     stream_config = AssistantStreamConfig(
         workflow=resolved_workflow,
         build_initial_state=(
-            (lambda _question: Command(resume=question))
-            if should_resume_consultation
-            else (
-                lambda _question: _build_client_initial_state(
-                    history_messages=context.history_messages,
-                )
+            lambda _question: _build_client_initial_state(
+                history_messages=context.history_messages,
             )
         ),
-        extract_final_content=(
-            (lambda state: resolve_consultation_result_text(state))
-            if should_resume_consultation
-            else (lambda state: str(state.get("result") or ""))
-        ),
-        should_stream_token=(
-            (lambda _node, _state: False)
-            if should_resume_consultation
-            else _should_stream_token
-        ),
+        extract_final_content=(lambda state: str(state.get("result") or "")),
+        should_stream_token=_should_stream_token,
         build_stream_config=lambda: runnable_config,
         invoke_sync=lambda workflow_input: _invoke_workflow_with_config(
             workflow=resolved_workflow,
@@ -474,7 +355,6 @@ def assistant_chat(
             conversation_uuid=context.conversation_uuid,
         )
         ),
-        build_interrupt_responses=_build_consultation_interrupt_responses,
     )
     background_task = asyncio.create_task(
         _run_assistant_workflow_in_background(
