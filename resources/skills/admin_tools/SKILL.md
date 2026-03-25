@@ -1,10 +1,10 @@
 ---
 name: admin_tools
-description: 管理端单 Agent 可申请的业务工具目录，包含工具名称、适用场景、关键参数与常见用途。
+description: 管理端单 Agent 工具总目录，提供通用返回规则、领域入口与子技能资源索引。
 license: Apache-2.0
 metadata:
   author: Chuang
-  version: "1.0"
+  version: "2.0"
 ---
 
 # Admin Tools Skill
@@ -13,105 +13,141 @@ metadata:
 
 1. 当前全部业务工具都允许直接调用，无需先申请权限。
 2. `request_tool_access` 仍可用，但仅用于记录申请动作或确认工具目录，不再是权限开关。
-3. 工具 key 统一为 `snake_case`，调用时必须使用下面列出的精确名称。
-4. 同一个问题只调用最小必要工具，避免无关查询。
+3. 工具名统一使用精确的 `snake_case`，不要自造工具名。
+4. 主 skill 只负责告诉你“有哪些工具、每个领域大概能拿到什么”；需要字段级返回结构时，继续读取 `references/` 下面对应领域说明文件。
+5. 回答制度、字段定义、规则说明、配置说明等知识型问题时，优先调用 `search_knowledge_context`，不要把业务工具当知识库。
+
+## 通用返回规则
+
+1. 管理端 Python 工具最终返回给模型的是业务 `data`，不是 Java 原始 `AjaxResult` 整包，所以不要期待 `code`、`message`、
+   `timestamp` 这类外层字段。
+2. 分页类工具通常返回：
+   - `total`：总记录数
+   - `pageNum`：当前页码
+   - `pageSize`：每页条数
+   - `rows`：当前页数据数组
+3. 详情类工具通常返回对象或对象数组，不带分页壳。
+4. 趋势类工具通常返回：
+   - `days`：统计天数
+   - `granularity`：时间粒度
+   - `points`：趋势点数组
+5. 某些字段是业务编码值；如果返回结构里没有对应的 `xxxName` 字段，就把它当作编码本身使用，不要擅自推断完整字典。
 
 ## 基础工具
 
-| 工具名                        | 作用              | 何时使用                             |
-|----------------------------|-----------------|----------------------------------|
-| `request_tool_access`      | 记录工具申请动作并确认工具目录 | 不确定工具名、想确认工具目录时                  |
-| `search_knowledge_context` | 检索知识库内容         | 回答制度说明、字段解释、规则定义、FAQ、配置说明等知识型问题时 |
-| `get_safe_user_info`       | 获取当前登录用户的基础信息   | 需要确认当前操作人身份、用户名、昵称等上下文时          |
+| 工具名                        | 能拿到什么             | 何时使用           |
+|----------------------------|-------------------|----------------|
+| `request_tool_access`      | 工具目录确认结果          | 不确定工具名时使用      |
+| `search_knowledge_context` | 知识库检索片段           | 制度、规则、FAQ、字段解释 |
+| `get_safe_user_info`       | 当前登录人的用户名、昵称等基础信息 | 需要当前操作人上下文时    |
 
-## 订单工具
+## 领域入口
 
-| 工具名              | 作用          | 关键参数                                                             |
-|------------------|-------------|------------------------------------------------------------------|
-| `order_list`     | 查询订单列表      | `page_num`、`page_size`、`order_no`、`order_status`、`receiver_name` |
-| `order_detail`   | 查询一个或多个订单详情 | `order_id: list[str]`                                            |
-| `order_timeline` | 查询订单流程时间线   | `order_id: int`                                                  |
-| `order_shipping` | 查询订单发货记录    | `order_id: int`                                                  |
+### 订单工具
 
-适用场景：
+工具：
 
-- 查某段时间或某状态下的订单
-- 看订单明细、收货信息、商品明细
-- 看订单流转节点或发货物流信息
+- `order_list`
+- `order_detail`
+- `order_timeline`
+- `order_shipping`
 
-## 商品工具
+能拿到什么：
 
-| 工具名              | 作用             | 关键参数                                                                         |
-|------------------|----------------|------------------------------------------------------------------------------|
-| `product_list`   | 查询商品列表         | `page_num`、`page_size`、`name`、`category_id`、`status`、`min_price`、`max_price` |
-| `product_detail` | 查询商品详情         | `product_id: list[str]`                                                      |
-| `drug_detail`    | 查询药品说明书与适应症等详情 | `product_id: list[str]`                                                      |
+- 订单分页列表、订单编号、金额、支付方式、订单状态、时间
+- 订单收货信息、商品明细、支付信息
+- 订单流程时间线、物流公司、单号、物流轨迹
 
-适用场景：
+完整字段说明：
 
-- 筛选商品范围
-- 查看商品价格、库存、状态
-- 查询药品说明书、适应症、用法用量
+- [references/ORDER.md](references/ORDER.md)
 
-## 售后工具
+### 商品工具
 
-| 工具名                 | 作用       | 关键参数                                                                              |
-|---------------------|----------|-----------------------------------------------------------------------------------|
-| `after_sale_list`   | 查询售后申请列表 | `page_num`、`page_size`、`after_sale_type`、`after_sale_status`、`order_no`、`user_id` |
-| `after_sale_detail` | 查询售后详情   | `after_sale_id: int`                                                              |
+工具：
 
-适用场景：
+- `product_list`
+- `product_detail`
+- `drug_detail`
 
-- 看待处理售后单
-- 定位某订单或某用户的售后情况
-- 查看售后处理进度和结果
+能拿到什么：
 
-## 用户工具
+- 商品分页列表、分类、价格、库存、销量、状态、展示图
+- 商品详情、图片列表
+- 药品说明书、适应症、用法用量、不良反应、禁忌等说明书字段
 
-| 工具名                 | 作用       | 关键参数                                                               |
-|---------------------|----------|--------------------------------------------------------------------|
-| `user_list`         | 查询用户列表   | `page_num`、`page_size`、`id`、`username`、`nickname`、`roles`、`status` |
-| `user_detail`       | 查询用户详情   | `user_id: int`                                                     |
-| `user_wallet`       | 查询用户钱包信息 | `user_id: int`                                                     |
-| `user_wallet_flow`  | 查询用户钱包流水 | `user_id`、`page_num`、`page_size`                                   |
-| `user_consume_info` | 查询用户消费记录 | `user_id`、`page_num`、`page_size`                                   |
+完整字段说明：
 
-适用场景：
+- [references/PRODUCT.md](references/PRODUCT.md)
 
-- 定位用户
-- 看用户详情、角色、状态
-- 查钱包余额、流水和消费信息
+### 售后工具
 
-## 运营分析工具
+工具：
 
-| 工具名                                        | 作用           | 关键参数           |
-|--------------------------------------------|--------------|----------------|
-| `analytics_realtime_overview`              | 查询实时运营总览     | 无              |
-| `analytics_range_summary`                  | 查询经营结果汇总     | `days`         |
-| `analytics_conversion_summary`             | 查询支付转化汇总     | `days`         |
-| `analytics_fulfillment_summary`            | 查询履约时效汇总     | `days`         |
-| `analytics_after_sale_efficiency_summary`  | 查询售后处理时效汇总   | `days`         |
-| `analytics_after_sale_status_distribution` | 查询售后状态分布     | `days`         |
-| `analytics_after_sale_reason_distribution` | 查询售后原因分布     | `days`         |
-| `analytics_top_selling_products`           | 查询热销商品排行     | `days`、`limit` |
-| `analytics_return_refund_risk_products`    | 查询退货退款风险商品排行 | `days`、`limit` |
-| `analytics_sales_trend`                    | 查询成交趋势       | `days`         |
-| `analytics_after_sale_trend`               | 查询售后趋势       | `days`         |
+- `after_sale_list`
+- `after_sale_detail`
 
-适用场景：
+能拿到什么：
 
-- 看实时运营指标
-- 看支付、履约、售后时效
-- 看趋势、分布、排行
-- 为图表展示准备数据
+- 售后分页列表、售后单号、订单号、用户、商品、退款金额、申请原因、状态
+- 售后详情、凭证图片、管理员备注、商品信息、处理时间线
 
-## 使用示例
+完整字段说明：
 
-1. 用户要查订单列表：
-   直接调用 `order_list`
-2. 用户要看订单详情和物流：
-   直接调用 `order_detail`、`order_shipping`
-3. 用户要查用户钱包和消费：
-   直接调用 `user_wallet`、`user_consume_info`
-4. 用户要看成交趋势并给图表建议：
-   直接调用 `analytics_sales_trend`，再结合 `chart` skill 给出图表建议
+- [references/AFTER_SALE.md](references/AFTER_SALE.md)
+
+### 用户工具
+
+工具：
+
+- `user_list`
+- `user_detail`
+- `user_wallet`
+- `user_wallet_flow`
+- `user_consume_info`
+
+能拿到什么：
+
+- 用户分页列表、角色、状态、创建时间
+- 用户详情、基础资料、安全信息、钱包余额、总订单数、总消费金额
+- 钱包余额、累计收支、冻结信息、流水、消费记录
+
+完整字段说明：
+
+- [references/USER.md](references/USER.md)
+
+### 运营分析工具
+
+工具：
+
+- `analytics_realtime_overview`
+- `analytics_range_summary`
+- `analytics_conversion_summary`
+- `analytics_fulfillment_summary`
+- `analytics_after_sale_efficiency_summary`
+- `analytics_after_sale_status_distribution`
+- `analytics_after_sale_reason_distribution`
+- `analytics_top_selling_products`
+- `analytics_return_refund_risk_products`
+- `analytics_sales_trend`
+- `analytics_after_sale_trend`
+
+能拿到什么：
+
+- 实时运营看板指标
+- 经营、转化、履约、售后时效等汇总指标
+- 售后状态/原因分布
+- 热销商品排行、退款风险商品排行
+- 成交趋势、售后趋势，适合配合 `chart` skill 做图表
+
+完整字段说明：
+
+- [references/ANALYTICS.md](references/ANALYTICS.md)
+
+## 使用建议
+
+1. 先用本主 skill 找到正确领域和工具名。
+2. 如果只需要知道“这个工具能查什么”，主 skill 已经足够。
+3. 如果要精确理解返回字段、嵌套对象、分页结构或趋势点结构，再读取 `references/` 下对应领域文件。
+4. 如果要做图表，优先读取 [references/ANALYTICS.md](references/ANALYTICS.md) 里的“适合图表”说明，再结合 `chart` skill
+   输出图表方案。
