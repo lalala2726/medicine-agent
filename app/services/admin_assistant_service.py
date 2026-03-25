@@ -68,13 +68,7 @@ from app.utils.prompt_utils import load_prompt
 ADMIN_WORKFLOW_NAME = "admin_assistant_graph"
 ADMIN_WORKFLOW = build_graph()
 STREAM_OUTPUT_NODES = {
-    "chat_agent",
-    "order_agent",
-    "product_agent",
-    "after_sale_agent",
-    "user_agent",
-    "analytics_agent",
-    "adaptive_agent",
+    "admin_agent",
 }
 EMPTY_ASSISTANT_ANSWER_FALLBACK = "服务暂时不可用，请稍后重试。"
 RUN_EVENT_STORE = AssistantRunEventStore()
@@ -250,19 +244,15 @@ def _build_initial_state(
         question: 当前用户问题文本；当前实现仅用于接口语义占位，不参与状态构造。
         history_messages: 会话历史消息列表；为空时默认空列表。
     Returns:
-        dict[str, Any]: LangGraph 初始状态字典，包含路由、历史与消息等字段。
+        dict[str, Any]: LangGraph 初始状态字典，包含历史、授权工具与消息等字段。
     """
 
     _ = question
     base_history = list(history_messages or [])
 
     return {
-        "routing": {
-            "route_targets": [],
-            "task_difficulty": "normal",
-        },
-        "context": "",
         "history_messages": base_history,
+        "granted_tool_keys": [],
         "execution_traces": [],
         "token_usage": None,
         "result": "",
@@ -275,7 +265,7 @@ def _should_stream_token(stream_node: str | None, latest_state: dict[str, Any]) 
     """
     判定某个节点 token 是否应该被推送给前端。
 
-    当前规则允许所有业务输出节点输出 token（gateway 节点除外）。
+    当前规则仅允许 `admin_agent` 节点输出 token。
     """
 
     _ = latest_state

@@ -4,7 +4,6 @@ from typing import Any
 
 import pytest
 
-from app.agent.admin.model_switch import model_switch
 from app.core.config_sync import AgentChatModelSlot, AgentConfigSnapshot
 from app.core.config_sync import llm as llm_factory
 
@@ -457,11 +456,3 @@ def test_create_agent_embedding_client_uses_redis_model_and_dim_when_not_explici
     assert captured["base_url"] == "https://api.openai.com/v1"
     assert captured["api_key"] == "sk-runtime"
     assert captured["dimensions"] == 2048
-
-
-def test_model_switch_returns_complex_slot_for_high_difficulty() -> None:
-    """测试目的：业务难度为 high 时应选择 complex 槽位；预期结果：返回 `businessNodeComplexModel`。"""
-
-    slot = model_switch({"routing": {"task_difficulty": "high"}})
-
-    assert slot is AgentChatModelSlot.ADMIN_BUSINESS_COMPLEX
