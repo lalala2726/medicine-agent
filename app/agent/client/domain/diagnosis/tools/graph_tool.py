@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import json
 from typing import Any, LiteralString, TypeVar
 
-from langchain_core.prompts import SystemMessagePromptTemplate
 from langchain_core.tools import tool
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -15,14 +13,13 @@ from app.agent.client.domain.diagnosis.tools.cache import (
     TOOL_CACHE_FIELD_SEARCH_SYMPTOM_CANDIDATES,
     save_current_diagnosis_tool_cache_entry,
 )
-from app.core.config_sync import AgentChatModelSlot, create_agent_chat_llm
-from app.core.database.neo4j.client import get_neo4j_client
 from app.agent.client.domain.diagnosis.tools.schemas import (
     DiseaseCandidate,
     DiseaseDetail,
     FollowupSymptomCandidate,
     SymptomCandidate,
 )
+from app.core.database.neo4j.client import get_neo4j_client
 from app.utils.list_utils import TextListUtils
 
 # 医学图谱工具固定查询的业务数据库名称。
@@ -37,26 +34,6 @@ DEFAULT_DISEASE_CANDIDATE_LIMIT = 5
 MAX_GRAPH_QUERY_LIMIT = 50
 # 批量查询疾病详情时允许的最大疾病数量。
 MAX_BATCH_DISEASE_DETAIL_COUNT = 5
-# 图谱症状关键词规范化的系统提示词模板。
-GRAPH_KEYWORD_SYSTEM_PROMPT_TEMPLATE = SystemMessagePromptTemplate.from_template(
-    """
-        你是医学症状检索词标准化助手。
-        
-        你的唯一任务是把输入中的口语化症状、非标准描述或重复表达，改写为适合医学图谱检索的短关键词。
-        
-        处理规则：
-        1. 只保留症状、部位、医学近义词，不要输出病因、建议、解释、诊断结论。
-        2. 尽量输出短词，优先使用医学检索常见表达，例如“喉咙疼”可改写为“喉咙”“咽喉”“咽痛”。
-        3. 去重后输出 3 到 8 个关键词。
-        4. 每行只输出一个关键词。
-        5. 不要输出序号、标题、说明、标点包裹或任何额外文本。
-        
-        你需要输出的为JSON 数组，例如：["喉咙", "咽喉", "咽痛"] 除此以外禁止输出其他内容。
-        
-        待标准化输入 JSON 数组：
-        {input_text}
-    """.strip()
-)
 
 # 症状候选检索的固定 Cypher 查询语句。
 SEARCH_SYMPTOM_CANDIDATES_CYPHER: LiteralString = """
@@ -261,36 +238,6 @@ def _parse_graph_result_one(
     return schema_type.model_validate(raw_row)
 
 
-def _rewrite_graph_keywords(keywords: list[str]) -> list[str]:
-    """使用诊断模型将口语化症状改写为图谱检索词。
-
-    Args:
-        keywords: 上游传入的原始症状关键词列表。
-
-    Returns:
-        list[str]: 适合图谱检索的标准化关键词列表。
-    """
-
-    normalized_keywords = TextListUtils.normalize_required(
-        keywords,
-        field_name="keywords",
-    )
-    llm = create_agent_chat_llm(
-        slot=AgentChatModelSlot.CLIENT_CONSULTATION_FINAL_DIAGNOSIS,
-        model_name=GRAPH_KEYWORD_MODEL_NAME,
-        temperature=0.0,
-        think=False,
-    )
-    system_message = GRAPH_KEYWORD_SYSTEM_PROMPT_TEMPLATE.format(
-        input_text=json.dumps(normalized_keywords, ensure_ascii=False),
-    )
-    response = llm.invoke([system_message])
-    response_text = str(getattr(response, "content", "") or "").strip()
-    parsed_keywords = json.loads(response_text)
-    return TextListUtils.normalize_required(
-        parsed_keywords,
-        field_name="keywords",
-    )
 
 
 def _save_diagnosis_tool_cache_if_present(
@@ -430,11 +377,10 @@ def search_symptom_candidates(
         list[SymptomCandidate]: 标准症状候选实体列表。
     """
 
-    normalized_keywords = _rewrite_graph_keywords(keywords)
     raw_rows = get_neo4j_client().query_all(
         SEARCH_SYMPTOM_CANDIDATES_CYPHER,
         parameters={
-            "keywords": normalized_keywords,
+            "keywords": keywords,
             "limit": limit,
         },
         database=MEDICAL_GRAPH_DATABASE,
@@ -443,10 +389,11 @@ def search_symptom_candidates(
         raw_rows,
         schema_type=SymptomCandidate,
     )
+    # 将查询结果写入缓存
     _save_diagnosis_tool_cache_if_present(
         tool_name=TOOL_CACHE_FIELD_SEARCH_SYMPTOM_CANDIDATES,
         tool_input={
-            "keywords": normalized_keywords,
+            "keywords": keywords,
             "limit": limit,
         },
         tool_output=symptom_candidates,
