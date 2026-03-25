@@ -12,6 +12,7 @@ from app.agent.client.domain.diagnosis.tools import (
     query_disease_details,
     query_followup_symptom_candidates,
     search_symptom_candidates,
+    send_consultation_questionnaire_card,
 )
 from app.agent.client.domain.diagnosis.tools.cache import (
     bind_current_diagnosis_tool_cache_conversation,
@@ -63,6 +64,7 @@ def diagnosis_agent(state: AgentState) -> dict[str, Any]:
             search_symptom_candidates,
             query_disease_candidates_by_symptoms,
             query_followup_symptom_candidates,
+            send_consultation_questionnaire_card,
             query_disease_details,
         ],
         system_prompt=SystemMessage(
