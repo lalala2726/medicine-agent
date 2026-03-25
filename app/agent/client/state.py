@@ -68,6 +68,7 @@ class GatewayRoutingState(TypedDict):
 class AgentState(MessagesState, total=False):
     """Client agent 工作流状态。"""
 
+    conversation_uuid: str
     routing: GatewayRoutingState
     context: str
     history_messages: list[ChatHistoryMessage]

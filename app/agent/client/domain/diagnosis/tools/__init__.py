@@ -1,5 +1,17 @@
 """Client 诊断图工具包。"""
 
+from app.agent.client.domain.diagnosis.tools.cache import (
+    DIAGNOSIS_TOOL_CACHE_KEY_PREFIX,
+    DIAGNOSIS_TOOL_CACHE_PROMPT_TITLE,
+    DIAGNOSIS_TOOL_CACHE_TTL_SECONDS,
+    bind_current_diagnosis_tool_cache_conversation,
+    build_diagnosis_tool_cache_key,
+    load_diagnosis_tool_cache,
+    render_diagnosis_tool_cache_prompt,
+    reset_current_diagnosis_tool_cache_conversation,
+    save_current_diagnosis_tool_cache_entry,
+    save_diagnosis_tool_cache_entry,
+)
 from app.agent.client.domain.diagnosis.tools.schemas import (
     DiseaseCandidate,
     DiseaseDetail,
@@ -25,6 +37,9 @@ from app.agent.client.domain.diagnosis.tools.graph_tool import (
 )
 
 __all__ = [
+    "DIAGNOSIS_TOOL_CACHE_KEY_PREFIX",
+    "DIAGNOSIS_TOOL_CACHE_PROMPT_TITLE",
+    "DIAGNOSIS_TOOL_CACHE_TTL_SECONDS",
     "DEFAULT_DISEASE_CANDIDATE_LIMIT",
     "DEFAULT_GRAPH_QUERY_LIMIT",
     "DiseaseCandidate",
@@ -39,9 +54,16 @@ __all__ = [
     "QueryFollowupSymptomCandidatesRequest",
     "SearchSymptomCandidatesRequest",
     "SymptomCandidate",
+    "bind_current_diagnosis_tool_cache_conversation",
+    "build_diagnosis_tool_cache_key",
+    "load_diagnosis_tool_cache",
     "query_disease_candidates_by_symptoms",
     "query_disease_detail",
     "query_disease_details",
     "query_followup_symptom_candidates",
+    "reset_current_diagnosis_tool_cache_conversation",
+    "render_diagnosis_tool_cache_prompt",
+    "save_current_diagnosis_tool_cache_entry",
+    "save_diagnosis_tool_cache_entry",
     "search_symptom_candidates",
 ]

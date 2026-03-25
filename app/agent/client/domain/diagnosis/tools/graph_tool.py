@@ -7,6 +7,14 @@ from langchain_core.prompts import SystemMessagePromptTemplate
 from langchain_core.tools import tool
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.agent.client.domain.diagnosis.tools.cache import (
+    TOOL_CACHE_FIELD_QUERY_DISEASE_CANDIDATES,
+    TOOL_CACHE_FIELD_QUERY_DISEASE_DETAIL,
+    TOOL_CACHE_FIELD_QUERY_DISEASE_DETAILS,
+    TOOL_CACHE_FIELD_QUERY_FOLLOWUP_SYMPTOMS,
+    TOOL_CACHE_FIELD_SEARCH_SYMPTOM_CANDIDATES,
+    save_current_diagnosis_tool_cache_entry,
+)
 from app.core.config_sync import AgentChatModelSlot, create_agent_chat_llm
 from app.core.database.neo4j.client import get_neo4j_client
 from app.agent.client.domain.diagnosis.tools.schemas import (
@@ -285,6 +293,33 @@ def _rewrite_graph_keywords(keywords: list[str]) -> list[str]:
     )
 
 
+def _save_diagnosis_tool_cache_if_present(
+        tool_name: str,
+        tool_input: Any,
+        tool_output: Any,
+) -> None:
+    """在工具成功返回有效结果后写入诊断工具缓存。
+
+    Args:
+        tool_name: 当前工具名称，同时作为 Redis Hash 字段名。
+        tool_input: 当前工具真实执行时使用的入参。
+        tool_output: 当前工具成功返回结果。
+
+    Returns:
+        None
+    """
+
+    if tool_output is None:
+        return
+    if isinstance(tool_output, list) and not tool_output:
+        return
+    save_current_diagnosis_tool_cache_entry(
+        tool_name=tool_name,
+        tool_input=tool_input,
+        tool_output=tool_output,
+    )
+
+
 class SearchSymptomCandidatesRequest(BaseModel):
     """症状候选检索工具入参。"""
 
@@ -404,7 +439,19 @@ def search_symptom_candidates(
         },
         database=MEDICAL_GRAPH_DATABASE,
     )
-    return _parse_graph_result_list(raw_rows, schema_type=SymptomCandidate)
+    symptom_candidates = _parse_graph_result_list(
+        raw_rows,
+        schema_type=SymptomCandidate,
+    )
+    _save_diagnosis_tool_cache_if_present(
+        tool_name=TOOL_CACHE_FIELD_SEARCH_SYMPTOM_CANDIDATES,
+        tool_input={
+            "keywords": normalized_keywords,
+            "limit": limit,
+        },
+        tool_output=symptom_candidates,
+    )
+    return symptom_candidates
 
 
 @tool(
@@ -443,7 +490,19 @@ def query_disease_candidates_by_symptoms(
         },
         database=MEDICAL_GRAPH_DATABASE,
     )
-    return _parse_graph_result_list(raw_rows, schema_type=DiseaseCandidate)
+    disease_candidates = _parse_graph_result_list(
+        raw_rows,
+        schema_type=DiseaseCandidate,
+    )
+    _save_diagnosis_tool_cache_if_present(
+        tool_name=TOOL_CACHE_FIELD_QUERY_DISEASE_CANDIDATES,
+        tool_input={
+            "symptoms": normalized_symptoms,
+            "limit": limit,
+        },
+        tool_output=disease_candidates,
+    )
+    return disease_candidates
 
 
 @tool(
@@ -473,7 +532,13 @@ def query_disease_detail(disease_name: str) -> DiseaseDetail | None:
         parameters={"disease_name": normalized_disease_name},
         database=MEDICAL_GRAPH_DATABASE,
     )
-    return _parse_graph_result_one(raw_row, schema_type=DiseaseDetail)
+    disease_detail = _parse_graph_result_one(raw_row, schema_type=DiseaseDetail)
+    _save_diagnosis_tool_cache_if_present(
+        tool_name=TOOL_CACHE_FIELD_QUERY_DISEASE_DETAIL,
+        tool_input={"disease_name": normalized_disease_name},
+        tool_output=disease_detail,
+    )
+    return disease_detail
 
 
 @tool(
@@ -503,7 +568,13 @@ def query_disease_details(disease_names: list[str]) -> list[DiseaseDetail]:
         parameters={"disease_names": normalized_disease_names},
         database=MEDICAL_GRAPH_DATABASE,
     )
-    return _parse_graph_result_list(raw_rows, schema_type=DiseaseDetail)
+    disease_details = _parse_graph_result_list(raw_rows, schema_type=DiseaseDetail)
+    _save_diagnosis_tool_cache_if_present(
+        tool_name=TOOL_CACHE_FIELD_QUERY_DISEASE_DETAILS,
+        tool_input={"disease_names": normalized_disease_names},
+        tool_output=disease_details,
+    )
+    return disease_details
 
 
 @tool(
@@ -544,7 +615,20 @@ def query_followup_symptom_candidates(
         },
         database=MEDICAL_GRAPH_DATABASE,
     )
-    return _parse_graph_result_list(raw_rows, schema_type=FollowupSymptomCandidate)
+    followup_symptom_candidates = _parse_graph_result_list(
+        raw_rows,
+        schema_type=FollowupSymptomCandidate,
+    )
+    _save_diagnosis_tool_cache_if_present(
+        tool_name=TOOL_CACHE_FIELD_QUERY_FOLLOWUP_SYMPTOMS,
+        tool_input={
+            "candidate_diseases": normalized_candidate_diseases,
+            "known_symptoms": normalized_known_symptoms,
+            "limit": limit,
+        },
+        tool_output=followup_symptom_candidates,
+    )
+    return followup_symptom_candidates
 
 
 __all__ = [

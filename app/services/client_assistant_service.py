@@ -115,6 +115,7 @@ def _invoke_workflow_with_config(
 
 def _build_client_initial_state(
         *,
+        conversation_uuid: str,
         history_messages: list[Any],
 ) -> dict[str, Any]:
     """
@@ -122,6 +123,7 @@ def _build_client_initial_state(
         构造 client 主图的初始状态。
 
     参数说明：
+        conversation_uuid (str): 当前会话 UUID。
         history_messages (list[Any]): 当前会话历史消息列表。
 
     返回值：
@@ -133,6 +135,7 @@ def _build_client_initial_state(
 
     base_history = list(history_messages)
     return {
+        "conversation_uuid": conversation_uuid,
         "routing": {
             "route_targets": [],
             "task_difficulty": "normal",
@@ -331,6 +334,7 @@ def assistant_chat(
         workflow=resolved_workflow,
         build_initial_state=(
             lambda _question: _build_client_initial_state(
+                conversation_uuid=context.conversation_uuid,
                 history_messages=context.history_messages,
             )
         ),
