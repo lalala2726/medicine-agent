@@ -4,35 +4,17 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from langchain.agents import create_agent
 from langchain.agents.middleware import ToolCallLimitMiddleware
 from langchain_core.messages import AIMessage, SystemMessage
 from langchain_core.prompts import SystemMessagePromptTemplate
 
-from app.agent.client.domain.after_sale.tools import (
-    check_after_sale_eligibility,
-    get_after_sale_detail,
-)
-from app.agent.client.domain.order.tools import (
-    check_order_cancelable,
-    get_order_detail,
-    get_order_shipping,
-    get_order_timeline,
-)
-from app.agent.client.domain.product.tools import (
-    get_product_detail,
-    get_product_spec,
-    search_products,
-)
-from app.agent.client.domain.tools.action_tools import (
-    open_user_after_sale_list,
-    open_user_order_list,
-)
 from app.agent.client.state import AgentState, ExecutionTraceState
 from app.core.agent.agent_event_bus import emit_answer_delta, emit_thinking_delta
 from app.core.agent.agent_runtime import agent_stream
+from app.core.agent.agent_tool_events import build_tool_status_middleware
 from app.core.agent.agent_tool_trace import record_agent_trace
 from app.core.agent.base_prompt_middleware import BasePromptMiddleware
 from app.core.agent.skill import SkillMiddleware
@@ -46,15 +28,53 @@ from app.core.config_sync import AgentChatModelSlot, create_agent_chat_llm
 from app.core.langsmith import traceable
 from app.services.token_usage_service import append_trace_and_refresh_token_usage
 from app.utils.prompt_utils import append_current_time_to_prompt, load_prompt
+from app.agent.client.domain.commerce.middleware import CommerceDynamicToolMiddleware
+from app.agent.client.domain.commerce.registry import CLIENT_COMMERCE_TOOL_REGISTRY
 
 # commerce 节点系统提示词模板。
 _COMMERCE_SYSTEM_PROMPT_TEMPLATE = SystemMessagePromptTemplate.from_template(
     load_prompt("client/commerce_node_system_prompt.md"),
 )
+# commerce 节点状态 schema。
+_COMMERCE_AGENT_STATE_SCHEMA = cast(Any, AgentState)
 # commerce 节点单轮最多允许的工具调用次数。
 _COMMERCE_TOOL_CALL_THREAD_LIMIT = 10
 # commerce 节点单次运行最多允许的工具调用次数。
 _COMMERCE_TOOL_CALL_RUN_LIMIT = 8
+
+
+def _resolve_loaded_tool_keys(stream_result: dict[str, Any]) -> list[str]:
+    """
+    功能描述：
+        从单次 agent 流式执行结果中提取最终已加载工具数组。
+
+    参数说明：
+        stream_result (dict[str, Any]): `agent_stream` 返回结构。
+
+    返回值：
+        list[str]: 规范化后的已加载工具 key 数组。
+
+    异常说明：
+        无。
+    """
+
+    latest_state = stream_result.get("latest_state")
+    if not isinstance(latest_state, dict):
+        return []
+
+    raw_loaded_tool_keys = latest_state.get("loaded_tool_keys")
+    if not isinstance(raw_loaded_tool_keys, list):
+        return []
+
+    loaded_tool_keys: list[str] = []
+    for raw_tool_key in raw_loaded_tool_keys:
+        tool_key = str(raw_tool_key or "").strip()
+        if not tool_key:
+            continue
+        if tool_key in loaded_tool_keys:
+            continue
+        loaded_tool_keys.append(tool_key)
+    return loaded_tool_keys
 
 
 @traceable(name="Client Assistant Commerce Agent Node", run_type="chain")
@@ -91,27 +111,18 @@ def commerce_agent(state: AgentState) -> dict[str, Any]:
     llm_model_name = str(getattr(llm, "model_name", "") or "").strip()
     agent = create_agent(
         model=llm,
-        tools=[
-            open_user_order_list,
-            get_order_detail,
-            get_order_shipping,
-            get_order_timeline,
-            check_order_cancelable,
-            search_products,
-            get_product_detail,
-            get_product_spec,
-            open_user_after_sale_list,
-            get_after_sale_detail,
-            check_after_sale_eligibility,
-        ],
+        tools=CLIENT_COMMERCE_TOOL_REGISTRY.all_tools,
         system_prompt=SystemMessage(
             content=append_current_time_to_prompt(
                 str(commerce_system_message.content or "")
             )
         ),
+        state_schema=_COMMERCE_AGENT_STATE_SCHEMA,
         middleware=[
             BasePromptMiddleware(base_prompt_file="client/_client_base_prompt.md"),
             SkillMiddleware(skill_scope="client_commerce"),
+            CommerceDynamicToolMiddleware(registry=CLIENT_COMMERCE_TOOL_REGISTRY),
+            build_tool_status_middleware(),
             ToolCallLimitMiddleware(
                 thread_limit=_COMMERCE_TOOL_CALL_THREAD_LIMIT,
                 run_limit=_COMMERCE_TOOL_CALL_RUN_LIMIT,
@@ -142,6 +153,7 @@ def commerce_agent(state: AgentState) -> dict[str, Any]:
     current_execution_traces = list(state.get("execution_traces") or [])
     text = str(trace.get("text") or "").strip()
     trace_model_name = str(trace.get("model_name") or "").strip()
+    loaded_tool_keys = _resolve_loaded_tool_keys(stream_result)
     trace_item = ExecutionTraceState(
         sequence=len(current_execution_traces) + 1,
         node_name="commerce_agent",
@@ -151,7 +163,7 @@ def commerce_agent(state: AgentState) -> dict[str, Any]:
         llm_usage_complete=bool(trace.get("is_usage_complete", False)),
         llm_token_usage=trace.get("usage"),
         tool_calls=list(trace.get("tool_calls") or []),
-        node_context=None,
+        node_context={"loaded_tool_keys": loaded_tool_keys},
     )
     execution_traces, token_usage = append_trace_and_refresh_token_usage(
         current_execution_traces,
@@ -162,4 +174,5 @@ def commerce_agent(state: AgentState) -> dict[str, Any]:
         "messages": [AIMessage(content=text)],
         "execution_traces": execution_traces,
         "token_usage": token_usage,
+        "loaded_tool_keys": loaded_tool_keys,
     }

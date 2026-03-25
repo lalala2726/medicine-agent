@@ -141,6 +141,7 @@ def _build_client_initial_state(
         },
         "context": "",
         "history_messages": base_history,
+        "loaded_tool_keys": [],
         "execution_traces": [],
         "token_usage": None,
         "result": "",

@@ -5,7 +5,6 @@ from typing import Annotated
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.agent.services.card_render_schema import ProductPurchaseCardRequestItem
-from app.schemas.sse_response import AfterSaleStatusValue, OrderStatusValue
 from app.utils.list_utils import TextListUtils
 
 # 商品卡工具只接受正整数商品 ID。
@@ -28,43 +27,6 @@ def _normalize_optional_text(value: str | None) -> str | None:
         return None
     normalized = value.strip()
     return normalized or None
-
-
-class OpenUserOrderListRequest(BaseModel):
-    """打开用户订单列表工具参数。"""
-
-    model_config = ConfigDict(extra="forbid")
-
-    orderStatus: OrderStatusValue | None = Field(
-        default=None,
-        description=(
-            "订单状态，可选值："
-            "PENDING_PAYMENT（待支付）、"
-            "PENDING_SHIPMENT（待发货）、"
-            "PENDING_RECEIPT（待收货）、"
-            "COMPLETED（已完成）、"
-            "CANCELLED（已取消）。"
-        ),
-    )
-
-
-class OpenUserAfterSaleListRequest(BaseModel):
-    """打开用户售后列表工具参数。"""
-
-    model_config = ConfigDict(extra="forbid")
-
-    afterSaleStatus: AfterSaleStatusValue | None = Field(
-        default=None,
-        description=(
-            "售后状态，可选值："
-            "PENDING（待审核）、"
-            "APPROVED（已通过）、"
-            "REJECTED（已拒绝）、"
-            "PROCESSING（处理中）、"
-            "COMPLETED（已完成）、"
-            "CANCELLED（已取消）。"
-        ),
-    )
 
 
 class ConsentCardAction(BaseModel):
@@ -261,8 +223,6 @@ class SendProductPurchaseCardRequest(BaseModel):
 __all__ = [
     "ConsentCardAction",
     "ConsentCardData",
-    "OpenUserAfterSaleListRequest",
-    "OpenUserOrderListRequest",
     "ProductIdValue",
     "SelectionCardData",
     "SendConsentCardRequest",

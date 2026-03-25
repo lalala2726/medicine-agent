@@ -65,12 +65,22 @@ class GatewayRoutingState(TypedDict):
 
 
 class AgentState(MessagesState, total=False):
-    """Client agent 工作流状态。"""
+    """
+    Client agent 工作流状态。
+
+    字段说明：
+    1. `messages` 由 `MessagesState` 提供，兼容 LangGraph 内部消息流；
+    2. `conversation_uuid` 用于会话级工具缓存隔离；
+    3. `routing` 存储 gateway 路由结果；
+    4. `loaded_tool_keys` 用于记录当前一次运行中已加载的 commerce 工具；
+    5. `history_messages/execution_traces/token_usage/result` 用于外层持久化与流式落库。
+    """
 
     conversation_uuid: str
     routing: GatewayRoutingState
     context: str
     history_messages: list[ChatHistoryMessage]
+    loaded_tool_keys: list[str]
     execution_traces: list[ExecutionTraceState]
     token_usage: TokenUsageState | None
     result: str

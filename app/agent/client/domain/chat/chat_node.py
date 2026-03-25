@@ -5,13 +5,13 @@ from typing import Any
 from langchain.agents import create_agent
 from langchain_core.messages import AIMessage, SystemMessage
 
+from app.agent.client.domain.commerce.product import search_products
 from app.agent.client.domain.tools.card_tools import (
     send_product_card,
     send_product_purchase_card,
     send_consent_card,
     send_selection_card,
 )
-from app.agent.client.domain.product.tools import search_products
 from app.agent.client.state import AgentState, ExecutionTraceState
 from app.core.agent.agent_event_bus import emit_answer_delta, emit_thinking_delta
 from app.core.agent.agent_runtime import agent_stream

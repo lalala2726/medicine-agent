@@ -1,5 +1,7 @@
 # Product References
 
+本文件描述 `commerce_agent` 下商品工具的精确工具名、入参与返回结构。
+
 ## search_products
 
 适用场景：

@@ -1,5 +1,7 @@
 # After Sale References
 
+本文件描述 `commerce_agent` 下售后工具的精确工具名、入参与返回结构。
+
 ## open_user_after_sale_list
 
 适用场景：

@@ -8,15 +8,33 @@ description: 客户端 commerce 节点工具总目录，覆盖商品、订单与
 ## 使用原则
 
 1. 这个 skill 是 `commerce_agent` 的总目录，先用它确定应该查订单、商品还是售后。
-2. 需要精确字段、嵌套结构、动作工具参数或返回值解释时，再读取 `references/ORDER.md`、`references/PRODUCT.md`、
+2. 默认只有基础工具 `list_loadable_tools`、`load_tools` 可直接使用；业务工具必须先通过 `load_tools` 加载。
+3. 如果不确定精确工具名，先调用 `list_loadable_tools` 查看完整工具目录。
+4. `load_tools` 支持一次同时加载多个工具；如果一个问题要同时查订单和售后，就把多个工具名一起放进 `tool_keys`。
+5. `load_tools` 是你自己的内部加载步骤，不需要等待用户确认。
+6. 需要精确字段、嵌套结构、动作工具参数或返回值解释时，再读取 `references/ORDER.md`、`references/PRODUCT.md`、
    `references/AFTER_SALE.md`。
-3. Python 工具最终返回给模型的是业务 `data`，不是 Java 原始 `AjaxResult` 外层壳，所以不要期待 `code`、`message`、`timestamp`
+7. Python 工具最终返回给模型的是业务 `data`，不是 Java 原始 `AjaxResult` 外层壳，所以不要期待 `code`、`message`、`timestamp`
    这些外层字段。
-4. `open_user_order_list` 和 `open_user_after_sale_list` 这类动作工具返回的是一段给用户看的确认文案，同时会向前端下发页面跳转动作。
-5. 商品搜索类工具返回分页结构，通常包含 `total`、`pageNum`、`pageSize`、`rows`。
-6. 订单详情、物流、售后详情、资格校验这类工具返回单个对象，不带分页壳。
+8. `open_user_order_list` 和 `open_user_after_sale_list` 这类动作工具返回的是一段给用户看的确认文案，同时会向前端下发页面跳转动作。
+9. 商品搜索类工具返回分页结构，通常包含 `total`、`pageNum`、`pageSize`、`rows`。
+10. 订单详情、物流、售后详情、资格校验这类工具返回单个对象，不带分页壳。
+
+## 基础工具
+
+工具：
+
+- `list_loadable_tools`
+- `load_tools`
+
+能拿到什么：
+
+- 当前可加载的精确工具名目录，并按 `order / product / after_sale` 分组
+- 通过一次调用同时加载多个业务工具，供当前 `commerce_agent` 后续继续调用
 
 ## 订单与履约工具
+
+这些工具统一归属 `commerce_agent`，默认不可见，需要先通过 `load_tools` 加载。
 
 工具：
 
@@ -40,6 +58,8 @@ description: 客户端 commerce 节点工具总目录，覆盖商品、订单与
 
 ## 商品与说明书工具
 
+这些工具统一归属 `commerce_agent`，默认不可见，需要先通过 `load_tools` 加载。
+
 工具：
 
 - `search_products`
@@ -57,6 +77,8 @@ description: 客户端 commerce 节点工具总目录，覆盖商品、订单与
 - [references/PRODUCT.md](references/PRODUCT.md)
 
 ## 售后与资格工具
+
+这些工具统一归属 `commerce_agent`，默认不可见，需要先通过 `load_tools` 加载。
 
 工具：
 
