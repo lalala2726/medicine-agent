@@ -19,6 +19,7 @@ from app.agent.client.domain.diagnosis.tools.schemas import (
     FollowupSymptomCandidate,
     SymptomCandidate,
 )
+from app.core.agent.agent_tool_events import tool_call_status
 from app.core.database.neo4j.client import get_neo4j_client
 from app.utils.list_utils import TextListUtils
 
@@ -363,6 +364,12 @@ class QueryFollowupSymptomCandidatesRequest(BaseModel):
             "调用时机：用户给的是口语化症状，且你需要先把自然语言症状映射成图谱标准症状时。"
     ),
 )
+@tool_call_status(
+    tool_name="症状归类检索",
+    start_message="正在查询医药数据库，核对症状归类",
+    error_message="症状归类检索失败",
+    timely_message="症状归类仍在处理中",
+)
 def search_symptom_candidates(
         keywords: list[str],
         limit: int = DEFAULT_GRAPH_QUERY_LIMIT,
@@ -410,6 +417,12 @@ def search_symptom_candidates(
             "第一轮候选疾病建议直接查询前 5 个。"
             "调用时机：已经把用户口语症状映射成标准症状后，用于生成候选疾病池。"
     ),
+)
+@tool_call_status(
+    tool_name="候选疾病检索",
+    start_message="正在查询医药数据库，缩小可能范围",
+    error_message="候选疾病检索失败",
+    timely_message="候选疾病检索仍在处理中",
 )
 def query_disease_candidates_by_symptoms(
         symptoms: list[str],
@@ -460,6 +473,12 @@ def query_disease_candidates_by_symptoms(
             "如果你需要比较多个候选疾病，禁止重复多次调用本工具，必须优先使用“批量查询疾病详情快照”。"
     ),
 )
+@tool_call_status(
+    tool_name="单个疾病详情查询",
+    start_message="正在查询相关疾病资料",
+    error_message="疾病详情查询失败",
+    timely_message="疾病详情仍在处理中",
+)
 def query_disease_detail(disease_name: str) -> DiseaseDetail | None:
     """查询疾病详情快照。
 
@@ -496,6 +515,12 @@ def query_disease_detail(disease_name: str) -> DiseaseDetail | None:
             "如果需要比较多个候选疾病，禁止逐个调用单疾病详情工具，必须优先使用本工具一次性查询。"
     ),
 )
+@tool_call_status(
+    tool_name="候选疾病批量详情查询",
+    start_message="正在批量核对几种可能情况的详细资料",
+    error_message="批量疾病详情查询失败",
+    timely_message="候选疾病详情仍在处理中",
+)
 def query_disease_details(disease_names: list[str]) -> list[DiseaseDetail]:
     """批量查询多个候选疾病的详情快照。
 
@@ -531,6 +556,12 @@ def query_disease_details(disease_names: list[str]) -> list[DiseaseDetail]:
             "这个工具是为了继续提问缩小范围，不是为了直接给出诊断。"
             "调用时机：已有前 5 个左右候选疾病，但当前还不能稳定判断时，用它找最能区分这些候选疾病的症状。"
     ),
+)
+@tool_call_status(
+    tool_name="差异症状分析",
+    start_message="正在分析哪些症状最有区分度",
+    error_message="差异症状分析失败",
+    timely_message="差异症状分析仍在处理中",
 )
 def query_followup_symptom_candidates(
         candidate_diseases: list[str],

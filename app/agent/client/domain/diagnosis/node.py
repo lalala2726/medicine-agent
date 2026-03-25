@@ -22,6 +22,7 @@ from app.agent.client.domain.diagnosis.tools.cache import (
 from app.agent.client.state import AgentState, ExecutionTraceState
 from app.core.agent.agent_event_bus import emit_answer_delta, emit_thinking_delta
 from app.core.agent.agent_runtime import agent_stream
+from app.core.agent.agent_tool_events import build_tool_status_middleware
 from app.core.agent.agent_tool_trace import record_agent_trace
 from app.core.agent.base_prompt_middleware import BasePromptMiddleware
 from app.core.config_sync import AgentChatModelSlot, create_agent_chat_llm
@@ -74,6 +75,7 @@ def diagnosis_agent(state: AgentState) -> dict[str, Any]:
         ),
         middleware=[
             BasePromptMiddleware(),
+            build_tool_status_middleware(),
             ToolCallLimitMiddleware(thread_limit=20, run_limit=20),
         ],
     )

@@ -6,6 +6,7 @@ from langchain_core.tools import tool
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.agent.client.domain.tools.card_tools import build_card_response
+from app.core.agent.agent_tool_events import tool_call_status
 from app.core.agent.agent_event_bus import enqueue_final_sse_response
 from app.schemas.sse_response import Card
 from app.utils.list_utils import TextListUtils
@@ -137,6 +138,12 @@ def _build_questionnaire_card_data(
             "每个元素都要包含 question 和 options，question 是自然语言问题，"
             "options 是 2 到 5 个简短中文选项。"
     ),
+)
+@tool_call_status(
+    tool_name="发送诊断问卷卡",
+    start_message="正在整理关键问题并生成问诊卡片",
+    error_message="诊断问卷卡发送失败",
+    timely_message="诊断问卷卡仍在处理中",
 )
 def send_consultation_questionnaire_card(
         questions: list[dict[str, Any]] | list[ConsultationQuestionnaireQuestionItem],
