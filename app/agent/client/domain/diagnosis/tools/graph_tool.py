@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, LiteralString
+from typing import Any, LiteralString, TypeVar
 
 from langchain_core.prompts import SystemMessagePromptTemplate
 from langchain_core.tools import tool
@@ -9,6 +9,12 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.config_sync import AgentChatModelSlot, create_agent_chat_llm
 from app.core.database.neo4j.client import get_neo4j_client
+from app.agent.client.domain.diagnosis.tools.schemas import (
+    DiseaseCandidate,
+    DiseaseDetail,
+    FollowupSymptomCandidate,
+    SymptomCandidate,
+)
 from app.utils.list_utils import TextListUtils
 
 # 医学图谱工具固定查询的业务数据库名称。
@@ -186,6 +192,8 @@ QUERY_FOLLOWUP_SYMPTOM_CANDIDATES_CYPHER: LiteralString = """
     LIMIT toInteger($limit)
 """
 
+DiagnosisToolSchema = TypeVar("DiagnosisToolSchema", bound=BaseModel)
+
 
 def _normalize_required_text(value: str, *, field_name: str) -> str:
     """规范化必填字符串字段。
@@ -205,6 +213,44 @@ def _normalize_required_text(value: str, *, field_name: str) -> str:
     if not normalized_value:
         raise ValueError(f"{field_name} 不能为空")
     return normalized_value
+
+
+def _parse_graph_result_list(
+        raw_rows: list[dict[str, Any]],
+        *,
+        schema_type: type[DiagnosisToolSchema],
+) -> list[DiagnosisToolSchema]:
+    """将图谱查询结果列表转换为实体列表。
+
+    Args:
+        raw_rows: Neo4j 查询返回的原始字典列表。
+        schema_type: 目标实体类型。
+
+    Returns:
+        list[DiagnosisToolSchema]: 转换后的实体列表。
+    """
+
+    return [schema_type.model_validate(raw_row) for raw_row in raw_rows]
+
+
+def _parse_graph_result_one(
+        raw_row: dict[str, Any] | None,
+        *,
+        schema_type: type[DiagnosisToolSchema],
+) -> DiagnosisToolSchema | None:
+    """将单条图谱查询结果转换为实体。
+
+    Args:
+        raw_row: Neo4j 查询返回的原始字典。
+        schema_type: 目标实体类型。
+
+    Returns:
+        DiagnosisToolSchema | None: 转换后的实体；未命中时返回 ``None``。
+    """
+
+    if raw_row is None:
+        return None
+    return schema_type.model_validate(raw_row)
 
 
 def _rewrite_graph_keywords(keywords: list[str]) -> list[str]:
@@ -338,7 +384,7 @@ class QueryFollowupSymptomCandidatesRequest(BaseModel):
 def search_symptom_candidates(
         keywords: list[str],
         limit: int = DEFAULT_GRAPH_QUERY_LIMIT,
-) -> list[dict[str, Any]]:
+) -> list[SymptomCandidate]:
     """检索标准症状候选。
 
     Args:
@@ -346,11 +392,11 @@ def search_symptom_candidates(
         limit: 最多返回的候选症状数量。
 
     Returns:
-        list[dict[str, Any]]: 标准症状候选列表。
+        list[SymptomCandidate]: 标准症状候选实体列表。
     """
 
     normalized_keywords = _rewrite_graph_keywords(keywords)
-    return get_neo4j_client().query_all(
+    raw_rows = get_neo4j_client().query_all(
         SEARCH_SYMPTOM_CANDIDATES_CYPHER,
         parameters={
             "keywords": normalized_keywords,
@@ -358,6 +404,7 @@ def search_symptom_candidates(
         },
         database=MEDICAL_GRAPH_DATABASE,
     )
+    return _parse_graph_result_list(raw_rows, schema_type=SymptomCandidate)
 
 
 @tool(
@@ -373,7 +420,7 @@ def search_symptom_candidates(
 def query_disease_candidates_by_symptoms(
         symptoms: list[str],
         limit: int = DEFAULT_DISEASE_CANDIDATE_LIMIT,
-) -> list[dict[str, Any]]:
+) -> list[DiseaseCandidate]:
     """按标准症状查询候选疾病。
 
     Args:
@@ -381,14 +428,14 @@ def query_disease_candidates_by_symptoms(
         limit: 最多返回的候选疾病数量。
 
     Returns:
-        list[dict[str, Any]]: 候选疾病列表，包含疾病名、命中症状和得分。
+        list[DiseaseCandidate]: 候选疾病实体列表。
     """
 
     normalized_symptoms = TextListUtils.normalize_required(
         symptoms,
         field_name="symptoms",
     )
-    return get_neo4j_client().query_all(
+    raw_rows = get_neo4j_client().query_all(
         QUERY_DISEASE_CANDIDATES_BY_SYMPTOMS_CYPHER,
         parameters={
             "symptoms": normalized_symptoms,
@@ -396,6 +443,7 @@ def query_disease_candidates_by_symptoms(
         },
         database=MEDICAL_GRAPH_DATABASE,
     )
+    return _parse_graph_result_list(raw_rows, schema_type=DiseaseCandidate)
 
 
 @tool(
@@ -406,25 +454,26 @@ def query_disease_candidates_by_symptoms(
             "如果你需要比较多个候选疾病，禁止重复多次调用本工具，必须优先使用“批量查询疾病详情快照”。"
     ),
 )
-def query_disease_detail(disease_name: str) -> dict[str, Any] | None:
+def query_disease_detail(disease_name: str) -> DiseaseDetail | None:
     """查询疾病详情快照。
 
     Args:
         disease_name: 需要查询的疾病名称。
 
     Returns:
-        dict[str, Any] | None: 疾病详情字典；未命中时返回 `None`。
+        DiseaseDetail | None: 疾病详情实体；未命中时返回 `None`。
     """
 
     normalized_disease_name = _normalize_required_text(
         disease_name,
         field_name="disease_name",
     )
-    return get_neo4j_client().query_one(
+    raw_row = get_neo4j_client().query_one(
         QUERY_DISEASE_DETAIL_CYPHER,
         parameters={"disease_name": normalized_disease_name},
         database=MEDICAL_GRAPH_DATABASE,
     )
+    return _parse_graph_result_one(raw_row, schema_type=DiseaseDetail)
 
 
 @tool(
@@ -435,25 +484,26 @@ def query_disease_detail(disease_name: str) -> dict[str, Any] | None:
             "如果需要比较多个候选疾病，禁止逐个调用单疾病详情工具，必须优先使用本工具一次性查询。"
     ),
 )
-def query_disease_details(disease_names: list[str]) -> list[dict[str, Any]]:
+def query_disease_details(disease_names: list[str]) -> list[DiseaseDetail]:
     """批量查询多个候选疾病的详情快照。
 
     Args:
         disease_names: 需要批量查询的疾病名称列表。
 
     Returns:
-        list[dict[str, Any]]: 按输入顺序返回的疾病详情列表。
+        list[DiseaseDetail]: 按输入顺序返回的疾病详情实体列表。
     """
 
     normalized_disease_names = TextListUtils.normalize_required(
         disease_names,
         field_name="disease_names",
     )
-    return get_neo4j_client().query_all(
+    raw_rows = get_neo4j_client().query_all(
         QUERY_DISEASE_DETAILS_CYPHER,
         parameters={"disease_names": normalized_disease_names},
         database=MEDICAL_GRAPH_DATABASE,
     )
+    return _parse_graph_result_list(raw_rows, schema_type=DiseaseDetail)
 
 
 @tool(
@@ -468,7 +518,7 @@ def query_followup_symptom_candidates(
         candidate_diseases: list[str],
         known_symptoms: list[str] | None = None,
         limit: int = DEFAULT_GRAPH_QUERY_LIMIT,
-) -> list[dict[str, Any]]:
+) -> list[FollowupSymptomCandidate]:
     """查询下一轮追问症状候选。
 
     Args:
@@ -477,7 +527,7 @@ def query_followup_symptom_candidates(
         limit: 最多返回的追问症状数量。
 
     Returns:
-        list[dict[str, Any]]: 追问症状候选列表，包含症状名、关联候选疾病和疾病覆盖数。
+        list[FollowupSymptomCandidate]: 追问症状候选实体列表。
     """
 
     normalized_candidate_diseases = TextListUtils.normalize_required(
@@ -485,7 +535,7 @@ def query_followup_symptom_candidates(
         field_name="candidate_diseases",
     )
     normalized_known_symptoms = TextListUtils.normalize(known_symptoms)
-    return get_neo4j_client().query_all(
+    raw_rows = get_neo4j_client().query_all(
         QUERY_FOLLOWUP_SYMPTOM_CANDIDATES_CYPHER,
         parameters={
             "candidate_diseases": normalized_candidate_diseases,
@@ -494,6 +544,7 @@ def query_followup_symptom_candidates(
         },
         database=MEDICAL_GRAPH_DATABASE,
     )
+    return _parse_graph_result_list(raw_rows, schema_type=FollowupSymptomCandidate)
 
 
 __all__ = [
@@ -512,6 +563,10 @@ __all__ = [
     "QueryFollowupSymptomCandidatesRequest",
     "SEARCH_SYMPTOM_CANDIDATES_CYPHER",
     "SearchSymptomCandidatesRequest",
+    "DiseaseCandidate",
+    "DiseaseDetail",
+    "FollowupSymptomCandidate",
+    "SymptomCandidate",
     "query_disease_candidates_by_symptoms",
     "query_disease_detail",
     "query_disease_details",
