@@ -5,6 +5,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 from time import sleep, time
+from typing import cast
 
 from loguru import logger
 from pymilvus import exceptions as milvus_exceptions
@@ -111,6 +112,18 @@ def create_embedding_client(*, embedding_model: str, embedding_dim: int):
         )
     except Exception as exc:
         raise ServiceException(message=f"初始化向量模型失败: {exc}") from exc
+
+
+def _resolve_file_kind_text(*, file_kind: FileKind) -> str:
+    """将文件类型枚举转换为字符串值。
+
+    Args:
+        file_kind: 文件类型枚举。
+
+    Returns:
+        str: 文件类型对应的字符串值。
+    """
+    return cast(str, file_kind.value)
 
 
 def embed_single_text(*, content: str, embedding_client) -> list[float]:
@@ -390,12 +403,13 @@ def import_single_file(
             source_url=url,
         )
         parsed_text = parsed_document.text or ""
+        parsed_file_kind_text = _resolve_file_kind_text(file_kind=parsed_document.file_kind)
         mq_log(
             "import",
             ImportStage.PARSE_DONE,
             task_uuid,
             filename=filename,
-            file_kind=parsed_document.file_kind.value,
+            file_kind=parsed_file_kind_text,
             text_length=len(parsed_text),
         )
 
@@ -475,7 +489,7 @@ def import_single_file(
             filename=filename,
             file_size=file_size,
             source_extension=source_extension,
-            file_kind=parsed_document.file_kind.value,
+            file_kind=parsed_file_kind_text,
             mime_type=parsed_document.mime_type,
             text_length=len(parsed_text),
             chunk_count=len(chunks),
