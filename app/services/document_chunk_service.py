@@ -35,10 +35,13 @@ from app.utils.token_utills import TokenUtils
 # 单切片向量化允许的最大 token 数，超限直接拒绝。
 EMBED_MAX_TOKEN_SIZE = 8192
 
+# Embedding 服务单次批量向量化允许的最大文本条数。
+EMBED_MAX_BATCH_SIZE = 10
+
 # 文档导入默认切片和入库参数。
 DEFAULT_CHUNK_SIZE = 500
 DEFAULT_CHUNK_OVERLAP = 0
-DEFAULT_VECTOR_BATCH_SIZE = 20
+DEFAULT_VECTOR_BATCH_SIZE = EMBED_MAX_BATCH_SIZE
 DEFAULT_INSERT_VERIFY_MAX_RETRIES = 5
 DEFAULT_INSERT_VERIFY_INTERVAL_SECONDS = 0.2
 
@@ -199,7 +202,7 @@ def _resolve_vector_batch_size() -> int:
         int: 向量处理批次大小。
 
     Raises:
-        ServiceException: 配置值不是正整数时抛出。
+        ServiceException: 配置值不是正整数或超过 embedding 服务限制时抛出。
     """
     raw_value = (os.getenv("KNOWLEDGE_VECTOR_BATCH_SIZE") or "").strip()
     if not raw_value:
@@ -215,6 +218,14 @@ def _resolve_vector_batch_size() -> int:
         raise ServiceException(
             code=ResponseCode.INTERNAL_ERROR,
             message="KNOWLEDGE_VECTOR_BATCH_SIZE 必须大于 0",
+        )
+    if parsed > EMBED_MAX_BATCH_SIZE:
+        raise ServiceException(
+            code=ResponseCode.INTERNAL_ERROR,
+            message=(
+                "KNOWLEDGE_VECTOR_BATCH_SIZE 超出 embedding 服务单批上限，"
+                f"最大允许值为 {EMBED_MAX_BATCH_SIZE}"
+            ),
         )
     return parsed
 
