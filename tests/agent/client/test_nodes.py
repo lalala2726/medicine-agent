@@ -5,6 +5,7 @@ from langchain_core.messages import HumanMessage
 from app.agent.client import workflow as workflow_module
 from app.agent.client.domain.after_sale import node as after_sale_module
 from app.agent.client.domain.chat import chat_node as chat_module
+from app.agent.client.domain.consultation import node as consultation_module
 from app.agent.client.domain.order import node as order_module
 from app.agent.client.domain.product import node as product_module
 from app.agent.client.domain.router import gateway_node as gateway_module
@@ -24,6 +25,14 @@ def test_route_from_gateway_returns_product_for_valid_target():
     )
 
     assert result == "product_agent"
+
+
+def test_route_from_gateway_returns_consultation_for_valid_target():
+    result = workflow_module._route_from_gateway(
+        {"routing": {"route_targets": ["consultation_agent"]}}
+    )
+
+    assert result == "consultation_agent"
 
 
 def test_route_from_gateway_returns_after_sale_for_valid_target():
@@ -131,6 +140,50 @@ def test_gateway_router_resolves_product_route(monkeypatch):
     assert result["routing"] == {
         "route_targets": ["product_agent"],
         "task_difficulty": "normal",
+    }
+
+
+def test_gateway_router_resolves_consultation_route(monkeypatch):
+    monkeypatch.setattr(
+        gateway_module,
+        "create_agent_chat_llm",
+        lambda **_kwargs: SimpleNamespace(model_name="mock-route-model"),
+    )
+    monkeypatch.setattr(gateway_module, "create_agent", lambda **_kwargs: object())
+    monkeypatch.setattr(
+        gateway_module,
+        "agent_invoke",
+        lambda _agent, _messages: SimpleNamespace(
+            payload={
+                "messages": [
+                    SimpleNamespace(
+                        content='{"route_targets":["consultation_agent"],"task_difficulty":"high"}'
+                    )
+                ]
+            },
+            content="",
+        ),
+    )
+    monkeypatch.setattr(
+        gateway_module,
+        "record_agent_trace",
+        lambda **_kwargs: {
+            "text": '{"route_targets":["consultation_agent"],"task_difficulty":"high"}',
+            "is_usage_complete": True,
+            "usage": None,
+        },
+    )
+
+    result = gateway_module.gateway_router(
+        {
+            "history_messages": [HumanMessage(content="我是不是感冒了")],
+            "execution_traces": [],
+        }
+    )
+
+    assert result["routing"] == {
+        "route_targets": ["consultation_agent"],
+        "task_difficulty": "high",
     }
 
 

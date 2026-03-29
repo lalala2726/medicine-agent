@@ -5,6 +5,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 from time import sleep, time
+from typing import cast
 
 from loguru import logger
 from pymilvus import exceptions as milvus_exceptions
@@ -35,10 +36,13 @@ from app.utils.token_utills import TokenUtils
 # 单切片向量化允许的最大 token 数，超限直接拒绝。
 EMBED_MAX_TOKEN_SIZE = 8192
 
+# Embedding 服务单次批量向量化允许的最大文本条数。
+EMBED_MAX_BATCH_SIZE = 10
+
 # 文档导入默认切片和入库参数。
 DEFAULT_CHUNK_SIZE = 500
 DEFAULT_CHUNK_OVERLAP = 0
-DEFAULT_VECTOR_BATCH_SIZE = 20
+DEFAULT_VECTOR_BATCH_SIZE = EMBED_MAX_BATCH_SIZE
 DEFAULT_INSERT_VERIFY_MAX_RETRIES = 5
 DEFAULT_INSERT_VERIFY_INTERVAL_SECONDS = 0.2
 
@@ -108,6 +112,18 @@ def create_embedding_client(*, embedding_model: str, embedding_dim: int):
         )
     except Exception as exc:
         raise ServiceException(message=f"初始化向量模型失败: {exc}") from exc
+
+
+def _resolve_file_kind_text(*, file_kind: FileKind) -> str:
+    """将文件类型枚举转换为字符串值。
+
+    Args:
+        file_kind: 文件类型枚举。
+
+    Returns:
+        str: 文件类型对应的字符串值。
+    """
+    return cast(str, file_kind.value)
 
 
 def embed_single_text(*, content: str, embedding_client) -> list[float]:
@@ -199,7 +215,7 @@ def _resolve_vector_batch_size() -> int:
         int: 向量处理批次大小。
 
     Raises:
-        ServiceException: 配置值不是正整数时抛出。
+        ServiceException: 配置值不是正整数或超过 embedding 服务限制时抛出。
     """
     raw_value = (os.getenv("KNOWLEDGE_VECTOR_BATCH_SIZE") or "").strip()
     if not raw_value:
@@ -215,6 +231,14 @@ def _resolve_vector_batch_size() -> int:
         raise ServiceException(
             code=ResponseCode.INTERNAL_ERROR,
             message="KNOWLEDGE_VECTOR_BATCH_SIZE 必须大于 0",
+        )
+    if parsed > EMBED_MAX_BATCH_SIZE:
+        raise ServiceException(
+            code=ResponseCode.INTERNAL_ERROR,
+            message=(
+                "KNOWLEDGE_VECTOR_BATCH_SIZE 超出 embedding 服务单批上限，"
+                f"最大允许值为 {EMBED_MAX_BATCH_SIZE}"
+            ),
         )
     return parsed
 
@@ -379,12 +403,13 @@ def import_single_file(
             source_url=url,
         )
         parsed_text = parsed_document.text or ""
+        parsed_file_kind_text = _resolve_file_kind_text(file_kind=parsed_document.file_kind)
         mq_log(
             "import",
             ImportStage.PARSE_DONE,
             task_uuid,
             filename=filename,
-            file_kind=parsed_document.file_kind.value,
+            file_kind=parsed_file_kind_text,
             text_length=len(parsed_text),
         )
 
@@ -464,7 +489,7 @@ def import_single_file(
             filename=filename,
             file_size=file_size,
             source_extension=source_extension,
-            file_kind=parsed_document.file_kind.value,
+            file_kind=parsed_file_kind_text,
             mime_type=parsed_document.mime_type,
             text_length=len(parsed_text),
             chunk_count=len(chunks),

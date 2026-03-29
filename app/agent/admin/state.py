@@ -6,6 +6,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.graph import MessagesState
 
 ChatHistoryMessage: TypeAlias = HumanMessage | AIMessage | SystemMessage
+"""对话历史消息类型别名。"""
 
 
 class TokenCounterState(TypedDict):
@@ -35,7 +36,7 @@ class ExecutionTraceState(TypedDict, total=False):
 
     # 节点执行顺序（从 1 开始）。
     sequence: int
-    # 节点名称（如 gateway_router/chat_agent/order_agent/adaptive_agent）。
+    # 节点名称（当前 admin 工作流固定为 `admin_agent`）。
     node_name: str
     # 节点调用的模型名称。
     model_name: str
@@ -49,7 +50,7 @@ class ExecutionTraceState(TypedDict, total=False):
     llm_token_usage: TokenCounterState | None
     # 节点下发生的工具调用轨迹。
     tool_calls: list[ToolCallTraceState]
-    # 节点扩展上下文（路由结果等）。
+    # 节点扩展上下文（例如最终已加载工具数组）。
     node_context: dict[str, Any] | None
 
 
@@ -83,24 +84,26 @@ class TokenUsageState(TypedDict):
     node_breakdown: list[NodeTokenBreakdownState]
 
 
-class GatewayRoutingState(TypedDict):
-    """Gateway 路由结果结构。"""
-
-    # 目标节点数组。
-    route_targets: list[str]
-    # 任务难度。
-    task_difficulty: str
-
-
 class AgentState(MessagesState, total=False):
-    # Gateway 结构化路由结果。
-    routing: GatewayRoutingState
+    """
+    管理端单 Agent 工作流状态。
 
-    # 节点间共享结构化上下文。
-    context: str
+    字段说明：
+    1. `messages` 由 `MessagesState` 提供，兼容 LangGraph 内部消息流；
+    2. `conversation_uuid` 用于会话级工具缓存隔离；
+    3. `history_messages` 存储外层会话历史；
+    4. `loaded_tool_keys` 用于记录当前一次运行中已加载的业务工具；
+    5. `execution_traces/token_usage/result` 用于外层持久化与流式落库。
+    """
+
+    # 当前会话 UUID。
+    conversation_uuid: str
 
     # 对话历史消息。
     history_messages: list[ChatHistoryMessage]
+
+    # 当前一次运行中已加载的业务工具 key 数组。
+    loaded_tool_keys: list[str]
 
     # 节点执行追踪（仅在 workflow 运行过程中暂存，流结束后统一落库）。
     execution_traces: list[ExecutionTraceState]
@@ -108,5 +111,5 @@ class AgentState(MessagesState, total=False):
     # 消息级 token 汇总（与 execution_traces 分离，便于直接落库）。
     token_usage: TokenUsageState | None
 
-    # 节点输出
+    # 节点最终输出文本。
     result: str

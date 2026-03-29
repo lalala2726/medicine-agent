@@ -68,13 +68,7 @@ from app.utils.prompt_utils import load_prompt
 ADMIN_WORKFLOW_NAME = "admin_assistant_graph"
 ADMIN_WORKFLOW = build_graph()
 STREAM_OUTPUT_NODES = {
-    "chat_agent",
-    "order_agent",
-    "product_agent",
-    "after_sale_agent",
-    "user_agent",
-    "analytics_agent",
-    "adaptive_agent",
+    "admin_agent",
 }
 EMPTY_ASSISTANT_ANSWER_FALLBACK = "服务暂时不可用，请稍后重试。"
 RUN_EVENT_STORE = AssistantRunEventStore()
@@ -82,6 +76,7 @@ RUN_EVENT_STORE = AssistantRunEventStore()
 
 STREAMING_STATUS_VISIBLE_SET = {
     MessageStatus.STREAMING,
+    MessageStatus.WAITING_INPUT,
     MessageStatus.SUCCESS,
     MessageStatus.CANCELLED,
     MessageStatus.ERROR,
@@ -238,6 +233,7 @@ def _build_stream_config() -> dict | None:
 def _build_initial_state(
         question: str,
         *,
+        conversation_uuid: str,
         history_messages: list[ChatHistoryMessage] | None = None,
 ) -> dict[str, Any]:
     """
@@ -247,21 +243,19 @@ def _build_initial_state(
 
     Args:
         question: 当前用户问题文本；当前实现仅用于接口语义占位，不参与状态构造。
+        conversation_uuid: 当前会话 UUID，用于会话级工具缓存隔离。
         history_messages: 会话历史消息列表；为空时默认空列表。
     Returns:
-        dict[str, Any]: LangGraph 初始状态字典，包含路由、历史与消息等字段。
+        dict[str, Any]: LangGraph 初始状态字典，包含会话、历史、已加载工具与消息等字段。
     """
 
     _ = question
     base_history = list(history_messages or [])
 
     return {
-        "routing": {
-            "route_targets": [],
-            "task_difficulty": "normal",
-        },
-        "context": "",
+        "conversation_uuid": str(conversation_uuid).strip(),
         "history_messages": base_history,
+        "loaded_tool_keys": [],
         "execution_traces": [],
         "token_usage": None,
         "result": "",
@@ -274,7 +268,7 @@ def _should_stream_token(stream_node: str | None, latest_state: dict[str, Any]) 
     """
     判定某个节点 token 是否应该被推送给前端。
 
-    当前规则允许所有业务输出节点输出 token（gateway 节点除外）。
+    当前规则仅允许 `admin_agent` 节点输出 token。
     """
 
     _ = latest_state
@@ -530,6 +524,8 @@ def _resolve_message_status_from_finish_status(
 
     if finish_status == AssistantRunStatus.CANCELLED:
         return MessageStatus.CANCELLED
+    if finish_status == AssistantRunStatus.WAITING_INPUT:
+        return MessageStatus.WAITING_INPUT
     if finish_status == AssistantRunStatus.ERROR or has_error:
         return MessageStatus.ERROR
     return MessageStatus.SUCCESS
@@ -939,6 +935,65 @@ def _build_snapshot_attach_events(
     return tuple(events)
 
 
+def _should_replay_terminal_event_after_snapshot(
+        *,
+        response: AssistantResponse,
+) -> bool:
+    """
+    判断终态 attach 场景下，某条历史事件是否需要在 snapshot 之后再次补发。
+
+    设计原因：
+    1. snapshot 已经用 replace 语义补齐了最新 answer/thinking 文本；
+    2. 若再完整回放历史 stream，会导致文本重复；
+    3. 但卡片、notice 以及最终 `is_end=true` 结束包仍需要补发，保证刷新后前端状态完整。
+
+    Args:
+        response: Redis Stream 中读取到的原始事件。
+
+    Returns:
+        bool: `True` 表示该事件需要在 snapshot 之后补发；否则跳过。
+    """
+
+    if response.is_end:
+        return True
+    return response.type not in {
+        MessageType.ANSWER,
+        MessageType.THINKING,
+    }
+
+
+def _build_terminal_attach_end_event(
+        *,
+        finish_status: AssistantRunStatus,
+) -> AssistantResponse:
+    """
+    为终态 attach 场景构造兜底结束包。
+
+    触发时机：
+    - Redis snapshot 已存在；
+    - 但事件流中未读到终态 `is_end=true` 包；
+    - 需要主动补一个结束包，避免刷新后的前端一直停留在未结束状态。
+
+    Args:
+        finish_status: 当前运行终态。
+
+    Returns:
+        AssistantResponse: 标准 answer 结束包。
+    """
+
+    return build_answer_response(
+        "",
+        True,
+        state=finish_status.value,
+        message=(
+            "已停止生成"
+            if finish_status == AssistantRunStatus.CANCELLED
+            else None
+        ),
+        meta={"run_status": finish_status.value},
+    )
+
+
 async def _flush_stream_snapshot_if_due(
         *,
         conversation_id: str,
@@ -1127,6 +1182,7 @@ def _build_run_stream_config(
         workflow=workflow,
         build_initial_state=lambda q: _build_initial_state(
             q,
+            conversation_uuid=context.conversation_uuid,
             history_messages=context.history_messages,
         ),
         extract_final_content=lambda state: str(state.get("result") or ""),
@@ -1180,6 +1236,30 @@ def _build_attach_streaming_response(
                         snapshot=snapshot,
                 ):
                     yield serialize_sse(snapshot_event)
+                if snapshot.status != AssistantRunStatus.RUNNING:
+                    terminal_events = await asyncio.to_thread(
+                        RUN_EVENT_STORE.read_events,
+                        conversation_uuid=conversation_uuid,
+                        last_event_id="0-0",
+                        block_ms=1,
+                    )
+                    emitted_end_event = False
+                    for event in terminal_events:
+                        if not _should_replay_terminal_event_after_snapshot(
+                                response=event.payload,
+                        ):
+                            continue
+                        yield serialize_sse(event.payload)
+                        if event.payload.is_end:
+                            emitted_end_event = True
+                            return
+                    if not emitted_end_event:
+                        yield serialize_sse(
+                            _build_terminal_attach_end_event(
+                                finish_status=snapshot.status,
+                            )
+                        )
+                        return
                 if snapshot.last_event_id is not None:
                     current_event_id = snapshot.last_event_id
 

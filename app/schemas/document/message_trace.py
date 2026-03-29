@@ -72,7 +72,7 @@ class WorkflowTraceSummary(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     workflow_name: str = Field(default="admin_assistant_graph", min_length=1, description="工作流名称")
-    workflow_status: Literal["success", "error", "cancelled"] = Field(
+    workflow_status: Literal["success", "error", "cancelled", "waiting_input"] = Field(
         default="success",
         description="工作流执行状态",
     )

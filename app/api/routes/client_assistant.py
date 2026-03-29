@@ -2,7 +2,7 @@ from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, Header, Path, Query, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.core.security.rate_limit import RateLimitPreset, RateLimitRule, rate_limit
 from app.schemas.assistant_run import (
@@ -81,7 +81,7 @@ class ClientAssistantRequest(BaseModel):
     )
     card_action: ClientAssistantCardActionRequest | None = Field(
         default=None,
-        description="前端卡片点击事件，仅支持 click",
+        description="已废弃并忽略的前端卡片点击事件字段，当前后端会自动清理旧卡片。",
     )
 
     @field_validator("question")
@@ -99,13 +99,6 @@ class ClientAssistantRequest(BaseModel):
             return None
         normalized = value.strip()
         return normalized or None
-
-    @model_validator(mode="after")
-    def validate_card_action_dependencies(self) -> "ClientAssistantRequest":
-        if self.card_action is not None and self.conversation_uuid is None:
-            raise ValueError("携带 card_action 时必须传 conversation_uuid")
-        return self
-
 
 class ConversationListRequest(BaseModel):
     """客户端助手会话列表请求参数。"""
@@ -202,11 +195,6 @@ async def assistant_submit(
         data=assistant_chat(
             question=request.question,
             conversation_uuid=request.conversation_uuid,
-            card_action=(
-                request.card_action.model_dump(mode="json")
-                if request.card_action is not None
-                else None
-            ),
         )
     )
 

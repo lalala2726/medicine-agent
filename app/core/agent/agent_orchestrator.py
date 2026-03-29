@@ -42,6 +42,7 @@ StreamEvent = tuple[str, Any]
 GraphEventPayload = tuple[str, Any]
 InitialEmittedEvent = AssistantResponse | dict[str, Any]
 OnAnswerCompletedCallback = Callable[..., None | Awaitable[None]]
+BuildInterruptResponsesCallback = Callable[[dict[str, Any]], list[AssistantResponse]]
 
 EVENT_EMITTED = "emitted"
 EVENT_GRAPH = "graph"
@@ -81,7 +82,7 @@ class AssistantStreamConfig:
     # 流式执行主体，决定事件从哪里产出。
     workflow: Any
     # 构造 workflow 初始状态：输入是问题字符串，输出是状态字典。
-    build_initial_state: Callable[[str], dict[str, Any]]
+    build_initial_state: Callable[[str], Any]
     # 当没有 token 输出时，从最终状态提取用户可见文本。
     extract_final_content: Callable[[dict[str, Any]], str]
     # token 级过滤器：控制哪些节点 token 可以流向前端。
@@ -89,7 +90,7 @@ class AssistantStreamConfig:
     # 生成 astream 的 config 参数；为 None 或返回 None 时不传。
     build_stream_config: Callable[[], dict | None] | None
     # 回退执行器：无 astream 时通过该函数同步执行 workflow。
-    invoke_sync: Callable[[dict[str, Any]], dict[str, Any]]
+    invoke_sync: Callable[[Any], dict[str, Any]]
     # 异常映射器：把内部异常转成统一错误文案。
     map_exception: Callable[[Exception], str]
     # 可选收尾回调：在流结束时回调完整 answer/thinking 文本、执行追踪、token 汇总与最终卡片。
@@ -119,6 +120,8 @@ class AssistantStreamConfig:
     is_cancel_requested: Callable[[], bool] | None = None
     # 取消轮询间隔，避免 attach/后台 run 在无新事件时无限阻塞。
     cancel_check_interval_ms: int = 200
+    # 可选中断响应构造器；当 graph values 中出现 `__interrupt__` 时，用于转换为前端响应。
+    build_interrupt_responses: BuildInterruptResponsesCallback | None = None
 
 
 @dataclass
@@ -140,6 +143,7 @@ class StreamRuntimeState:
     aggregated_thinking_parts: list[str] = field(default_factory=list)
     aggregated_thinking_text: str = ""
     active_tool_calls: int = 0
+    interrupt_cards: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -560,6 +564,86 @@ def _append_thinking_text(runtime_state: StreamRuntimeState, text: str) -> str:
     return delta_text
 
 
+def _append_interrupt_card(
+        runtime_state: StreamRuntimeState,
+        response: AssistantResponse,
+) -> None:
+    """
+    将即时发出的可持久化卡片写入运行态缓存。
+
+    Args:
+        runtime_state: 流式运行时状态。
+        response: 当前已标准化的卡片响应。
+    """
+
+    if response.type != MessageType.CARD or response.card is None:
+        return
+    meta = response.meta if isinstance(response.meta, dict) else {}
+    if meta.get("persist_card") is not True:
+        return
+    card_uuid = str(meta.get("card_uuid") or "").strip()
+    if not card_uuid:
+        return
+    if any(item["id"] == card_uuid for item in runtime_state.interrupt_cards):
+        return
+    runtime_state.interrupt_cards.append(
+        {
+            "id": card_uuid,
+            "type": response.card.type,
+            "data": dict(response.card.data),
+        }
+    )
+
+
+def _normalize_response_for_runtime(
+        *,
+        runtime_state: StreamRuntimeState,
+        response: AssistantResponse,
+) -> AssistantResponse | None:
+    """
+    统一处理 emitted/interrupt 生成的 AssistantResponse，并同步更新运行态缓存。
+
+    Args:
+        runtime_state: 流式运行时状态。
+        response: 原始响应对象。
+
+    Returns:
+        AssistantResponse | None: 归一化后的响应；无新增内容时返回 `None`。
+    """
+
+    normalized_response = response
+    if (
+            normalized_response.type == MessageType.ANSWER
+            and isinstance(normalized_response.content.text, str)
+            and normalized_response.content.text
+    ):
+        delta_text = _append_answer_text(runtime_state, normalized_response.content.text)
+        if not delta_text:
+            return None
+        runtime_state.has_streamed_output = True
+        normalized_response = normalized_response.model_copy(
+            update={
+                "content": normalized_response.content.model_copy(update={"text": delta_text}),
+            }
+        )
+    elif (
+            normalized_response.type == MessageType.THINKING
+            and isinstance(normalized_response.content.text, str)
+            and normalized_response.content.text
+    ):
+        delta_thinking = _append_thinking_text(runtime_state, normalized_response.content.text)
+        if not delta_thinking:
+            return None
+        normalized_response = normalized_response.model_copy(
+            update={
+                "content": normalized_response.content.model_copy(update={"text": delta_thinking}),
+            }
+        )
+
+    _append_interrupt_card(runtime_state, normalized_response)
+    return normalized_response
+
+
 def _update_tool_call_depth(runtime_state: StreamRuntimeState, payload: Any) -> None:
     """
     根据 emitted 的 function_call 事件维护工具调用深度计数。
@@ -700,38 +784,14 @@ def _process_stream_event(
         if emitted_response is None:
             return result
 
-        # 自定义 answer 事件也视作“已输出内容”，避免 done 后 fallback 重复输出。
-        if (
-                emitted_response.type == MessageType.ANSWER
-                and isinstance(emitted_response.content.text, str)
-                and emitted_response.content.text
-        ):
-            delta_text = _append_answer_text(runtime_state, emitted_response.content.text)
-            if delta_text:
-                runtime_state.has_streamed_output = True
-                emitted_response = emitted_response.model_copy(
-                    update={
-                        "content": emitted_response.content.model_copy(update={"text": delta_text}),
-                    }
-                )
-            else:
-                return result
-        elif (
-                emitted_response.type == MessageType.THINKING
-                and isinstance(emitted_response.content.text, str)
-                and emitted_response.content.text
-        ):
-            delta_thinking = _append_thinking_text(runtime_state, emitted_response.content.text)
-            if delta_thinking:
-                emitted_response = emitted_response.model_copy(
-                    update={
-                        "content": emitted_response.content.model_copy(update={"text": delta_thinking}),
-                    }
-                )
-            else:
-                return result
+        normalized_response = _normalize_response_for_runtime(
+            runtime_state=runtime_state,
+            response=emitted_response,
+        )
+        if normalized_response is None:
+            return result
 
-        result.rendered_responses.append(emitted_response)
+        result.rendered_responses.append(normalized_response)
         return result
 
     if event_type == EVENT_GRAPH:
@@ -931,6 +991,33 @@ def _extract_persistable_cards(
     return cards or None
 
 
+def _merge_persistable_cards(
+        emitted_cards: list[dict[str, Any]],
+        final_cards: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]] | None:
+    """
+    合并即时 emitted 卡片与流尾最终卡片，并按 card_uuid 去重。
+
+    Args:
+        emitted_cards: 即时发出的可持久化卡片列表。
+        final_cards: 流尾阶段提取出的可持久化卡片列表。
+
+    Returns:
+        list[dict[str, Any]] | None: 去重后的卡片列表；为空时返回 `None`。
+    """
+
+    merged_cards: list[dict[str, Any]] = []
+    seen_card_ids: set[str] = set()
+    for source_cards in (emitted_cards, final_cards or []):
+        for item in source_cards:
+            card_id = str(item.get("id") or "").strip()
+            if not card_id or card_id in seen_card_ids:
+                continue
+            seen_card_ids.add(card_id)
+            merged_cards.append(dict(item))
+    return merged_cards or None
+
+
 async def _invoke_answer_completed_callback(
         callback: OnAnswerCompletedCallback | None,
         answer_text: str,
@@ -1028,7 +1115,7 @@ async def iterate_assistant_responses(
     """
 
     state = config.build_initial_state(question)
-    runtime_state = StreamRuntimeState(latest_state=state)
+    runtime_state = StreamRuntimeState(latest_state=state if isinstance(state, dict) else {})
     final_responses: list[AssistantResponse] = []
     finish_status = AssistantRunStatus.SUCCESS
 
@@ -1118,6 +1205,25 @@ async def iterate_assistant_responses(
                     yield drained_item
                 break
 
+        interrupt_responses: list[AssistantResponse] = []
+        if (
+                finish_status == AssistantRunStatus.SUCCESS
+                and config.build_interrupt_responses is not None
+                and isinstance(runtime_state.latest_state, dict)
+        ):
+            interrupt_responses = list(
+                config.build_interrupt_responses(runtime_state.latest_state) or []
+            )
+            if interrupt_responses:
+                finish_status = AssistantRunStatus.WAITING_INPUT
+                for interrupt_response in interrupt_responses:
+                    normalized_response = _normalize_response_for_runtime(
+                        runtime_state=runtime_state,
+                        response=interrupt_response,
+                    )
+                    if normalized_response is not None:
+                        yield normalized_response
+
         # 当没有 token 输出且没有错误时，回退到业务侧最终内容提取。
         # 若业务侧返回空字符串，则视为“无兜底内容”，不输出额外 answer 包。
         if (
@@ -1131,7 +1237,7 @@ async def iterate_assistant_responses(
                 if delta_text:
                     yield build_answer_response(delta_text, False)
 
-        if finish_status != AssistantRunStatus.CANCELLED:
+        if finish_status not in {AssistantRunStatus.CANCELLED, AssistantRunStatus.WAITING_INPUT}:
             final_responses = _drain_final_sse_responses()
             for final_response in final_responses:
                 yield final_response
@@ -1146,7 +1252,10 @@ async def iterate_assistant_responses(
                 token_usage,
                 finish_status == AssistantRunStatus.ERROR,
                 runtime_state.aggregated_thinking_text,
-                _extract_persistable_cards(final_responses),
+                _merge_persistable_cards(
+                    runtime_state.interrupt_cards,
+                    _extract_persistable_cards(final_responses),
+                ),
                 finish_status,
             )
         except Exception as exc:  # pragma: no cover - 防御性兜底

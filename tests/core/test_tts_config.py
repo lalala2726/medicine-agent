@@ -35,10 +35,10 @@ def _disable_dotenv_lookup(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(speech_env_utils, "_read_dotenv_value", lambda _name: "")
 
 
-def _build_v3_payload(*, speech: dict[str, Any]) -> bytes:
+def _build_v4_payload(*, speech: dict[str, Any]) -> bytes:
     return json.dumps(
         {
-            "schemaVersion": 3,
+            "schemaVersion": 4,
             "updatedAt": "2026-03-13T10:30:00+08:00",
             "updatedBy": "admin",
             "llm": {
@@ -121,7 +121,7 @@ def test_resolve_volcengine_tts_config_prefers_redis_voice_and_max_text_chars(
     monkeypatch.setenv("VOLCENGINE_TTS_VOICE_TYPE", "env_voice")
     monkeypatch.setenv("VOLCENGINE_TTS_RESOURCE_ID", "env-resource")
     monkeypatch.setenv("VOLCENGINE_TTS_MAX_TEXT_CHARS", "500")
-    payload = _build_v3_payload(
+    payload = _build_v4_payload(
         speech={
             "provider": "volcengine",
             "appId": "redis-app-id",
@@ -152,7 +152,7 @@ def test_resolve_volcengine_tts_config_falls_back_to_env_auth_when_redis_auth_is
     _set_shared_env(monkeypatch)
     monkeypatch.setenv("VOLCENGINE_TTS_RESOURCE_ID", "env-resource-id")
     monkeypatch.setenv("VOLCENGINE_TTS_VOICE_TYPE", "env_voice")
-    payload = _build_v3_payload(
+    payload = _build_v4_payload(
         speech={
             "provider": "volcengine",
             "appId": "redis-only-app-id",
@@ -183,7 +183,7 @@ def test_resolve_volcengine_tts_config_falls_back_to_env_tts_config_when_redis_r
     monkeypatch.setenv("VOLCENGINE_TTS_RESOURCE_ID", "env-resource-id")
     monkeypatch.setenv("VOLCENGINE_TTS_VOICE_TYPE", "env_voice")
     monkeypatch.setenv("VOLCENGINE_TTS_MAX_TEXT_CHARS", "500")
-    payload = _build_v3_payload(
+    payload = _build_v4_payload(
         speech={
             "provider": "volcengine",
             "appId": "redis-app-id",
@@ -213,7 +213,7 @@ def test_resolve_volcengine_tts_config_raises_when_resource_id_missing_in_redis_
     _set_shared_env(monkeypatch)
     monkeypatch.delenv("VOLCENGINE_TTS_RESOURCE_ID", raising=False)
     monkeypatch.setenv("VOLCENGINE_TTS_VOICE_TYPE", "env_voice")
-    payload = _build_v3_payload(
+    payload = _build_v4_payload(
         speech={
             "provider": "volcengine",
             "appId": "redis-app-id",

@@ -19,7 +19,7 @@ def call_rewrite_llm(question: str) -> str:
     """
 
     llm_model = create_agent_chat_llm(
-        slot=AgentChatModelSlot.CHAT,
+        slot=AgentChatModelSlot.ADMIN_CHAT,
         temperature=0.0,
         think=False,
     )

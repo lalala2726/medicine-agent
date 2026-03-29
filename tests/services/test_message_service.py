@@ -64,6 +64,7 @@ class _DummyCollection:
         self.last_count_query: dict | None = None
         self.last_update_query: dict | None = None
         self.last_update_document: dict | None = None
+        self.update_calls: list[tuple[dict, dict]] = []
         self.find_rows: list[dict] = []
         self.find_one_result: dict | None = None
         self.count_documents_result: int = 0
@@ -88,6 +89,7 @@ class _DummyCollection:
     def update_one(self, query: dict, update: dict) -> _DummyUpdateResult:
         self.last_update_query = query
         self.last_update_document = update
+        self.update_calls.append((query, update))
         return _DummyUpdateResult()
 
     def create_index(self, keys, **kwargs) -> str:
@@ -627,7 +629,7 @@ def test_update_assistant_message_updates_existing_placeholder(monkeypatch):
 
 
 def test_count_summarizable_messages_applies_summary_filter(monkeypatch):
-    """测试目的：统计摘要消息时仅命中 user/ai success；预期结果：查询条件包含 role/status/after 游标。"""
+    """测试目的：统计摘要消息时命中 user/ai 的 success 与 waiting_input；预期结果：查询条件包含 role/status/after 游标。"""
 
     collection = _DummyCollection()
     collection.count_documents_result = 7
@@ -642,7 +644,12 @@ def test_count_summarizable_messages_applies_summary_filter(monkeypatch):
     assert count == 7
     assert collection.last_count_query is not None
     assert collection.last_count_query["conversation_id"] == ObjectId("507f1f77bcf86cd799439011")
-    assert collection.last_count_query["status"] == MessageStatus.SUCCESS.value
+    assert collection.last_count_query["status"] == {
+        "$in": [
+            MessageStatus.SUCCESS.value,
+            MessageStatus.WAITING_INPUT.value,
+        ]
+    }
     assert collection.last_count_query["role"] == {"$in": [MessageRole.USER.value, MessageRole.AI.value]}
     assert collection.last_count_query["_id"] == {"$gt": ObjectId("507f1f77bcf86cd799439010")}
 
@@ -819,3 +826,111 @@ def test_hide_message_card_rejects_invalid_target(monkeypatch):
         )
 
     assert exc_info.value.code == ResponseCode.BAD_REQUEST
+
+
+def test_hide_visible_cards_in_conversation_hides_all_visible_cards(monkeypatch):
+    collection = _DummyCollection()
+    collection.find_rows = [
+        {
+            "_id": ObjectId("507f1f77bcf86cd799439099"),
+            "uuid": "msg-card-only",
+            "conversation_id": ObjectId("507f1f77bcf86cd799439011"),
+            "role": "ai",
+            "status": "success",
+            "content": "",
+            "cards": [
+                {
+                    "id": "card-1",
+                    "type": "selection-card",
+                    "data": {"title": "请选择", "options": ["A", "B"]},
+                },
+                {
+                    "id": "card-2",
+                    "type": "consent-card",
+                    "data": {"title": "是否同意"},
+                },
+            ],
+            "created_at": datetime.datetime(2026, 1, 1, 10, 0, 1),
+            "updated_at": datetime.datetime(2026, 1, 1, 10, 0, 1),
+        },
+        {
+            "_id": ObjectId("507f1f77bcf86cd799439100"),
+            "uuid": "msg-with-content",
+            "conversation_id": ObjectId("507f1f77bcf86cd799439011"),
+            "role": "ai",
+            "status": "success",
+            "content": "这是带正文的推荐说明",
+            "hidden_card_uuids": ["card-3"],
+            "cards": [
+                {
+                    "id": "card-3",
+                    "type": "product-card",
+                    "data": {"title": "旧卡片"},
+                },
+                {
+                    "id": "card-4",
+                    "type": "product-purchase-card",
+                    "data": {"title": "新卡片"},
+                },
+            ],
+            "created_at": datetime.datetime(2026, 1, 1, 10, 0, 2),
+            "updated_at": datetime.datetime(2026, 1, 1, 10, 0, 2),
+        },
+    ]
+    monkeypatch.setattr(service_module, "get_mongo_database", lambda: {"messages": collection})
+    monkeypatch.setattr(service_module, "_resolve_collection_name", lambda: "messages")
+
+    updated_count = service_module.hide_visible_cards_in_conversation(
+        conversation_id="507f1f77bcf86cd799439011",
+    )
+
+    assert updated_count == 2
+    assert collection.last_find_query == {
+        "conversation_id": ObjectId("507f1f77bcf86cd799439011"),
+        "history_hidden": {"$ne": True},
+        "$or": [
+            {"card_uuids.0": {"$exists": True}},
+            {"cards.0": {"$exists": True}},
+        ],
+    }
+    assert collection.update_calls[0][1]["$set"]["card_uuids"] == ["card-1", "card-2"]
+    assert collection.update_calls[0][1]["$set"]["hidden_card_uuids"] == ["card-1", "card-2"]
+    assert collection.update_calls[0][1]["$set"]["history_hidden"] is True
+    assert collection.update_calls[1][1]["$set"]["card_uuids"] == ["card-3", "card-4"]
+    assert collection.update_calls[1][1]["$set"]["hidden_card_uuids"] == ["card-3", "card-4"]
+    assert collection.update_calls[1][1]["$set"]["history_hidden"] is False
+
+
+def test_hide_visible_cards_in_conversation_is_idempotent_when_all_cards_hidden(monkeypatch):
+    collection = _DummyCollection()
+    collection.find_rows = [
+        {
+            "_id": ObjectId("507f1f77bcf86cd799439099"),
+            "uuid": "msg-1",
+            "conversation_id": ObjectId("507f1f77bcf86cd799439011"),
+            "role": "ai",
+            "status": "success",
+            "content": "",
+            "card_uuids": ["card-1"],
+            "hidden_card_uuids": ["card-1"],
+            "history_hidden": True,
+            "cards": [
+                {
+                    "id": "card-1",
+                    "type": "selection-card",
+                    "data": {"title": "请选择", "options": ["A", "B"]},
+                }
+            ],
+            "created_at": datetime.datetime(2026, 1, 1, 10, 0, 1),
+            "updated_at": datetime.datetime(2026, 1, 1, 10, 0, 1),
+        }
+    ]
+    monkeypatch.setattr(service_module, "get_mongo_database", lambda: {"messages": collection})
+    monkeypatch.setattr(service_module, "_resolve_collection_name", lambda: "messages")
+
+    updated_count = service_module.hide_visible_cards_in_conversation(
+        conversation_id="507f1f77bcf86cd799439011",
+    )
+
+    assert updated_count == 0
+    assert collection.update_calls == []

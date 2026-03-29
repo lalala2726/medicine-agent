@@ -21,7 +21,7 @@ from app.schemas.document.message_trace import (
 
 _GATEWAY_NODE_NAME = "gateway_router"
 _WORKFLOW_NAME = "admin_assistant_graph"
-_ALLOWED_WORKFLOW_STATUSES = {"success", "error", "cancelled"}
+_ALLOWED_WORKFLOW_STATUSES = {"success", "error", "cancelled", "waiting_input"}
 """message_trace 支持的工作流终态集合。"""
 
 
@@ -223,7 +223,7 @@ def _build_workflow_summary(
 
     参数说明：
         execution_trace (list[ExecutionTraceItem]): 归一化后的节点轨迹列表。
-        workflow_status (str): 工作流终态，支持 `success/error/cancelled`。
+        workflow_status (str): 工作流终态，支持 `success/error/cancelled/waiting_input`。
         workflow_name (str): 工作流名称。
 
     返回值：

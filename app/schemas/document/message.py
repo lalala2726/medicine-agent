@@ -19,6 +19,7 @@ class MessageStatus(str, Enum):
     """会话消息状态。"""
 
     STREAMING = "streaming"
+    WAITING_INPUT = "waiting_input"
     SUCCESS = "success"
     CANCELLED = "cancelled"
     ERROR = "error"

@@ -3,15 +3,17 @@ from types import SimpleNamespace
 from langchain_core.messages import HumanMessage
 
 from app.agent.client.domain.product import node as product_node_module
+from app.core.config_sync import AgentChatModelSlot
 
 
 def test_product_agent_registers_product_tools_and_keeps_tool_traces(monkeypatch):
     captured: dict = {}
+    captured_llm_kwargs: dict = {}
 
     monkeypatch.setattr(
         product_node_module,
         "create_agent_chat_llm",
-        lambda **_kwargs: SimpleNamespace(model_name="product-model"),
+        lambda **kwargs: captured_llm_kwargs.update(kwargs) or SimpleNamespace(model_name="product-model"),
     )
     monkeypatch.setattr(
         product_node_module,
@@ -57,6 +59,7 @@ def test_product_agent_registers_product_tools_and_keeps_tool_traces(monkeypatch
         product_node_module.get_product_detail,
         product_node_module.get_product_spec,
     ]
+    assert captured_llm_kwargs["slot"] is AgentChatModelSlot.CLIENT_PRODUCT
     assert result["execution_traces"][0]["node_name"] == "product_agent"
     assert result["execution_traces"][0]["tool_calls"] == [
         {

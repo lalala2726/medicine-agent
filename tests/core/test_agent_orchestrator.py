@@ -5,7 +5,7 @@ from uuid import UUID
 
 from app.agent.services.card_render_service import ProductCardData, ProductCardProduct
 from app.core.agent import agent_orchestrator as orchestrator_module
-from app.core.agent.agent_event_bus import enqueue_final_sse_response
+from app.core.agent.agent_event_bus import emit_answer_delta, enqueue_final_sse_response
 from app.schemas.sse_response import (
     Action,
     AssistantResponse,
@@ -62,6 +62,68 @@ def _build_card_response(
         meta={
             "card_uuid": card_uuid,
             "persist_card": persist_card,
+        },
+    )
+
+
+def _build_selection_card_response() -> AssistantResponse:
+    return AssistantResponse(
+        type=MessageType.CARD,
+        content=Content(),
+        card=Card(
+            type="selection-card",
+            data={
+                "title": "为了更准确判断，你现在有没有发热？",
+                "options": ["没有发热", "低烧", "高烧", "不确定"],
+            },
+        ),
+        meta={
+            "card_uuid": "123e4567-e89b-12d3-a456-426614174010",
+            "persist_card": True,
+        },
+    )
+
+
+def _build_consultation_followup_card_response() -> AssistantResponse:
+    return AssistantResponse(
+        type=MessageType.CARD,
+        content=Content(),
+        card=Card(
+            type="consultation-followup-card",
+            data={
+                "title": "这次喉咙疼更偏向哪个位置？",
+                "description": "结合你刚才补充的情况，我们更偏向咽部刺激或炎症方向，再确认疼痛位置会更稳。",
+                "options": ["咽后壁", "扁桃体", "舌根", "不确定"],
+                "selectionMode": "multiple",
+                "submitText": "发送",
+                "allowCustomInput": True,
+                "customInputPlaceholder": "补充症状或其他感受",
+            },
+        ),
+        meta={
+            "card_uuid": "123e4567-e89b-12d3-a456-426614174012",
+            "persist_card": True,
+            "message_uuid": "followup-msg-1",
+        },
+    )
+
+
+def _build_purchase_card_response() -> AssistantResponse:
+    return AssistantResponse(
+        type=MessageType.CARD,
+        content=Content(),
+        card=Card(
+            type="product-purchase-card",
+            data={
+                "items": [
+                    {"productId": 101, "quantity": 1},
+                    {"productId": 102, "quantity": 1},
+                ]
+            },
+        ),
+        meta={
+            "card_uuid": "123e4567-e89b-12d3-a456-426614174011",
+            "persist_card": True,
         },
     )
 
@@ -355,6 +417,126 @@ def test_event_stream_passes_final_cards_to_answer_completed_callback():
             },
         },
     ]
+
+
+def test_event_stream_consultation_collecting_flushes_selection_card_after_emitted_answer():
+    class _FakeWorkflow:
+        async def astream(self, _state: dict, **_kwargs):
+            emit_answer_delta("先别太担心，这更像是常见上呼吸道不适。")
+            emit_answer_delta("\n\n我还想确认一下，你有没有发热？")
+            enqueue_final_sse_response(_build_selection_card_response())
+            yield ("values", {"result": "这段兜底文本不应该再次输出"})
+
+    config = orchestrator_module.AssistantStreamConfig(
+        workflow=_FakeWorkflow(),
+        build_initial_state=lambda _question: {},
+        extract_final_content=lambda _state: "这段兜底文本不应该再次输出",
+        should_stream_token=lambda _node, _state: True,
+        build_stream_config=None,
+        invoke_sync=lambda state: state,
+        map_exception=lambda exc: str(exc),
+    )
+
+    async def _collect() -> list[str]:
+        events: list[str] = []
+        async for event in orchestrator_module._event_stream(question="我咳嗽流鼻涕", config=config):
+            events.append(event)
+        return events
+
+    rendered_events = asyncio.run(_collect())
+    payloads = [_parse_sse_payload(event) for event in rendered_events]
+
+    assert [payload["type"] for payload in payloads] == [
+        "answer",
+        "answer",
+        "card",
+        "answer",
+    ]
+    assert payloads[0]["content"]["text"] == "先别太担心，这更像是常见上呼吸道不适。"
+    assert payloads[1]["content"]["text"] == "\n\n我还想确认一下，你有没有发热？"
+    assert payloads[2]["card"]["type"] == "selection-card"
+    assert payloads[2]["card"]["data"]["title"] == "为了更准确判断，你现在有没有发热？"
+    assert all("这段兜底文本不应该再次输出" not in json.dumps(payload, ensure_ascii=False) for payload in payloads)
+    assert payloads[3]["is_end"] is True
+
+
+def test_event_stream_consultation_interrupt_emits_followup_card_and_waiting_input_end():
+    class _FakeWorkflow:
+        async def astream(self, _state: dict, **_kwargs):
+            emit_answer_delta("先别太担心，这更像是常见咽部不适。")
+            yield ("values", {"__interrupt__": [object()], "result": "这段兜底文本不应该再次输出"})
+
+    config = orchestrator_module.AssistantStreamConfig(
+        workflow=_FakeWorkflow(),
+        build_initial_state=lambda _question: {},
+        extract_final_content=lambda _state: "这段兜底文本不应该再次输出",
+        should_stream_token=lambda _node, _state: True,
+        build_stream_config=None,
+        invoke_sync=lambda state: state,
+        map_exception=lambda exc: str(exc),
+        build_interrupt_responses=lambda _state: [_build_consultation_followup_card_response()],
+    )
+
+    async def _collect() -> list[str]:
+        events: list[str] = []
+        async for event in orchestrator_module._event_stream(question="我喉咙疼", config=config):
+            events.append(event)
+        return events
+
+    rendered_events = asyncio.run(_collect())
+    payloads = [_parse_sse_payload(event) for event in rendered_events]
+
+    assert [payload["type"] for payload in payloads] == ["answer", "card", "answer"]
+    assert payloads[0]["content"]["text"] == "先别太担心，这更像是常见咽部不适。"
+    assert payloads[1]["card"]["type"] == "consultation-followup-card"
+    assert payloads[1]["meta"]["message_uuid"] == "followup-msg-1"
+    assert payloads[2]["content"]["state"] == "waiting_input"
+    assert payloads[2]["meta"]["run_status"] == "waiting_input"
+    assert payloads[2]["is_end"] is True
+
+
+def test_event_stream_consultation_diagnosis_flushes_purchase_card_after_emitted_answer():
+    class _FakeWorkflow:
+        async def astream(self, _state: dict, **_kwargs):
+            emit_answer_delta("结合你的情况，更像是常见感冒方向。")
+            emit_answer_delta("\n\n可考虑的药品有：感冒灵颗粒、板蓝根颗粒。")
+            enqueue_final_sse_response(_build_purchase_card_response())
+            yield ("values", {"result": "这段兜底文本不应该再次输出"})
+
+    config = orchestrator_module.AssistantStreamConfig(
+        workflow=_FakeWorkflow(),
+        build_initial_state=lambda _question: {},
+        extract_final_content=lambda _state: "这段兜底文本不应该再次输出",
+        should_stream_token=lambda _node, _state: True,
+        build_stream_config=None,
+        invoke_sync=lambda state: state,
+        map_exception=lambda exc: str(exc),
+    )
+
+    async def _collect() -> list[str]:
+        events: list[str] = []
+        async for event in orchestrator_module._event_stream(question="我是不是感冒了", config=config):
+            events.append(event)
+        return events
+
+    rendered_events = asyncio.run(_collect())
+    payloads = [_parse_sse_payload(event) for event in rendered_events]
+
+    assert [payload["type"] for payload in payloads] == [
+        "answer",
+        "answer",
+        "card",
+        "answer",
+    ]
+    assert payloads[0]["content"]["text"] == "结合你的情况，更像是常见感冒方向。"
+    assert payloads[1]["content"]["text"] == "\n\n可考虑的药品有：感冒灵颗粒、板蓝根颗粒。"
+    assert payloads[2]["card"]["type"] == "product-purchase-card"
+    assert payloads[2]["card"]["data"]["items"] == [
+        {"productId": 101, "quantity": 1},
+        {"productId": 102, "quantity": 1},
+    ]
+    assert all("这段兜底文本不应该再次输出" not in json.dumps(payload, ensure_ascii=False) for payload in payloads)
+    assert payloads[3]["is_end"] is True
 
 
 def test_extract_persistable_cards_ignores_cards_with_persist_flag_false():

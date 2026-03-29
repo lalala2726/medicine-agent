@@ -88,6 +88,20 @@ def resolve_tool_call_messages(tool_name: str) -> tuple[str, str, str]:
     return start_message, error_message, timely_message
 
 
+def resolve_tool_display_name(tool_name: str) -> str:
+    """根据工具名解析用户可见的工具显示名。
+
+    Args:
+        tool_name: 工具原始注册名。
+
+    Returns:
+        str: 面向用户展示的工具名称；未配置时回退原始工具名。
+    """
+
+    config = _REGISTERED_TOOL_STATUS_MESSAGES.get(tool_name, {})
+    return str(config.get("display_name") or tool_name)
+
+
 def tool_call_status(
         *,
         tool_name: str | None = None,
@@ -214,11 +228,12 @@ def _finalize_result(
     """
 
     if result is None:
+        display_name = resolve_tool_display_name(tool_name)
         emit_function_call(
             node=f"tool:{tool_name}",
             state="timely",
             message=timely_message,
-            name=tool_name,
+            name=display_name,
         )
         return result
 
@@ -230,12 +245,13 @@ def _finalize_result(
             tool_args,
         )
 
+    display_name = resolve_tool_display_name(tool_name)
     emit_function_call(
         node=f"tool:{tool_name}",
         state="end",
         result="success",
         message=_TOOL_RESULT_SUCCESS_MESSAGE,
-        name=tool_name,
+        name=display_name,
     )
     return result
 
@@ -268,12 +284,13 @@ def _handle_failure(
         tool_call_id,
         tool_args,
     )
+    display_name = resolve_tool_display_name(tool_name)
     emit_function_call(
         node=f"tool:{tool_name}",
         state="end",
         result="error",
         message=error_message,
-        name=tool_name,
+        name=display_name,
     )
     return _to_error_tool_message(
         error_message=error_message,
@@ -317,6 +334,7 @@ def build_tool_status_middleware():
             return await handler(request)
 
         start_message, error_message, timely_message = resolve_tool_call_messages(tool_name)
+        display_name = resolve_tool_display_name(tool_name)
         if log_enabled:
             logger.info(
                 "Tool call start. tool_name={} tool_call_id={} args={}",
@@ -328,7 +346,7 @@ def build_tool_status_middleware():
             node=f"tool:{tool_name}",
             state="start",
             message=start_message,
-            name=tool_name,
+            name=display_name,
             arguments=_format_arguments(tool_args),
         )
 

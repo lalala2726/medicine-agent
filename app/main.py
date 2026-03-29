@@ -12,6 +12,8 @@ from starlette.responses import Response
 
 from app.api.main import api_router
 from app.core.config_sync import initialize_agent_config_snapshot
+from app.core.database import clear_neo4j_connection_cache, verify_neo4j_connection
+from app.core.database.neo4j.config import is_neo4j_startup_ping_enabled
 from app.core.exception.exception_handlers import ExceptionHandlers
 from app.core.exception.exceptions import ServiceException
 from app.core.mq.broker import get_broker, is_mq_configured
@@ -68,6 +70,8 @@ async def _prepare_runtime_before_serving() -> None:
     """显式固化启动顺序：先加载配置快照，再探活语音连接。"""
 
     initialize_agent_config_snapshot()
+    if is_neo4j_startup_ping_enabled():
+        verify_neo4j_connection()
     await _run_speech_startup_probes()
 
 
@@ -90,8 +94,11 @@ async def lifespan(_app: FastAPI):
     try:
         yield
     finally:
-        if _broker is not None:
-            await _broker.close()
+        try:
+            if _broker is not None:
+                await _broker.close()
+        finally:
+            clear_neo4j_connection_cache()
 
 
 app = FastAPI(

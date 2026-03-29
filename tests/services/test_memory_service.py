@@ -5,7 +5,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException
-from app.schemas.document.message import MessageRole
+from app.schemas.document.message import MessageRole, MessageStatus
 from app.schemas.memory import Memory
 from app.services import memory_service as service_module
 
@@ -31,13 +31,14 @@ def test_load_memory_by_window_returns_ordered_memory(monkeypatch):
     monkeypatch.setattr(
         service_module,
         "list_messages",
-        lambda *, conversation_id, limit, ascending, history_hidden=None: (
+        lambda *, conversation_id, limit, ascending, history_hidden=None, statuses=None: (
             captured.update(
                 {
                     "conversation_id": conversation_id,
                     "limit": limit,
                     "ascending": ascending,
                     "history_hidden": history_hidden,
+                    "statuses": statuses,
                 }
             ),
             [
@@ -61,6 +62,7 @@ def test_load_memory_by_window_returns_ordered_memory(monkeypatch):
         "limit": 2,
         "ascending": False,
         "history_hidden": None,
+        "statuses": [MessageStatus.SUCCESS, MessageStatus.WAITING_INPUT],
     }
     assert [message.type for message in result.messages] == ["human", "ai"]
     assert [message.content for message in result.messages] == ["Q1", "A2"]
@@ -175,8 +177,8 @@ def test_load_memory_by_window_can_exclude_hidden_history(monkeypatch):
     monkeypatch.setattr(
         service_module,
         "list_messages",
-        lambda *, conversation_id, limit, ascending, history_hidden=None: (
-            captured.update({"history_hidden": history_hidden}),
+        lambda *, conversation_id, limit, ascending, history_hidden=None, statuses=None: (
+            captured.update({"history_hidden": history_hidden, "statuses": statuses}),
             [],
         )[-1],
     )
@@ -188,7 +190,10 @@ def test_load_memory_by_window_can_exclude_hidden_history(monkeypatch):
         include_history_hidden=False,
     )
 
-    assert captured == {"history_hidden": False}
+    assert captured == {
+        "history_hidden": False,
+        "statuses": [MessageStatus.SUCCESS, MessageStatus.WAITING_INPUT],
+    }
 
 
 def test_resolve_assistant_summary_model_prefers_provider_specific_env(monkeypatch):

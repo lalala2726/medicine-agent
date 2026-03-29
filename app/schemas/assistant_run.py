@@ -9,6 +9,7 @@ class AssistantRunStatus(str, Enum):
     """助手运行态状态。"""
 
     RUNNING = "running"
+    WAITING_INPUT = "waiting_input"
     SUCCESS = "success"
     CANCELLED = "cancelled"
     ERROR = "error"

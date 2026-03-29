@@ -549,7 +549,12 @@ def _build_summarizable_messages_query(
                 MessageRole.AI.value,
             ]
         },
-        "status": MessageStatus.SUCCESS.value,
+        "status": {
+            "$in": [
+                MessageStatus.SUCCESS.value,
+                MessageStatus.WAITING_INPUT.value,
+            ]
+        },
     }
     normalized_after_message_id = (after_message_id or "").strip()
     if normalized_after_message_id:
@@ -699,6 +704,146 @@ def list_summarizable_tail_messages(
     )
 
 
+def _normalize_card_uuid_list(card_uuids: list[str] | None) -> list[str]:
+    """归一化 card_uuid 列表，去空并保持原有顺序去重。"""
+
+    normalized_card_uuids: list[str] = []
+    for raw_card_uuid in card_uuids or []:
+        normalized_card_uuid = str(raw_card_uuid or "").strip()
+        if not normalized_card_uuid:
+            continue
+        if normalized_card_uuid in normalized_card_uuids:
+            continue
+        normalized_card_uuids.append(normalized_card_uuid)
+    return normalized_card_uuids
+
+
+def _resolve_message_card_uuids(message_document: MessageDocument) -> list[str]:
+    """从消息文档中提取完整卡片 UUID 列表，兼容旧数据缺失 `card_uuids` 的情况。"""
+
+    extracted_card_uuids = _extract_card_uuids(message_document.cards)
+    if extracted_card_uuids:
+        return extracted_card_uuids
+    return _normalize_card_uuid_list(message_document.card_uuids)
+
+
+def _resolve_message_card_visibility(
+        *,
+        message_document: MessageDocument,
+        additional_hidden_card_uuids: list[str] | None = None,
+) -> tuple[list[str], list[str], bool]:
+    """计算消息卡片的最终可见性状态。"""
+
+    all_card_uuids = _resolve_message_card_uuids(message_document)
+    hidden_card_uuids = _normalize_card_uuid_list(message_document.hidden_card_uuids)
+
+    for raw_card_uuid in additional_hidden_card_uuids or []:
+        normalized_card_uuid = str(raw_card_uuid or "").strip()
+        if not normalized_card_uuid:
+            continue
+        if normalized_card_uuid not in all_card_uuids:
+            continue
+        if normalized_card_uuid in hidden_card_uuids:
+            continue
+        hidden_card_uuids.append(normalized_card_uuid)
+
+    normalized_content = message_document.content.strip()
+    normalized_thinking = (message_document.thinking or "").strip()
+    history_hidden = (
+            bool(all_card_uuids)
+            and not normalized_content
+            and not normalized_thinking
+            and all(card_uuid in hidden_card_uuids for card_uuid in all_card_uuids)
+    )
+    return all_card_uuids, hidden_card_uuids, history_hidden
+
+
+def _build_message_update_query(
+        *,
+        conversation_id: str,
+        message_document: MessageDocument,
+) -> dict[str, Any]:
+    """构造单条消息更新条件，优先按 `_id` 精确命中。"""
+
+    if message_document.id:
+        return {"_id": ObjectId(message_document.id)}
+    return {
+        "conversation_id": _to_object_id(conversation_id),
+        "uuid": message_document.uuid,
+    }
+
+
+def hide_visible_cards_in_conversation(
+        *,
+        conversation_id: Annotated[str, Field(min_length=1)],
+) -> int:
+    """
+    批量隐藏某个会话下当前仍对客户端可见的 AI 卡片。
+
+    Returns:
+        int: 本次实际更新的消息条数。
+    """
+
+    _ensure_message_indexes()
+    collection = _get_collection()
+    query = {
+        "conversation_id": _to_object_id(conversation_id),
+        "history_hidden": {"$ne": True},
+        "$or": [
+            {"card_uuids.0": {"$exists": True}},
+            {"cards.0": {"$exists": True}},
+        ],
+    }
+
+    updated_message_count = 0
+    for document in collection.find(query):
+        message_document = _to_message_document(document)
+        if message_document.role != MessageRole.AI:
+            continue
+
+        all_card_uuids = _resolve_message_card_uuids(message_document)
+        if not all_card_uuids:
+            continue
+
+        current_hidden_card_uuids = _normalize_card_uuid_list(message_document.hidden_card_uuids)
+        visible_card_uuids = [
+            card_uuid
+            for card_uuid in all_card_uuids
+            if card_uuid not in current_hidden_card_uuids
+        ]
+        resolved_card_uuids, resolved_hidden_card_uuids, history_hidden = (
+            _resolve_message_card_visibility(
+                message_document=message_document,
+                additional_hidden_card_uuids=visible_card_uuids,
+            )
+        )
+        current_card_uuids = _normalize_card_uuid_list(message_document.card_uuids)
+        if (
+                current_card_uuids == resolved_card_uuids
+                and current_hidden_card_uuids == resolved_hidden_card_uuids
+                and bool(message_document.history_hidden) == history_hidden
+        ):
+            continue
+
+        collection.update_one(
+            _build_message_update_query(
+                conversation_id=conversation_id,
+                message_document=message_document,
+            ),
+            {
+                "$set": {
+                    "card_uuids": resolved_card_uuids,
+                    "hidden_card_uuids": resolved_hidden_card_uuids,
+                    "history_hidden": history_hidden,
+                    "updated_at": datetime.datetime.now(),
+                }
+            },
+        )
+        updated_message_count += 1
+
+    return updated_message_count
+
+
 def hide_message_card(
         *,
         conversation_id: Annotated[str, Field(min_length=1)],
@@ -738,32 +883,23 @@ def hide_message_card(
     if message_document.role != MessageRole.AI:
         raise ServiceException(code=ResponseCode.BAD_REQUEST, message="卡片操作无效")
 
-    all_card_uuids = _extract_card_uuids(message_document.cards)
+    all_card_uuids = _resolve_message_card_uuids(message_document)
     if not all_card_uuids or normalized_card_uuid not in all_card_uuids:
         raise ServiceException(code=ResponseCode.BAD_REQUEST, message="卡片操作无效")
 
-    hidden_card_uuids = list(message_document.hidden_card_uuids or [])
-    if normalized_card_uuid not in hidden_card_uuids:
-        hidden_card_uuids.append(normalized_card_uuid)
-
-    normalized_content = message_document.content.strip()
-    normalized_thinking = (message_document.thinking or "").strip()
-    history_hidden = (
-            not normalized_content
-            and not normalized_thinking
-            and all(card_id in hidden_card_uuids for card_id in all_card_uuids)
+    resolved_card_uuids, resolved_hidden_card_uuids, history_hidden = _resolve_message_card_visibility(
+        message_document=message_document,
+        additional_hidden_card_uuids=[normalized_card_uuid],
     )
-
-    update_query = {"_id": ObjectId(message_document.id)} if message_document.id else {
-        "conversation_id": _to_object_id(conversation_id),
-        "uuid": normalized_message_uuid,
-    }
     collection.update_one(
-        update_query,
+        _build_message_update_query(
+            conversation_id=conversation_id,
+            message_document=message_document,
+        ),
         {
             "$set": {
-                "card_uuids": all_card_uuids,
-                "hidden_card_uuids": hidden_card_uuids,
+                "card_uuids": resolved_card_uuids,
+                "hidden_card_uuids": resolved_hidden_card_uuids,
                 "history_hidden": history_hidden,
                 "updated_at": datetime.datetime.now(),
             }

@@ -15,6 +15,7 @@ from app.core.exception.exceptions import ServiceException
 from app.core.security.auth_context import get_authorization_header
 from app.core.security.role_codes import RoleCode
 from app.main import app
+from app.schemas.assistant_run import AssistantRunStatus, AssistantRunSubmitResponse
 from app.schemas.admin_assistant_history import ConversationMessageResponse, ThoughtNodeResponse
 from app.schemas.auth import AuthUser
 from app.schemas.document.conversation import ConversationListItem
@@ -243,24 +244,31 @@ def test_assistant_route_delegates_to_service(monkeypatch):
     captured: dict = {}
     _mock_auth(monkeypatch)
 
-    def _fake_assistant_chat(*, question: str, conversation_uuid: str | None = None):
+    def _fake_assistant_chat_submit(*, question: str, conversation_uuid: str | None = None):
         captured["question"] = question
         captured["conversation_uuid"] = conversation_uuid
-        return _build_streaming_response("delegated")
+        return AssistantRunSubmitResponse(
+            conversation_uuid="conv-1",
+            message_uuid="msg-1",
+            run_status=AssistantRunStatus.RUNNING,
+        )
 
-    monkeypatch.setattr(assistant_module, "assistant_chat", _fake_assistant_chat)
+    monkeypatch.setattr(assistant_module, "assistant_chat_submit", _fake_assistant_chat_submit)
     client = TestClient(app)
 
     response = client.post(
-        "/admin/assistant/chat",
+        "/admin/assistant/chat/submit",
         headers=_auth_headers(),
         json={"question": "代理测试", "conversation_uuid": "conv-1"},
     )
 
     assert response.status_code == 200
-    payloads = _extract_payloads(response.text)
-    assert payloads[0]["content"]["text"] == "delegated"
-    assert payloads[1]["is_end"] is True
+    body = response.json()
+    assert body["data"] == {
+        "conversation_uuid": "conv-1",
+        "message_uuid": "msg-1",
+        "run_status": "running",
+    }
     assert captured == {
         "question": "代理测试",
         "conversation_uuid": "conv-1",
@@ -271,16 +279,20 @@ def test_assistant_request_defaults_conversation_uuid_to_none(monkeypatch):
     captured: dict = {}
     _mock_auth(monkeypatch)
 
-    def _fake_assistant_chat(*, question: str, conversation_uuid: str | None = None):
+    def _fake_assistant_chat_submit(*, question: str, conversation_uuid: str | None = None):
         captured["question"] = question
         captured["conversation_uuid"] = conversation_uuid
-        return _build_streaming_response("ok")
+        return AssistantRunSubmitResponse(
+            conversation_uuid="conv-new",
+            message_uuid="msg-new",
+            run_status=AssistantRunStatus.RUNNING,
+        )
 
-    monkeypatch.setattr(assistant_module, "assistant_chat", _fake_assistant_chat)
+    monkeypatch.setattr(assistant_module, "assistant_chat_submit", _fake_assistant_chat_submit)
     client = TestClient(app)
 
     response = client.post(
-        "/admin/assistant/chat",
+        "/admin/assistant/chat/submit",
         headers=_auth_headers(),
         json={"question": "hi"},
     )
@@ -290,74 +302,68 @@ def test_assistant_request_defaults_conversation_uuid_to_none(monkeypatch):
     assert captured["conversation_uuid"] is None
 
 
-def test_assistant_route_new_conversation_stream_first_notice_contains_conversation_and_message_uuid(monkeypatch):
+def test_assistant_submit_route_returns_new_conversation_run_meta(monkeypatch):
     captured: dict = {}
     _mock_auth(monkeypatch)
 
-    def _fake_assistant_chat(*, question: str, conversation_uuid: str | None = None):
+    def _fake_assistant_chat_submit(*, question: str, conversation_uuid: str | None = None):
         captured["question"] = question
         captured["conversation_uuid"] = conversation_uuid
-        return _build_notice_then_answer_streaming_response(
-            notice_meta={
-                "conversation_uuid": "conv-new-1",
-                "message_uuid": "msg-new-1",
-            },
-            answer_text="首个分片",
-            notice_content={"state": "created", "message": "会话创建成功"},
+        return AssistantRunSubmitResponse(
+            conversation_uuid="conv-new-1",
+            message_uuid="msg-new-1",
+            run_status=AssistantRunStatus.RUNNING,
         )
 
-    monkeypatch.setattr(assistant_module, "assistant_chat", _fake_assistant_chat)
+    monkeypatch.setattr(assistant_module, "assistant_chat_submit", _fake_assistant_chat_submit)
     client = TestClient(app)
 
     response = client.post(
-        "/admin/assistant/chat",
+        "/admin/assistant/chat/submit",
         headers=_auth_headers(),
         json={"question": "新会话"},
     )
 
     assert response.status_code == 200
-    payloads = _extract_payloads(response.text)
-    assert payloads[0]["type"] == "notice"
-    assert payloads[0]["content"]["state"] == "created"
-    assert payloads[0]["meta"] == {
+    body = response.json()
+    assert body["data"] == {
         "conversation_uuid": "conv-new-1",
         "message_uuid": "msg-new-1",
+        "run_status": "running",
     }
-    assert payloads[1]["type"] == "answer"
-    assert payloads[1]["content"]["text"] == "首个分片"
     assert captured["question"] == "新会话"
     assert captured["conversation_uuid"] is None
 
 
-def test_assistant_route_existing_conversation_stream_first_notice_contains_only_message_uuid(monkeypatch):
+def test_assistant_submit_route_returns_existing_conversation_run_meta(monkeypatch):
     captured: dict = {}
     _mock_auth(monkeypatch)
 
-    def _fake_assistant_chat(*, question: str, conversation_uuid: str | None = None):
+    def _fake_assistant_chat_submit(*, question: str, conversation_uuid: str | None = None):
         captured["question"] = question
         captured["conversation_uuid"] = conversation_uuid
-        return _build_notice_then_answer_streaming_response(
-            notice_meta={"message_uuid": "msg-old-1"},
-            answer_text="旧会话分片",
+        return AssistantRunSubmitResponse(
+            conversation_uuid="conv-1",
+            message_uuid="msg-old-1",
+            run_status=AssistantRunStatus.RUNNING,
         )
 
-    monkeypatch.setattr(assistant_module, "assistant_chat", _fake_assistant_chat)
+    monkeypatch.setattr(assistant_module, "assistant_chat_submit", _fake_assistant_chat_submit)
     client = TestClient(app)
 
     response = client.post(
-        "/admin/assistant/chat",
+        "/admin/assistant/chat/submit",
         headers=_auth_headers(),
         json={"question": "旧会话", "conversation_uuid": "conv-1"},
     )
 
     assert response.status_code == 200
-    payloads = _extract_payloads(response.text)
-    assert payloads[0]["type"] == "notice"
-    assert "content" not in payloads[0]
-    assert payloads[0]["meta"] == {"message_uuid": "msg-old-1"}
-    assert "conversation_uuid" not in payloads[0]["meta"]
-    assert payloads[1]["type"] == "answer"
-    assert payloads[1]["content"]["text"] == "旧会话分片"
+    body = response.json()
+    assert body["data"] == {
+        "conversation_uuid": "conv-1",
+        "message_uuid": "msg-old-1",
+        "run_status": "running",
+    }
     assert captured == {
         "question": "旧会话",
         "conversation_uuid": "conv-1",
@@ -368,16 +374,20 @@ def test_assistant_request_normalizes_question_and_conversation_uuid(monkeypatch
     captured: dict = {}
     _mock_auth(monkeypatch)
 
-    def _fake_assistant_chat(*, question: str, conversation_uuid: str | None = None):
+    def _fake_assistant_chat_submit(*, question: str, conversation_uuid: str | None = None):
         captured["question"] = question
         captured["conversation_uuid"] = conversation_uuid
-        return _build_streaming_response("ok")
+        return AssistantRunSubmitResponse(
+            conversation_uuid="conv-1",
+            message_uuid="msg-1",
+            run_status=AssistantRunStatus.RUNNING,
+        )
 
-    monkeypatch.setattr(assistant_module, "assistant_chat", _fake_assistant_chat)
+    monkeypatch.setattr(assistant_module, "assistant_chat_submit", _fake_assistant_chat_submit)
     client = TestClient(app)
 
     response = client.post(
-        "/admin/assistant/chat",
+        "/admin/assistant/chat/submit",
         headers=_auth_headers(),
         json={"question": "  请帮我查订单  ", "conversation_uuid": "  conv-1  "},
     )
@@ -391,15 +401,19 @@ def test_assistant_request_rejects_blank_question_after_trim(monkeypatch):
     called = {"value": False}
     _mock_auth(monkeypatch)
 
-    def _fake_assistant_chat(*, question: str, conversation_uuid: str | None = None):
+    def _fake_assistant_chat_submit(*, question: str, conversation_uuid: str | None = None):
         called["value"] = True
-        return _build_streaming_response("should-not-run")
+        return AssistantRunSubmitResponse(
+            conversation_uuid="conv-1",
+            message_uuid="msg-1",
+            run_status=AssistantRunStatus.RUNNING,
+        )
 
-    monkeypatch.setattr(assistant_module, "assistant_chat", _fake_assistant_chat)
+    monkeypatch.setattr(assistant_module, "assistant_chat_submit", _fake_assistant_chat_submit)
     client = TestClient(app)
 
     response = client.post(
-        "/admin/assistant/chat",
+        "/admin/assistant/chat/submit",
         headers=_auth_headers(),
         json={"question": "   ", "conversation_uuid": "conv-1"},
     )
@@ -415,15 +429,19 @@ def test_assistant_request_rejects_legacy_conversion_uuid(monkeypatch):
     called = {"value": False}
     _mock_auth(monkeypatch)
 
-    def _fake_assistant_chat(*, question: str, conversation_uuid: str | None = None):
+    def _fake_assistant_chat_submit(*, question: str, conversation_uuid: str | None = None):
         called["value"] = True
-        return _build_streaming_response("should-not-run")
+        return AssistantRunSubmitResponse(
+            conversation_uuid="conv-1",
+            message_uuid="msg-1",
+            run_status=AssistantRunStatus.RUNNING,
+        )
 
-    monkeypatch.setattr(assistant_module, "assistant_chat", _fake_assistant_chat)
+    monkeypatch.setattr(assistant_module, "assistant_chat_submit", _fake_assistant_chat_submit)
     client = TestClient(app)
 
     response = client.post(
-        "/admin/assistant/chat",
+        "/admin/assistant/chat/submit",
         headers=_auth_headers(),
         json={"question": "hi", "conversion_uuid": "legacy"},
     )
@@ -689,23 +707,27 @@ def test_assistant_route_allows_permission_without_admin_role(monkeypatch):
         permissions=["admin:assistant:access"],
     )
 
-    def _fake_assistant_chat(*, question: str, conversation_uuid: str | None = None):
+    def _fake_assistant_chat_submit(*, question: str, conversation_uuid: str | None = None):
         captured["question"] = question
         captured["conversation_uuid"] = conversation_uuid
-        return _build_streaming_response("delegated")
+        return AssistantRunSubmitResponse(
+            conversation_uuid="conv-1",
+            message_uuid="msg-1",
+            run_status=AssistantRunStatus.RUNNING,
+        )
 
-    monkeypatch.setattr(assistant_module, "assistant_chat", _fake_assistant_chat)
+    monkeypatch.setattr(assistant_module, "assistant_chat_submit", _fake_assistant_chat_submit)
     client = TestClient(app)
 
     response = client.post(
-        "/admin/assistant/chat",
+        "/admin/assistant/chat/submit",
         headers=_auth_headers(),
         json={"question": "权限测试"},
     )
 
     assert response.status_code == 200
-    payloads = _extract_payloads(response.text)
-    assert payloads[0]["content"]["text"] == "delegated"
+    body = response.json()
+    assert body["data"]["message_uuid"] == "msg-1"
     assert captured["question"] == "权限测试"
 
 
@@ -713,15 +735,19 @@ def test_assistant_route_forbidden_without_role_or_permission(monkeypatch):
     called = {"value": False}
     _mock_auth(monkeypatch, roles=[], permissions=[])
 
-    def _fake_assistant_chat(*, question: str, conversation_uuid: str | None = None):
+    def _fake_assistant_chat_submit(*, question: str, conversation_uuid: str | None = None):
         called["value"] = True
-        return _build_streaming_response("should-not-run")
+        return AssistantRunSubmitResponse(
+            conversation_uuid="conv-1",
+            message_uuid="msg-1",
+            run_status=AssistantRunStatus.RUNNING,
+        )
 
-    monkeypatch.setattr(assistant_module, "assistant_chat", _fake_assistant_chat)
+    monkeypatch.setattr(assistant_module, "assistant_chat_submit", _fake_assistant_chat_submit)
     client = TestClient(app)
 
     response = client.post(
-        "/admin/assistant/chat",
+        "/admin/assistant/chat/submit",
         headers=_auth_headers(),
         json={"question": "forbidden"},
     )
@@ -1014,7 +1040,7 @@ def test_non_anonymous_route_still_requires_authentication(monkeypatch):
     client = TestClient(app)
 
     response = client.post(
-        "/admin/assistant/chat",
+        "/admin/assistant/chat/submit",
         json={"question": "未认证访问"},
     )
 
@@ -1032,23 +1058,27 @@ def test_assistant_chat_route_sets_rate_limit_headers_on_success(monkeypatch):
         reset_seconds=42,
     )
 
-    def _fake_assistant_chat(*, question: str, conversation_uuid: str | None = None):
-        return _build_streaming_response("ok")
+    def _fake_assistant_chat_submit(*, question: str, conversation_uuid: str | None = None):
+        return AssistantRunSubmitResponse(
+            conversation_uuid="conv-1",
+            message_uuid="msg-1",
+            run_status=AssistantRunStatus.RUNNING,
+        )
 
-    monkeypatch.setattr(assistant_module, "assistant_chat", _fake_assistant_chat)
+    monkeypatch.setattr(assistant_module, "assistant_chat_submit", _fake_assistant_chat_submit)
     client = TestClient(app)
 
     response = client.post(
-        "/admin/assistant/chat",
+        "/admin/assistant/chat/submit",
         headers=_auth_headers(),
         json={"question": "头信息测试"},
     )
 
     assert response.status_code == 200
-    assert response.headers["x-ratelimit-limit"] == "10"
-    assert response.headers["x-ratelimit-remaining"] == "8"
-    assert response.headers["x-ratelimit-reset"] == "42"
-    assert response.headers["retry-after"] == "0"
+    assert "x-ratelimit-limit" not in response.headers
+    assert "x-ratelimit-remaining" not in response.headers
+    assert "x-ratelimit-reset" not in response.headers
+    assert "retry-after" not in response.headers
 
 
 def test_assistant_chat_route_returns_429_when_rate_limited(monkeypatch):
@@ -1063,15 +1093,19 @@ def test_assistant_chat_route_returns_429_when_rate_limited(monkeypatch):
     )
     called = {"value": False}
 
-    def _fake_assistant_chat(*, question: str, conversation_uuid: str | None = None):
+    def _fake_assistant_chat_submit(*, question: str, conversation_uuid: str | None = None):
         called["value"] = True
-        return _build_streaming_response("should-not-run")
+        return AssistantRunSubmitResponse(
+            conversation_uuid="conv-1",
+            message_uuid="msg-1",
+            run_status=AssistantRunStatus.RUNNING,
+        )
 
-    monkeypatch.setattr(assistant_module, "assistant_chat", _fake_assistant_chat)
+    monkeypatch.setattr(assistant_module, "assistant_chat_submit", _fake_assistant_chat_submit)
     client = TestClient(app)
 
     response = client.post(
-        "/admin/assistant/chat",
+        "/admin/assistant/chat/submit",
         headers=_auth_headers(),
         json={"question": "触发限流"},
     )
@@ -1082,7 +1116,7 @@ def test_assistant_chat_route_returns_429_when_rate_limited(monkeypatch):
     assert response.headers["x-ratelimit-remaining"] == "0"
     body = response.json()
     assert body["code"] == ResponseCode.TOO_MANY_REQUESTS.code
-    assert body["message"] == "访问 /admin/assistant/chat 过于频繁，请在 17 秒后再试"
+    assert body["message"] == "访问 /admin/assistant/chat/submit 过于频繁，请在 17 秒后再试"
     assert called["value"] is False
     assert "data" not in body
 
@@ -1130,15 +1164,19 @@ def test_assistant_chat_route_returns_503_when_redis_unavailable(monkeypatch):
     _mock_rate_limit_result(monkeypatch, allowed=True, exc=RedisError("redis down"))
     called = {"value": False}
 
-    def _fake_assistant_chat(*, question: str, conversation_uuid: str | None = None):
+    def _fake_assistant_chat_submit(*, question: str, conversation_uuid: str | None = None):
         called["value"] = True
-        return _build_streaming_response("should-not-run")
+        return AssistantRunSubmitResponse(
+            conversation_uuid="conv-1",
+            message_uuid="msg-1",
+            run_status=AssistantRunStatus.RUNNING,
+        )
 
-    monkeypatch.setattr(assistant_module, "assistant_chat", _fake_assistant_chat)
+    monkeypatch.setattr(assistant_module, "assistant_chat_submit", _fake_assistant_chat_submit)
     client = TestClient(app)
 
     response = client.post(
-        "/admin/assistant/chat",
+        "/admin/assistant/chat/submit",
         headers=_auth_headers(),
         json={"question": "redis 故障"},
     )

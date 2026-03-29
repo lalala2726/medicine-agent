@@ -8,6 +8,7 @@ from fastapi.responses import StreamingResponse
 from langchain_core.messages import HumanMessage
 
 from app.agent.client.workflow import build_graph
+from app.core.agent.agent_orchestrator import AssistantStreamConfig
 from app.core.agent.run_event_store import LocalRunHandle
 from app.core.codes import ResponseCode
 from app.core.exception.exceptions import ServiceException
@@ -26,11 +27,11 @@ from app.schemas.document.message import MessageRole
 from app.services.admin_assistant_service import (
     ConversationContext,
     RUN_EVENT_STORE,
+    _build_assistant_message_callback,
     _build_attach_streaming_response,
     _build_background_run_done_callback,
     _build_conversation_created_event,
     _build_message_prepared_event,
-    _build_run_stream_config,
     _create_placeholder_assistant_message,
     _map_exception,
     _persist_user_message,
@@ -47,35 +48,105 @@ from app.services.conversation_service import (
     update_client_conversation_title,
 )
 from app.services.memory_service import load_memory, resolve_assistant_memory_mode
-from app.services.message_service import count_messages, hide_message_card, list_messages
+from app.services.message_service import count_messages, hide_visible_cards_in_conversation, list_messages
 
 CLIENT_WORKFLOW_NAME = "client_assistant_graph"
 CLIENT_WORKFLOW = build_graph()
-ClientCardAction = dict[str, str]
 
 
-def _invoke_client_workflow(state: dict[str, Any]) -> dict[str, Any]:
-    """同步执行 client workflow。"""
+def _merge_runnable_config(
+        *,
+        run_name: str,
+        conversation_uuid: str,
+) -> dict[str, Any]:
+    """
+    功能描述：
+        构造并合并 LangSmith tracing 与 `thread_id`。
 
-    config = build_langsmith_runnable_config(
-        run_name=CLIENT_WORKFLOW_NAME,
+    参数说明：
+        run_name (str): workflow 运行名称。
+        conversation_uuid (str): 会话 UUID，同时作为 LangGraph `thread_id`。
+
+    返回值：
+        dict[str, Any]: 最终 runnable config。
+
+    异常说明：
+        无。
+    """
+
+    base_config = build_langsmith_runnable_config(
+        run_name=run_name,
         tags=["client-assistant", "langgraph"],
         metadata={"entrypoint": "api.client_assistant.chat"},
-    )
-    if config:
-        return CLIENT_WORKFLOW.invoke(state, config=config)
-    return CLIENT_WORKFLOW.invoke(state)
+    ) or {}
+    configurable = dict(base_config.get("configurable") or {})
+    configurable["thread_id"] = conversation_uuid
+    merged_config = dict(base_config)
+    merged_config["configurable"] = configurable
+    return merged_config
 
 
-def _build_stream_config() -> dict | None:
-    """构建 client 流式执行 tracing 配置。"""
+def _invoke_workflow_with_config(
+        *,
+        workflow: Any,
+        workflow_input: Any,
+        runnable_config: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """
+    功能描述：
+        同步执行 workflow，并在需要时透传 runnable config。
 
-    return build_langsmith_runnable_config(
-        run_name=CLIENT_WORKFLOW_NAME,
-        tags=["client-assistant", "langgraph"],
-        metadata={"entrypoint": "api.client_assistant.chat"},
-    )
+    参数说明：
+        workflow (Any): 已编译的 workflow。
+        workflow_input (Any): workflow 输入，通常为状态字典。
+        runnable_config (dict[str, Any] | None): runnable config。
 
+    返回值：
+        dict[str, Any]: workflow 最终返回状态。
+
+    异常说明：
+        无；执行异常由调用方感知。
+    """
+
+    if runnable_config:
+        return workflow.invoke(workflow_input, config=runnable_config)
+    return workflow.invoke(workflow_input)
+
+
+def _build_client_initial_state(
+        *,
+        conversation_uuid: str,
+        history_messages: list[Any],
+) -> dict[str, Any]:
+    """
+    功能描述：
+        构造 client 主图的初始状态。
+
+    参数说明：
+        conversation_uuid (str): 当前会话 UUID。
+        history_messages (list[Any]): 当前会话历史消息列表。
+
+    返回值：
+        dict[str, Any]: client workflow 初始状态。
+
+    异常说明：
+        无。
+    """
+
+    base_history = list(history_messages)
+    return {
+        "conversation_uuid": conversation_uuid,
+        "routing": {
+            "route_targets": [],
+        },
+        "context": "",
+        "history_messages": base_history,
+        "loaded_tool_keys": [],
+        "execution_traces": [],
+        "token_usage": None,
+        "result": "",
+        "messages": list(base_history),
+    }
 
 def _load_client_conversation(
         *,
@@ -138,7 +209,6 @@ def _prepare_existing_conversation(
         user_id: int,
         question: str,
         assistant_message_uuid: str,
-        card_action: ClientCardAction | None = None,
 ) -> ConversationContext:
     """准备已存在的 client 会话上下文。"""
 
@@ -146,9 +216,8 @@ def _prepare_existing_conversation(
         conversation_uuid=conversation_uuid,
         user_id=user_id,
     )
-    _apply_card_action(
+    _hide_visible_conversation_cards(
         conversation_id=conversation_id,
-        card_action=card_action,
     )
     memory = load_memory(
         memory_type=resolve_assistant_memory_mode(),
@@ -170,14 +239,12 @@ def _prepare_existing_conversation(
         is_new_conversation=False,
     )
 
-
 def _prepare_conversation_context(
         *,
         question: str,
         user_id: int,
         conversation_uuid: str | None,
         assistant_message_uuid: str,
-        card_action: ClientCardAction | None = None,
 ) -> ConversationContext:
     """统一准备 client 会话上下文。"""
 
@@ -192,23 +259,17 @@ def _prepare_conversation_context(
         user_id=user_id,
         question=question,
         assistant_message_uuid=assistant_message_uuid,
-        card_action=card_action,
     )
 
 
-def _apply_card_action(
+def _hide_visible_conversation_cards(
         *,
         conversation_id: str,
-        card_action: ClientCardAction | None,
 ) -> None:
-    """在加载旧会话上下文前应用前端上报的卡片点击事件。"""
+    """在加载旧会话 memory 前批量隐藏当前仍可见的 AI 卡片。"""
 
-    if card_action is None:
-        return
-    hide_message_card(
+    hide_visible_cards_in_conversation(
         conversation_id=conversation_id,
-        message_uuid=str(card_action.get("message_id") or "").strip(),
-        card_uuid=str(card_action.get("card_uuid") or "").strip(),
     )
 
 
@@ -216,7 +277,6 @@ def assistant_chat(
         *,
         question: str,
         conversation_uuid: str | None = None,
-        card_action: ClientCardAction | None = None,
 ) -> AssistantRunSubmitResponse:
     """客户端助手聊天提交入口（创建后台 run 并返回运行态）。"""
 
@@ -227,7 +287,6 @@ def assistant_chat(
         user_id=current_user_id,
         conversation_uuid=conversation_uuid,
         assistant_message_uuid=assistant_message_uuid,
-        card_action=card_action,
     )
 
     created_meta = RUN_EVENT_STORE.create_run(
@@ -265,16 +324,41 @@ def assistant_chat(
     )
 
     cancel_event = asyncio.Event()
-    stream_config = _build_run_stream_config(
-        question=question,
-        context=context,
-        workflow=CLIENT_WORKFLOW,
-        workflow_name=CLIENT_WORKFLOW_NAME,
-        build_stream_config_func=_build_stream_config,
-        invoke_sync_func=_invoke_client_workflow,
-        map_exception_func=_map_exception,
-        should_stream_token_func=_should_stream_token,
-        cancel_event=cancel_event,
+    resolved_workflow = CLIENT_WORKFLOW
+    resolved_run_name = CLIENT_WORKFLOW_NAME
+    runnable_config = _merge_runnable_config(
+        run_name=resolved_run_name,
+        conversation_uuid=context.conversation_uuid,
+    )
+    stream_config = AssistantStreamConfig(
+        workflow=resolved_workflow,
+        build_initial_state=(
+            lambda _question: _build_client_initial_state(
+                conversation_uuid=context.conversation_uuid,
+                history_messages=context.history_messages,
+            )
+        ),
+        extract_final_content=(lambda state: str(state.get("result") or "")),
+        should_stream_token=_should_stream_token,
+        build_stream_config=lambda: runnable_config,
+        invoke_sync=lambda workflow_input: _invoke_workflow_with_config(
+            workflow=resolved_workflow,
+            workflow_input=workflow_input,
+            runnable_config=runnable_config,
+        ),
+        map_exception=_map_exception,
+        on_answer_completed=_build_assistant_message_callback(
+            conversation_id=context.conversation_id,
+            assistant_message_uuid=context.assistant_message_uuid,
+            workflow_name=resolved_run_name,
+        ),
+        initial_emitted_events=context.initial_emitted_events,
+        is_cancel_requested=lambda: (
+                cancel_event.is_set()
+                or RUN_EVENT_STORE.is_cancel_requested(
+            conversation_uuid=context.conversation_uuid,
+        )
+        ),
     )
     background_task = asyncio.create_task(
         _run_assistant_workflow_in_background(

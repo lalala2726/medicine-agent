@@ -91,7 +91,7 @@ def test_create_chat_model_routes_to_openai_provider(monkeypatch: pytest.MonkeyP
 
     assert result == "openai-model"
     assert captured["model"] == "gpt-test"
-    assert captured["extra_body"] == {"response_format": {"type": "json_object"}}
+    assert captured["extra_body"] is None
     assert captured["temperature"] == 0.2
 
 
@@ -168,10 +168,7 @@ def test_create_chat_model_routes_to_aliyun_provider_with_think_enabled(
 
     assert result == "aliyun-model"
     assert captured["model"] == "qwen-test"
-    assert captured["extra_body"] == {
-        "response_format": {"type": "json_object"},
-        "enable_thinking": True,
-    }
+    assert captured["extra_body"] == {"enable_thinking": True}
 
 
 def test_create_chat_model_routes_to_aliyun_provider_with_think_disabled(
@@ -192,16 +189,12 @@ def test_create_chat_model_routes_to_aliyun_provider_with_think_disabled(
         provider=LlmProvider.ALIYUN,
         extra_body={
             "enable_thinking": True,
-            "response_format": {"type": "json_object"},
         },
         think=False,
     )
 
     assert result == "aliyun-model"
-    assert captured["extra_body"] == {
-        "response_format": {"type": "json_object"},
-        "enable_thinking": False,
-    }
+    assert captured["extra_body"] == {"enable_thinking": False}
 
 
 def test_create_chat_model_routes_to_volcengine_provider_with_think_enabled(
@@ -227,10 +220,7 @@ def test_create_chat_model_routes_to_volcengine_provider_with_think_enabled(
     assert result == "volcengine-model"
     assert captured["model"] == "doubao-test"
     assert captured["temperature"] == 0.1
-    assert captured["extra_body"] == {
-        "response_format": {"type": "json_object"},
-        "thinking": {"type": "enabled"},
-    }
+    assert captured["extra_body"] == {"thinking": {"type": "enabled"}}
 
 
 def test_create_chat_model_routes_to_volcengine_provider_with_think_disabled(
@@ -304,10 +294,7 @@ def test_create_image_model_routes_to_volcengine_provider(monkeypatch: pytest.Mo
 
     assert result == "volcengine-image-model"
     assert captured["model"] == "doubao-vision-test"
-    assert captured["extra_body"] == {
-        "response_format": {"type": "json_object"},
-        "thinking": {"type": "disabled"},
-    }
+    assert captured["extra_body"] == {"thinking": {"type": "disabled"}}
 
 
 def test_create_openai_chat_model_reads_env_and_enables_stream_usage(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -524,7 +511,7 @@ def test_thinking_resolver_keeps_openai_extra_body() -> None:
         think=True,
     )
 
-    assert extra == {"response_format": {"type": "json_object"}}
+    assert extra is None
 
 
 def test_thinking_resolver_applies_aliyun_rules() -> None:
@@ -536,18 +523,12 @@ def test_thinking_resolver_applies_aliyun_rules() -> None:
     )
     disabled = llm_common_module.resolve_provider_extra_body(
         provider=LlmProvider.ALIYUN,
-        extra_body={"enable_thinking": True, "response_format": {"type": "json_object"}},
+        extra_body={"enable_thinking": True},
         think=False,
     )
 
-    assert enabled == {
-        "response_format": {"type": "json_object"},
-        "enable_thinking": True,
-    }
-    assert disabled == {
-        "response_format": {"type": "json_object"},
-        "enable_thinking": False,
-    }
+    assert enabled == {"enable_thinking": True}
+    assert disabled == {"enable_thinking": False}
 
 
 def test_thinking_resolver_applies_volcengine_rules() -> None:
@@ -562,14 +543,8 @@ def test_thinking_resolver_applies_volcengine_rules() -> None:
         think=False,
     )
 
-    assert enabled == {
-        "response_format": {"type": "json_object"},
-        "thinking": {"type": "enabled"},
-    }
-    assert disabled == {
-        "response_format": {"type": "json_object"},
-        "thinking": {"type": "disabled"},
-    }
+    assert enabled == {"thinking": {"type": "enabled"}}
+    assert disabled == {"thinking": {"type": "disabled"}}
 
 
 def test_thinking_resolver_preserves_explicit_disable_for_aliyun() -> None:

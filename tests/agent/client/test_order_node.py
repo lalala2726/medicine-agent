@@ -3,15 +3,17 @@ from types import SimpleNamespace
 from langchain_core.messages import HumanMessage
 
 from app.agent.client.domain.order import node as order_node_module
+from app.core.config_sync import AgentChatModelSlot
 
 
 def test_order_agent_registers_order_list_tool_and_keeps_tool_traces(monkeypatch):
     captured: dict = {}
+    captured_llm_kwargs: dict = {}
 
     monkeypatch.setattr(
         order_node_module,
         "create_agent_chat_llm",
-        lambda **_kwargs: SimpleNamespace(model_name="order-model"),
+        lambda **kwargs: captured_llm_kwargs.update(kwargs) or SimpleNamespace(model_name="order-model"),
     )
     monkeypatch.setattr(
         order_node_module,
@@ -59,6 +61,7 @@ def test_order_agent_registers_order_list_tool_and_keeps_tool_traces(monkeypatch
         order_node_module.get_order_timeline,
         order_node_module.check_order_cancelable,
     ]
+    assert captured_llm_kwargs["slot"] is AgentChatModelSlot.CLIENT_ORDER
     assert result["execution_traces"][0]["node_name"] == "order_agent"
     assert result["execution_traces"][0]["tool_calls"] == [
         {
