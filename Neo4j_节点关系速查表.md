@@ -244,4 +244,4 @@ RETURN p.name AS producer_name, collect(DISTINCT d.name) AS drugs
 
 如果你要看完整说明、AI 提示词模板、详细 Cypher 方案，可以再看：
 
-- [Neo4j_AI_医疗图谱查询说明.md](/Users/zhangchuang/projects/QASystemOnMedicalKG/document/Neo4j_AI_医疗图谱查询说明.md)
+- [Neo4j_AI_医疗图谱查询说明.md](document/Neo4j_AI_医疗图谱查询说明.md)
